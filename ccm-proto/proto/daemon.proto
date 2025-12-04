@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package ccm.daemon;
+
+service CcmDaemon {
+    // Repo management
+    rpc AddRepo(AddRepoRequest) returns (RepoInfo);
+    rpc ListRepos(Empty) returns (ListReposResponse);
+    rpc RemoveRepo(RemoveRepoRequest) returns (Empty);
+
+    // Worktree management
+    rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
+    rpc CreateWorktree(CreateWorktreeRequest) returns (WorktreeInfo);
+    rpc RemoveWorktree(RemoveWorktreeRequest) returns (Empty);
+
+    // Session management
+    rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+    rpc CreateSession(CreateSessionRequest) returns (SessionInfo);
+    rpc DestroySession(DestroySessionRequest) returns (Empty);
+
+    // Attach/Detach
+    rpc AttachSession(stream AttachInput) returns (stream AttachOutput);
+}
+
+message Empty {}
+
+// ============ Repo ============
+
+message AddRepoRequest {
+    string path = 1;  // Path to git repository
+}
+
+message RemoveRepoRequest {
+    string id = 1;
+}
+
+message ListReposResponse {
+    repeated RepoInfo repos = 1;
+}
+
+message RepoInfo {
+    string id = 1;
+    string name = 2;
+    string path = 3;
+    int32 session_count = 4;
+}
+
+// ============ Worktree ============
+
+message ListWorktreesRequest {
+    string repo_id = 1;
+}
+
+message ListWorktreesResponse {
+    repeated WorktreeInfo worktrees = 1;
+}
+
+message CreateWorktreeRequest {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message RemoveWorktreeRequest {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message WorktreeInfo {
+    string repo_id = 1;
+    string branch = 2;
+    string path = 3;
+    bool is_main = 4;
+    int32 session_count = 5;
+}
+
+// ============ Session ============
+
+message ListSessionsRequest {
+    optional string repo_id = 1;    // Filter by repo
+    optional string branch = 2;     // Filter by branch
+}
+
+message ListSessionsResponse {
+    repeated SessionInfo sessions = 1;
+}
+
+message CreateSessionRequest {
+    string repo_id = 1;
+    string branch = 2;
+    optional string name = 3;  // Custom name (optional)
+}
+
+message DestroySessionRequest {
+    string session_id = 1;
+}
+
+message SessionInfo {
+    string id = 1;
+    string name = 2;
+    string repo_id = 3;
+    string branch = 4;
+    string worktree_path = 5;
+    SessionStatus status = 6;
+}
+
+enum SessionStatus {
+    SESSION_STATUS_UNKNOWN = 0;
+    SESSION_STATUS_RUNNING = 1;
+    SESSION_STATUS_STOPPED = 2;
+}
+
+// ============ Attach ============
+
+message AttachInput {
+    string session_id = 1;
+    bytes data = 2;
+    // Resize event
+    optional uint32 rows = 3;
+    optional uint32 cols = 4;
+}
+
+message AttachOutput {
+    bytes data = 1;
+}
