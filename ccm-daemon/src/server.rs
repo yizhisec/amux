@@ -388,6 +388,21 @@ impl CcmDaemon for CcmDaemonService {
         Ok(Response::new(Empty {}))
     }
 
+    // ============ Events ============
+
+    type SubscribeEventsStream =
+        Pin<Box<dyn Stream<Item = Result<Event, Status>> + Send + 'static>>;
+
+    async fn subscribe_events(
+        &self,
+        _request: Request<SubscribeEventsRequest>,
+    ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
+        // TODO: Implement event broadcasting
+        // For now, return an empty stream that never sends anything
+        let (_tx, rx) = mpsc::channel::<Result<Event, Status>>(32);
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+    }
+
     // ============ Attach/Detach ============
 
     type AttachSessionStream =

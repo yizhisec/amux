@@ -1,6 +1,7 @@
 //! CCM CLI - Claude Code Manager TUI
 
 mod client;
+pub mod error;
 mod tui;
 
 use anyhow::Result;

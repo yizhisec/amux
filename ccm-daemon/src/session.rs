@@ -239,3 +239,57 @@ pub fn generate_session_name(branch: &str, existing_names: &[String]) -> String 
         n += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_session_id_is_unique() {
+        let id1 = generate_session_id();
+        let id2 = generate_session_id();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_generate_session_id_is_valid_uuid() {
+        let id = generate_session_id();
+        assert!(uuid::Uuid::parse_str(&id).is_ok());
+    }
+
+    #[test]
+    fn test_generate_session_name_first_session() {
+        let existing: Vec<String> = vec![];
+        let name = generate_session_name("main", &existing);
+        assert_eq!(name, "main");
+    }
+
+    #[test]
+    fn test_generate_session_name_second_session() {
+        let existing = vec!["main".to_string()];
+        let name = generate_session_name("main", &existing);
+        assert_eq!(name, "main-2");
+    }
+
+    #[test]
+    fn test_generate_session_name_third_session() {
+        let existing = vec!["main".to_string(), "main-2".to_string()];
+        let name = generate_session_name("main", &existing);
+        assert_eq!(name, "main-3");
+    }
+
+    #[test]
+    fn test_generate_session_name_with_gap() {
+        // If main-2 is missing, should still use main-2
+        let existing = vec!["main".to_string(), "main-3".to_string()];
+        let name = generate_session_name("main", &existing);
+        assert_eq!(name, "main-2");
+    }
+
+    #[test]
+    fn test_generate_session_name_different_branch() {
+        let existing = vec!["main".to_string()];
+        let name = generate_session_name("feature", &existing);
+        assert_eq!(name, "feature");
+    }
+}

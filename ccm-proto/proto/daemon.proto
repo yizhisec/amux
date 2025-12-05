@@ -21,6 +21,9 @@ service CcmDaemon {
 
     // Attach/Detach
     rpc AttachSession(stream AttachInput) returns (stream AttachOutput);
+
+    // Event subscription (real-time updates)
+    rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
 }
 
 message Empty {}
@@ -128,4 +131,42 @@ message AttachInput {
 
 message AttachOutput {
     bytes data = 1;
+}
+
+// ============ Events ============
+
+message SubscribeEventsRequest {
+    // Filter by repo_id (optional, empty means all repos)
+    optional string repo_id = 1;
+}
+
+message Event {
+    oneof event {
+        SessionCreatedEvent session_created = 1;
+        SessionDestroyedEvent session_destroyed = 2;
+        SessionNameUpdatedEvent session_name_updated = 3;
+        SessionStatusChangedEvent session_status_changed = 4;
+    }
+}
+
+message SessionCreatedEvent {
+    SessionInfo session = 1;
+}
+
+message SessionDestroyedEvent {
+    string session_id = 1;
+    string repo_id = 2;
+    string branch = 3;
+}
+
+message SessionNameUpdatedEvent {
+    string session_id = 1;
+    string old_name = 2;
+    string new_name = 3;
+}
+
+message SessionStatusChangedEvent {
+    string session_id = 1;
+    SessionStatus old_status = 2;
+    SessionStatus new_status = 3;
 }

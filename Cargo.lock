@@ -251,6 +251,7 @@ dependencies = [
  "dirs",
  "hyper-util",
  "ratatui",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tonic",
