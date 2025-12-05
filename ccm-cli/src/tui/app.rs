@@ -48,25 +48,15 @@ pub struct TerminalStream {
 
 /// Deactivate fcitx5 input method
 fn deactivate_ime() {
-    let _ = std::process::Command::new("dbus-send")
-        .args([
-            "--session",
-            "--dest=org.fcitx.Fcitx5",
-            "/controller",
-            "org.fcitx.Fcitx.Controller1.Deactivate",
-        ])
+    let _ = std::process::Command::new("fcitx5-remote")
+        .arg("-c")
         .output();
 }
 
 /// Activate fcitx5 input method
 fn activate_ime() {
-    let _ = std::process::Command::new("dbus-send")
-        .args([
-            "--session",
-            "--dest=org.fcitx.Fcitx5",
-            "/controller",
-            "org.fcitx.Fcitx.Controller1.Activate",
-        ])
+    let _ = std::process::Command::new("fcitx5-remote")
+        .arg("-o")
         .output();
 }
 
