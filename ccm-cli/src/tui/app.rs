@@ -946,10 +946,20 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Timer for periodic session refresh
+    let mut last_refresh = std::time::Instant::now();
+    let refresh_interval = std::time::Duration::from_secs(3);
+
     // Main loop
     loop {
         // Poll terminal output
         app.poll_terminal_output();
+
+        // Periodic session refresh (to pick up name updates from daemon)
+        if last_refresh.elapsed() >= refresh_interval {
+            let _ = app.refresh_sessions().await;
+            last_refresh = std::time::Instant::now();
+        }
 
         // Draw UI
         terminal.draw(|f| draw(f, &app))?;
