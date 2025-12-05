@@ -11,6 +11,7 @@ use crossterm::{
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -89,6 +90,7 @@ pub struct App {
 
     // Terminal state
     pub terminal_parser: Arc<Mutex<vt100::Parser>>,
+    pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>,  // Per-session parsers
     pub active_session_id: Option<String>,
     pub is_interactive: bool,
     pub terminal_stream: Option<TerminalStream>,
@@ -116,6 +118,7 @@ impl App {
             branches: Vec::new(),
             sessions: Vec::new(),
             terminal_parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            session_parsers: HashMap::new(),
             active_session_id: None,
             is_interactive: false,
             terminal_stream: None,
@@ -215,10 +218,23 @@ impl App {
         // If session changed, disconnect old stream and connect new one
         if self.active_session_id != new_session_id {
             self.disconnect_stream();
-            // Clear terminal parser
-            if let Ok(mut parser) = self.terminal_parser.lock() {
-                *parser = vt100::Parser::new(24, 80, 10000);
+
+            // Save current parser to map if there's an active session
+            if let Some(old_id) = &self.active_session_id {
+                self.session_parsers.insert(old_id.clone(), self.terminal_parser.clone());
             }
+
+            // Get or create parser for new session
+            if let Some(new_id) = &new_session_id {
+                self.terminal_parser = self.session_parsers
+                    .entry(new_id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                    .clone();
+            } else {
+                // No session selected, use a fresh parser
+                self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+            }
+
             self.scroll_offset = 0;
             self.active_session_id = new_session_id;
 
