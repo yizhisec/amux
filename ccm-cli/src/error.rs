@@ -21,6 +21,19 @@ pub enum ClientError {
     NoHomeDir,
 }
 
+/// Errors that can occur in attach mode
+#[derive(Debug, Error)]
+pub enum AttachError {
+    #[error("terminal error: {0}")]
+    Terminal(#[source] std::io::Error),
+
+    #[error("rpc error: {0}")]
+    Rpc(#[from] tonic::Status),
+
+    #[error("channel send error")]
+    ChannelSend,
+}
+
 /// Errors that can occur in TUI operations
 #[derive(Debug, Error)]
 pub enum TuiError {
@@ -38,6 +51,12 @@ pub enum TuiError {
 
     #[error("client error: {0}")]
     Client(#[from] ClientError),
+
+    #[error("rpc error: {0}")]
+    Rpc(#[from] tonic::Status),
+
+    #[error("channel send error")]
+    ChannelSend,
 }
 
 /// Top-level CLI error type

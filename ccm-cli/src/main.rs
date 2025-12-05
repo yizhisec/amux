@@ -4,11 +4,11 @@ mod client;
 pub mod error;
 mod tui;
 
-use anyhow::Result;
 use client::Client;
+use error::CliError;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), CliError> {
     // Connect to daemon
     let client = match Client::connect().await {
         Ok(c) => c,

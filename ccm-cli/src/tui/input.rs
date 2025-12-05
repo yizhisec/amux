@@ -4,8 +4,10 @@
 //! Prefix mode allows access to navigation commands from any context.
 
 use super::app::{App, Focus, InputMode, PrefixMode, TerminalMode};
-use anyhow::Result;
+use crate::error::TuiError;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+type Result<T> = std::result::Result<T, TuiError>;
 
 /// Handle keyboard input
 pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {

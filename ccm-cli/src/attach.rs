@@ -1,24 +1,25 @@
 //! Attach mode - raw terminal connection to session
 
 use crate::client::Client;
-use anyhow::Result;
+use crate::error::AttachError;
 use ccm_proto::daemon::AttachInput;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, size},
 };
 use std::io::{self, Write};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+type Result<T> = std::result::Result<T, AttachError>;
+
 /// Attach to a session
 pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
     // Get terminal size
-    let (cols, rows) = size()?;
+    let (cols, rows) = size().map_err(AttachError::Terminal)?;
 
     // Setup raw terminal
-    enable_raw_mode()?;
+    enable_raw_mode().map_err(AttachError::Terminal)?;
 
     // Create channels for input
     let (tx, rx) = mpsc::channel::<AttachInput>(32);
@@ -30,7 +31,8 @@ pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
         rows: Some(rows as u32),
         cols: Some(cols as u32),
     })
-    .await?;
+    .await
+    .map_err(|_| AttachError::ChannelSend)?;
 
     // Start attach stream
     let response = client
@@ -53,8 +55,8 @@ pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
     let session_id_clone = session_id.to_string();
     let input_loop = async {
         loop {
-            if event::poll(std::time::Duration::from_millis(10))? {
-                match event::read()? {
+            if event::poll(std::time::Duration::from_millis(10)).map_err(AttachError::Terminal)? {
+                match event::read().map_err(AttachError::Terminal)? {
                     Event::Key(key) => {
                         // Check for detach key (Ctrl+])
                         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -90,14 +92,14 @@ pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
                 }
             }
         }
-        anyhow::Ok(())
+        Ok::<(), AttachError>(())
     };
 
     let _ = input_loop.await;
 
     // Cleanup
     output_handle.abort();
-    disable_raw_mode()?;
+    disable_raw_mode().map_err(AttachError::Terminal)?;
 
     println!("\n[Detached from session]");
 

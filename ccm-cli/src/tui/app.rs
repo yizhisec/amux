@@ -1,7 +1,7 @@
 //! TUI application state machine
 
 use crate::client::Client;
-use anyhow::Result;
+use crate::error::TuiError;
 use ccm_proto::daemon::{
     event as daemon_event, AttachInput, Event as DaemonEvent, RepoInfo, SessionInfo, WorktreeInfo,
 };
@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+
+type Result<T> = std::result::Result<T, TuiError>;
 
 use super::input::handle_input;
 use super::ui::draw;
@@ -784,7 +786,7 @@ impl App {
         // Layout: Tab bar (3) + Main content + Status bar (3)
         // Main content: Sidebar (25%) + Terminal (75%)
         // Terminal has borders (2 lines, 2 cols)
-        let (full_cols, full_rows) = size()?;
+        let (full_cols, full_rows) = size().map_err(TuiError::TerminalInit)?;
         let main_height = full_rows.saturating_sub(6); // tab + status bars
         let terminal_width = (full_cols as f32 * 0.75) as u16;
         let inner_rows = main_height.saturating_sub(2); // borders
@@ -806,7 +808,8 @@ impl App {
                 rows: Some(inner_rows as u32),
                 cols: Some(inner_cols as u32),
             })
-            .await?;
+            .await
+            .map_err(|_| TuiError::ChannelSend)?;
 
         // Start attach stream
         let response = self
@@ -925,7 +928,8 @@ impl App {
                     rows: None,
                     cols: None,
                 })
-                .await?;
+                .await
+                .map_err(|_| TuiError::ChannelSend)?;
         }
         Ok(())
     }
@@ -952,7 +956,8 @@ impl App {
                     rows: Some(inner_rows as u32),
                     cols: Some(inner_cols as u32),
                 })
-                .await?;
+                .await
+                .map_err(|_| TuiError::ChannelSend)?;
         }
         Ok(())
     }
@@ -1046,11 +1051,12 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     deactivate_ime();
 
     // Setup terminal
-    enable_raw_mode()?;
+    enable_raw_mode().map_err(TuiError::TerminalInit)?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+        .map_err(TuiError::TerminalInit)?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).map_err(TuiError::TerminalInit)?;
 
     // Fallback: Timer for periodic session refresh (if event subscription failed)
     let mut last_refresh = std::time::Instant::now();
@@ -1072,13 +1078,13 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
         }
 
         // Draw UI
-        terminal.draw(|f| draw(f, &app))?;
+        terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
 
         // Handle events with short timeout for responsive terminal preview
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(std::time::Duration::from_millis(50)).map_err(TuiError::EventHandling)? {
+            if let Event::Key(key) = event::read().map_err(TuiError::EventHandling)? {
                 handle_input(&mut app, key).await?;
-            } else if let Event::Resize(cols, rows) = event::read()? {
+            } else if let Event::Resize(cols, rows) = event::read().map_err(TuiError::EventHandling)? {
                 let _ = app.resize_terminal(rows, cols).await;
             }
         }
@@ -1093,13 +1099,14 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     app.disconnect_stream();
 
     // Restore terminal
-    disable_raw_mode()?;
+    disable_raw_mode().map_err(TuiError::TerminalRestore)?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    )
+    .map_err(TuiError::TerminalRestore)?;
+    terminal.show_cursor().map_err(TuiError::TerminalRestore)?;
 
     // Activate IME at exit
     activate_ime();

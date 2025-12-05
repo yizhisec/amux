@@ -1,6 +1,6 @@
 //! gRPC client for CCM daemon
 
-use anyhow::{Context, Result};
+use crate::error::ClientError;
 use ccm_proto::daemon::ccm_daemon_client::CcmDaemonClient;
 use ccm_proto::daemon::*;
 use hyper_util::rt::TokioIo;
@@ -11,6 +11,8 @@ use tokio::net::UnixStream;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
+type Result<T> = std::result::Result<T, ClientError>;
+
 /// CCM daemon client
 pub struct Client {
     inner: CcmDaemonClient<Channel>,
@@ -19,7 +21,7 @@ pub struct Client {
 impl Client {
     /// Connect to the daemon via Unix socket, auto-starting if needed
     pub async fn connect() -> Result<Self> {
-        let socket_path = Self::socket_path();
+        let socket_path = Self::socket_path()?;
 
         // If socket doesn't exist, start daemon
         if !socket_path.exists() {
@@ -55,7 +57,7 @@ impl Client {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .context("Failed to start daemon. Is ccm-daemon in PATH?")?;
+            .map_err(ClientError::DaemonStartFailed)?;
         Ok(())
     }
 
@@ -70,13 +72,14 @@ impl Client {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        anyhow::bail!("Daemon failed to start within timeout")
+        Err(ClientError::DaemonTimeout)
     }
 
     /// Try to connect to daemon
     async fn try_connect(socket_path: &Path) -> Result<Self> {
         let path = socket_path.to_path_buf();
-        let channel = Endpoint::try_from("http://[::]:50051")?
+        let channel = Endpoint::try_from("http://[::]:50051")
+            .map_err(ClientError::ConnectionFailed)?
             .connect_with_connector(service_fn(move |_: Uri| {
                 let path = path.clone();
                 async move {
@@ -85,18 +88,18 @@ impl Client {
                 }
             }))
             .await
-            .context("Failed to connect to daemon")?;
+            .map_err(ClientError::ConnectionFailed)?;
 
         Ok(Self {
             inner: CcmDaemonClient::new(channel),
         })
     }
 
-    fn socket_path() -> PathBuf {
-        dirs::home_dir()
-            .expect("Cannot find home directory")
+    fn socket_path() -> Result<PathBuf> {
+        Ok(dirs::home_dir()
+            .ok_or(ClientError::NoHomeDir)?
             .join(".ccm")
-            .join("daemon.sock")
+            .join("daemon.sock"))
     }
 
     // ============ Repo ============
