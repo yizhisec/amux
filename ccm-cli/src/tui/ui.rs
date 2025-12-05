@@ -68,9 +68,21 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Check for add worktree overlay
+    if app.input_mode == InputMode::AddWorktree {
+        draw_add_worktree_overlay(f, area, app);
+        return;
+    }
+
     // Check for confirm delete overlay
     if let InputMode::ConfirmDelete(ref target) = app.input_mode {
         draw_confirm_delete_overlay(f, area, target);
+        return;
+    }
+
+    // Check for confirm delete branch overlay
+    if let InputMode::ConfirmDeleteBranch(ref branch) = app.input_mode {
+        draw_confirm_delete_branch_overlay(f, area, branch);
         return;
     }
 
@@ -93,23 +105,23 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
     draw_terminal(f, chunks[1], app);
 }
 
-/// Draw sidebar with branches and sessions
+/// Draw sidebar with worktrees and sessions
 fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    // Split sidebar into branches and sessions
+    // Split sidebar into worktrees and sessions
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(50), // Branches
+            Constraint::Percentage(50), // Worktrees
             Constraint::Percentage(50), // Sessions
         ])
         .split(area);
 
-    draw_branches(f, chunks[0], app);
+    draw_worktrees(f, chunks[0], app);
     draw_sessions(f, chunks[1], app);
 }
 
-/// Draw branches list
-fn draw_branches(f: &mut Frame, area: Rect, app: &App) {
+/// Draw worktrees list (only branches with worktrees)
+fn draw_worktrees(f: &mut Frame, area: Rect, app: &App) {
     let is_focused = app.focus == Focus::Branches;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
@@ -118,7 +130,7 @@ fn draw_branches(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let items: Vec<ListItem> = app
-        .branches
+        .worktrees
         .iter()
         .enumerate()
         .map(|(i, wt)| {
@@ -133,14 +145,8 @@ fn draw_branches(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::DarkGray)
             };
 
-            // Worktree indicator
-            let indicator = if wt.path.is_empty() {
-                "○" // No worktree
-            } else if wt.is_main {
-                "◆" // Main worktree
-            } else {
-                "●" // Has worktree
-            };
+            // Worktree indicator: ◆ for main, ● for others
+            let indicator = if wt.is_main { "◆" } else { "●" };
 
             // Session count indicator
             let session_indicator = if wt.session_count > 0 {
@@ -159,9 +165,9 @@ fn draw_branches(f: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     let title = if is_focused {
-        " Branches [*] "
+        " Worktrees [*] "
     } else {
-        " Branches "
+        " Worktrees "
     };
     let list = List::new(items).block(
         Block::default()
@@ -183,7 +189,7 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let current_branch = app
-        .branches
+        .worktrees
         .get(app.branch_idx)
         .map(|b| b.branch.as_str())
         .unwrap_or("?");
@@ -385,6 +391,131 @@ fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget)
     f.render_widget(confirm, popup_area);
 }
 
+/// Draw add worktree overlay (select branch or type new name)
+fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App) {
+    // Calculate popup size based on content
+    let branch_count = app.available_branches.len();
+    let popup_height = (branch_count + 6).min(20) as u16; // +6 for borders, title, input, instructions
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    // Split popup into sections
+    let inner = popup_area.inner(ratatui::layout::Margin::new(1, 1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Instructions
+            Constraint::Length(1), // Spacer
+            Constraint::Min(1),    // Branch list
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Input field
+        ])
+        .split(inner);
+
+    // Draw border
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Add Worktree (j/k=select, Enter=add, Esc=cancel) ");
+    f.render_widget(block, popup_area);
+
+    // Instructions
+    let instructions = Paragraph::new("Select existing branch or type new name:")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(instructions, chunks[0]);
+
+    // Branch list
+    if !app.available_branches.is_empty() {
+        let items: Vec<ListItem> = app
+            .available_branches
+            .iter()
+            .enumerate()
+            .map(|(i, branch)| {
+                let is_selected = i == app.add_worktree_idx && app.input_buffer.is_empty();
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let prefix = if is_selected { "> " } else { "  " };
+                ListItem::new(format!("{}○ {}", prefix, branch.branch)).style(style)
+            })
+            .collect();
+        let list = List::new(items);
+        f.render_widget(list, chunks[2]);
+    } else {
+        let empty = Paragraph::new("No available branches without worktree")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(empty, chunks[2]);
+    }
+
+    // Input field
+    let input_style = if !app.input_buffer.is_empty() {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let input_text = if app.input_buffer.is_empty() {
+        "New branch: (type to create new)"
+    } else {
+        &app.input_buffer
+    };
+    let prefix = if !app.input_buffer.is_empty() { "> " } else { "  " };
+    let input = Paragraph::new(format!("{}New: {}", prefix, input_text)).style(input_style);
+    f.render_widget(input, chunks[4]);
+
+    // Show cursor if typing
+    if !app.input_buffer.is_empty() {
+        f.set_cursor_position((
+            chunks[4].x + 7 + app.input_buffer.len() as u16, // 7 = "> New: ".len()
+            chunks[4].y,
+        ));
+    }
+}
+
+/// Draw confirm delete branch overlay (after worktree deletion)
+fn draw_confirm_delete_branch_overlay(f: &mut Frame, area: Rect, branch: &str) {
+    // Center the confirm box
+    let popup_width = 55.min(area.width.saturating_sub(4));
+    let popup_height = 6;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    let text = vec![
+        Line::from(format!("Worktree deleted. Delete branch '{}'?", branch)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y]", Style::default().fg(Color::Red)),
+            Span::raw(" Yes, delete branch  "),
+            Span::styled("[n/Esc]", Style::default().fg(Color::Green)),
+            Span::raw(" No, keep branch"),
+        ]),
+    ];
+
+    let confirm = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(" Delete Branch? "),
+        );
+    f.render_widget(confirm, popup_area);
+}
+
 /// Draw status bar at the bottom
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let (message, color) = if let Some(err) = &app.error_message {
@@ -393,7 +524,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
-            Focus::Branches => "[1-9] Repo | [Tab] Sessions | [j/k] Move | [n] New | [d] Delete | [q] Quit",
+            Focus::Branches => "[1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [d] Delete | [q] Quit",
             Focus::Sessions => "[Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [d] Delete | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
                 TerminalMode::Normal => "[j/k] Scroll | [Ctrl+d/u] Page | [G] Bottom | [g] Top | [i] Insert | [f] Fullscreen | [Esc] Exit",

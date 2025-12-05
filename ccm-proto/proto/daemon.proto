@@ -12,6 +12,7 @@ service CcmDaemon {
     rpc ListWorktrees(ListWorktreesRequest) returns (ListWorktreesResponse);
     rpc CreateWorktree(CreateWorktreeRequest) returns (WorktreeInfo);
     rpc RemoveWorktree(RemoveWorktreeRequest) returns (Empty);
+    rpc DeleteBranch(DeleteBranchRequest) returns (Empty);
 
     // Session management
     rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
@@ -61,6 +62,11 @@ message CreateWorktreeRequest {
 }
 
 message RemoveWorktreeRequest {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message DeleteBranchRequest {
     string repo_id = 1;
     string branch = 2;
 }

@@ -225,6 +225,26 @@ impl CcmDaemon for CcmDaemonService {
         Ok(Response::new(Empty {}))
     }
 
+    async fn delete_branch(
+        &self,
+        request: Request<DeleteBranchRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let state = self.state.read().await;
+
+        let repo = state
+            .repos
+            .get(&req.repo_id)
+            .ok_or_else(|| Status::not_found("Repo not found"))?;
+
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+
+        GitOps::delete_branch(&git_repo, &req.branch)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(Empty {}))
+    }
+
     // ============ Session Management ============
 
     async fn list_sessions(

@@ -39,8 +39,10 @@ pub enum DeleteTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
     Normal,
-    NewBranch,                           // Entering new branch name
+    NewBranch,                           // Entering new branch name (deprecated, use AddWorktree)
+    AddWorktree,                         // Adding worktree (select branch or enter new name)
     ConfirmDelete(DeleteTarget),         // Confirm deletion
+    ConfirmDeleteBranch(String),         // Confirm deleting branch after worktree (branch name)
 }
 
 /// Terminal mode (vim-style)
@@ -85,7 +87,9 @@ pub struct App {
 
     // Data
     pub repos: Vec<RepoInfo>,
-    pub branches: Vec<WorktreeInfo>,
+    pub worktrees: Vec<WorktreeInfo>,           // Only branches with worktrees
+    pub available_branches: Vec<WorktreeInfo>,  // Branches without worktrees (for add worktree)
+    pub add_worktree_idx: usize,                // Selection index in add worktree popup
     pub sessions: Vec<SessionInfo>,
 
     // Terminal state
@@ -115,7 +119,9 @@ impl App {
             session_idx: 0,
             focus: Focus::Branches,
             repos: Vec::new(),
-            branches: Vec::new(),
+            worktrees: Vec::new(),
+            available_branches: Vec::new(),
+            add_worktree_idx: 0,
             sessions: Vec::new(),
             terminal_parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             session_parsers: HashMap::new(),
@@ -148,7 +154,8 @@ impl App {
         // Clamp repo index
         if self.repos.is_empty() {
             self.repo_idx = 0;
-            self.branches.clear();
+            self.worktrees.clear();
+            self.available_branches.clear();
             self.sessions.clear();
             return Ok(());
         }
@@ -162,22 +169,31 @@ impl App {
         Ok(())
     }
 
-    /// Refresh branches for current repo
+    /// Refresh worktrees for current repo
     pub async fn refresh_branches(&mut self) -> Result<()> {
         if let Some(repo) = self.repos.get(self.repo_idx) {
-            self.branches = self.client.list_worktrees(&repo.id).await?;
+            let all_branches = self.client.list_worktrees(&repo.id).await?;
+            // Split into worktrees (has path) and available branches (no path)
+            self.worktrees = all_branches.iter()
+                .filter(|b| !b.path.is_empty())
+                .cloned()
+                .collect();
+            self.available_branches = all_branches.into_iter()
+                .filter(|b| b.path.is_empty())
+                .collect();
         } else {
-            self.branches.clear();
+            self.worktrees.clear();
+            self.available_branches.clear();
         }
 
         // Clamp branch index
-        if self.branches.is_empty() {
+        if self.worktrees.is_empty() {
             self.branch_idx = 0;
             self.sessions.clear();
             return Ok(());
         }
-        if self.branch_idx >= self.branches.len() {
-            self.branch_idx = self.branches.len() - 1;
+        if self.branch_idx >= self.worktrees.len() {
+            self.branch_idx = self.worktrees.len() - 1;
         }
 
         // Load sessions for current branch
@@ -190,7 +206,7 @@ impl App {
     pub async fn refresh_sessions(&mut self) -> Result<()> {
         if let (Some(repo), Some(branch)) = (
             self.repos.get(self.repo_idx),
-            self.branches.get(self.branch_idx),
+            self.worktrees.get(self.branch_idx),
         ) {
             self.sessions = self
                 .client
@@ -249,7 +265,7 @@ impl App {
     #[allow(dead_code)]
     pub fn current_list_len(&self) -> usize {
         match self.focus {
-            Focus::Branches => self.branches.len(),
+            Focus::Branches => self.worktrees.len(),
             Focus::Sessions => self.sessions.len(),
             Focus::Terminal => 0,
         }
@@ -288,7 +304,7 @@ impl App {
     pub async fn select_next(&mut self) {
         match self.focus {
             Focus::Branches => {
-                if !self.branches.is_empty() && self.branch_idx < self.branches.len() - 1 {
+                if !self.worktrees.is_empty() && self.branch_idx < self.worktrees.len() - 1 {
                     self.branch_idx += 1;
                     let _ = self.refresh_sessions().await;
                 }
@@ -428,7 +444,7 @@ impl App {
                 // Create new session for current branch
                 if let (Some(repo), Some(branch)) = (
                     self.repos.get(self.repo_idx).cloned(),
-                    self.branches.get(self.branch_idx).cloned(),
+                    self.worktrees.get(self.branch_idx).cloned(),
                 ) {
                     match self
                         .client
@@ -482,7 +498,7 @@ impl App {
                 Ok(session) => {
                     self.refresh_branches().await?;
                     // Find the branch and session
-                    if let Some(b_idx) = self.branches.iter().position(|b| b.branch == branch_name)
+                    if let Some(b_idx) = self.worktrees.iter().position(|b| b.branch == branch_name)
                     {
                         self.branch_idx = b_idx;
                         self.refresh_sessions().await?;
@@ -509,13 +525,91 @@ impl App {
         self.status_message = None;
     }
 
+    /// Start add worktree mode
+    pub fn start_add_worktree(&mut self) {
+        self.input_mode = InputMode::AddWorktree;
+        self.input_buffer.clear();
+        self.add_worktree_idx = 0;
+    }
+
+    /// Submit add worktree (create worktree for selected or new branch)
+    pub async fn submit_add_worktree(&mut self) -> Result<()> {
+        // Determine branch name: typed input or selected from list
+        let branch_name = if !self.input_buffer.is_empty() {
+            self.input_buffer.trim().to_string()
+        } else if let Some(branch) = self.available_branches.get(self.add_worktree_idx) {
+            branch.branch.clone()
+        } else {
+            self.cancel_input();
+            return Ok(());
+        };
+
+        let repo_id = match self.repos.get(self.repo_idx) {
+            Some(repo) => repo.id.clone(),
+            None => {
+                self.cancel_input();
+                return Ok(());
+            }
+        };
+
+        self.input_mode = InputMode::Normal;
+        self.input_buffer.clear();
+
+        // Create worktree
+        match self.client.create_worktree(&repo_id, &branch_name).await {
+            Ok(_) => {
+                self.status_message = Some(format!("Created worktree for: {}", branch_name));
+                self.refresh_branches().await?;
+                // Select the new worktree
+                if let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch_name) {
+                    self.branch_idx = idx;
+                    self.refresh_sessions().await?;
+                }
+            }
+            Err(e) => {
+                self.error_message = Some(e.to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Confirm and delete branch (called after worktree deletion)
+    pub async fn confirm_delete_branch(&mut self) -> Result<()> {
+        let branch_name = match &self.input_mode {
+            InputMode::ConfirmDeleteBranch(b) => b.clone(),
+            _ => return Ok(()),
+        };
+
+        self.input_mode = InputMode::Normal;
+
+        // Get repo_id
+        let repo_id = match self.repos.get(self.repo_idx) {
+            Some(repo) => repo.id.clone(),
+            None => return Ok(()),
+        };
+
+        // Delete branch via daemon
+        match self.client.delete_branch(&repo_id, &branch_name).await {
+            Ok(_) => {
+                self.status_message = Some(format!("Deleted branch: {}", branch_name));
+                self.refresh_branches().await?;
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Failed to delete branch: {}", e));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Request deletion (enters confirm mode)
     pub fn request_delete(&mut self) {
         match self.focus {
             Focus::Branches => {
                 if let (Some(repo), Some(wt)) = (
                     self.repos.get(self.repo_idx).cloned(),
-                    self.branches.get(self.branch_idx).cloned(),
+                    self.worktrees.get(self.branch_idx).cloned(),
                 ) {
                     if wt.is_main {
                         self.error_message = Some("Cannot remove main worktree".to_string());
@@ -554,7 +648,8 @@ impl App {
             DeleteTarget::Worktree { repo_id, branch } => {
                 match self.client.remove_worktree(&repo_id, &branch).await {
                     Ok(_) => {
-                        self.status_message = Some(format!("Removed worktree: {}", branch));
+                        // After removing worktree, ask if user wants to delete branch too
+                        self.input_mode = InputMode::ConfirmDeleteBranch(branch);
                         self.refresh_branches().await?;
                     }
                     Err(e) => {

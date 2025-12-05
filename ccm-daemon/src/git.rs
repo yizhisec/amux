@@ -66,11 +66,12 @@ impl GitOps {
         let wt_names = repo.worktrees()?;
         for name in wt_names.iter().flatten() {
             if let Ok(wt) = repo.find_worktree(name) {
-                if let Some(path) = wt.path().parent() {
+                // Get the actual working directory path
+                if let Ok(workdir) = Self::worktree_workdir(&wt) {
                     // Get branch from worktree
                     let branch = Self::worktree_branch(&wt).unwrap_or_else(|_| name.to_string());
                     worktrees.push(WorktreeInfo {
-                        path: path.to_path_buf(),
+                        path: workdir,
                         branch,
                         is_main: false,
                     });
@@ -83,27 +84,54 @@ impl GitOps {
 
     /// Get the branch associated with a worktree
     fn worktree_branch(wt: &git2::Worktree) -> Result<String> {
-        // Open the worktree as a repository to get its HEAD
-        let wt_path = wt
-            .path()
-            .parent()
-            .ok_or_else(|| anyhow!("Invalid worktree path"))?;
-        let wt_repo = Repository::open(wt_path)?;
+        // wt.path() returns the gitdir path (e.g., .git/worktrees/branch-name)
+        // We need to open it as a repository to get HEAD
+        let wt_repo = Repository::open(wt.path())?;
         Self::current_branch(&wt_repo)
+    }
+
+    /// Get the working directory path for a worktree
+    fn worktree_workdir(wt: &git2::Worktree) -> Result<PathBuf> {
+        // wt.path() returns the gitdir path, open it to get the workdir
+        let wt_repo = Repository::open(wt.path())?;
+        wt_repo
+            .workdir()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| anyhow!("Worktree has no working directory"))
     }
 
     /// Create a new worktree for a branch
     pub fn create_worktree(repo: &Repository, branch: &str, base_path: &Path) -> Result<PathBuf> {
         // Worktree path: {base_path}--{branch}
+        let wt_name = branch.replace('/', "-");
         let wt_path = base_path.with_file_name(format!(
             "{}--{}",
             base_path.file_name().unwrap().to_str().unwrap(),
-            branch.replace('/', "-")
+            &wt_name
         ));
 
-        // Check if worktree already exists
+        // Check if worktree already exists in git
+        if let Ok(wt) = repo.find_worktree(&wt_name) {
+            // Worktree exists in git, return its path
+            if let Some(path) = wt.path().parent() {
+                return Ok(path.to_path_buf());
+            }
+        }
+
+        // Check if path exists but git doesn't know about it
         if wt_path.exists() {
-            return Err(anyhow!("Worktree path already exists: {:?}", wt_path));
+            // Check if it's a valid git worktree
+            if wt_path.join(".git").exists() {
+                // It's a git directory, might be an orphaned worktree
+                // Try to repair by removing and recreating
+                std::fs::remove_dir_all(&wt_path)
+                    .with_context(|| format!("Failed to remove orphaned worktree at {:?}", wt_path))?;
+            } else {
+                return Err(anyhow!(
+                    "Path already exists and is not a git worktree: {:?}",
+                    wt_path
+                ));
+            }
         }
 
         // Find or create the branch
@@ -117,7 +145,6 @@ impl GitOps {
         };
 
         // Create worktree
-        let wt_name = branch.replace('/', "-");
         let mut opts = git2::WorktreeAddOptions::new();
         opts.reference(Some(&reference));
         repo.worktree(&wt_name, &wt_path, Some(&opts))?;
@@ -159,6 +186,38 @@ impl GitOps {
             .into_iter()
             .find(|wt| wt.branch == branch)
             .map(|wt| wt.path)
+    }
+
+    /// Delete a local branch
+    pub fn delete_branch(repo: &Repository, branch: &str) -> Result<()> {
+        // Check if branch has a worktree
+        let worktrees = Self::list_worktrees(repo)?;
+        if worktrees.iter().any(|wt| wt.branch == branch) {
+            return Err(anyhow!(
+                "Cannot delete branch '{}': it has an active worktree",
+                branch
+            ));
+        }
+
+        // Find and delete the branch
+        let mut branch_ref = repo
+            .find_branch(branch, git2::BranchType::Local)
+            .with_context(|| format!("Branch '{}' not found", branch))?;
+
+        // Check if it's the current branch in main worktree
+        if let Ok(head) = repo.head() {
+            if let Some(head_name) = head.shorthand() {
+                if head_name == branch {
+                    return Err(anyhow!(
+                        "Cannot delete branch '{}': it is the current branch",
+                        branch
+                    ));
+                }
+            }
+        }
+
+        branch_ref.delete()?;
+        Ok(())
     }
 }
 

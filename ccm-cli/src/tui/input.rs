@@ -11,9 +11,19 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
         return handle_input_mode(app, key).await;
     }
 
+    // Handle add worktree mode
+    if app.input_mode == InputMode::AddWorktree {
+        return handle_add_worktree_mode(app, key).await;
+    }
+
     // Handle confirm delete mode
     if matches!(app.input_mode, InputMode::ConfirmDelete(_)) {
         return handle_confirm_delete(app, key).await;
+    }
+
+    // Handle confirm delete branch mode
+    if matches!(app.input_mode, InputMode::ConfirmDeleteBranch(_)) {
+        return handle_confirm_delete_branch(app, key).await;
     }
 
     // Handle terminal modes when focused on terminal
@@ -38,6 +48,58 @@ async fn handle_confirm_delete(app: &mut App, key: KeyEvent) -> Result<()> {
         // Cancel with n, N, or Esc
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             app.cancel_input();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Handle input when in confirm delete branch mode (after worktree deletion)
+async fn handle_confirm_delete_branch(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        // Confirm with y - delete the branch
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.confirm_delete_branch().await?;
+        }
+        // Cancel with n, N, or Esc - keep the branch
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.cancel_input();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Handle input when in add worktree mode
+async fn handle_add_worktree_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        // Cancel
+        KeyCode::Esc => {
+            app.cancel_input();
+        }
+        // Confirm selection
+        KeyCode::Enter => {
+            app.submit_add_worktree().await?;
+        }
+        // Navigate up in branch list (clear input buffer if typing)
+        KeyCode::Up | KeyCode::Char('k') if app.input_buffer.is_empty() => {
+            if app.add_worktree_idx > 0 {
+                app.add_worktree_idx -= 1;
+            }
+        }
+        // Navigate down in branch list
+        KeyCode::Down | KeyCode::Char('j') if app.input_buffer.is_empty() => {
+            if app.add_worktree_idx + 1 < app.available_branches.len() {
+                app.add_worktree_idx += 1;
+            }
+        }
+        // Backspace - delete character or if empty, go back to list selection
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
+        // Type character - switch to new branch input mode
+        KeyCode::Char(c) => {
+            app.input_buffer.push(c);
         }
         _ => {}
     }
@@ -201,9 +263,14 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
             Focus::Terminal => {}
         },
 
-        // Create new
+        // Create new (n for sessions, a for worktrees)
         KeyCode::Char('n') => {
             app.create_new().await?;
+        }
+
+        // Add worktree (when in Branches focus)
+        KeyCode::Char('a') if app.focus == Focus::Branches => {
+            app.start_add_worktree();
         }
 
         // Delete (with confirmation)
