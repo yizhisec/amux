@@ -1,5 +1,6 @@
 //! Session management
 
+use crate::claude_session;
 use crate::persistence::{self, SessionMeta};
 use crate::pty::{ClaudeSessionMode, PtyProcess};
 use anyhow::Result;
@@ -25,6 +26,7 @@ pub struct Session {
     pub worktree_path: PathBuf,
     pub claude_session_id: Option<String>,  // Associated Claude Code session ID
     pub claude_session_started: bool,       // Whether Claude session has been started before
+    pub name_updated_from_claude: bool,     // Whether name was updated from Claude's first message
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
@@ -48,6 +50,7 @@ impl Session {
             worktree_path,
             claude_session_id,
             claude_session_started: false,  // New session, not started yet
+            name_updated_from_claude: false, // Name not yet updated from Claude
             pty: None,
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -66,6 +69,7 @@ impl Session {
             worktree_path: meta.worktree_path,
             claude_session_id: meta.claude_session_id,
             claude_session_started,  // Restored session was likely started before
+            name_updated_from_claude: meta.name_updated_from_claude,
             pty: None, // PTY will be started on demand
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -195,6 +199,20 @@ impl Session {
             buffer.clone()
         } else {
             Vec::new()
+        }
+    }
+
+    /// Update session name from Claude's first user message
+    pub fn update_name_from_claude(&mut self) {
+        if self.name_updated_from_claude {
+            return; // Already updated
+        }
+        if let Some(ref claude_id) = self.claude_session_id {
+            if let Some(msg) = claude_session::get_first_user_message(&self.worktree_path, claude_id)
+            {
+                self.name = msg;
+                self.name_updated_from_claude = true;
+            }
         }
     }
 }

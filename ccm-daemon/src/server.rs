@@ -252,8 +252,21 @@ impl CcmDaemon for CcmDaemonService {
         request: Request<ListSessionsRequest>,
     ) -> Result<Response<ListSessionsResponse>, Status> {
         let req = request.into_inner();
-        let state = self.state.read().await;
 
+        // Try to update session names from Claude's first message
+        {
+            let mut state = self.state.write().await;
+            for session in state.sessions.values_mut() {
+                if !session.name_updated_from_claude {
+                    session.update_name_from_claude();
+                    if session.name_updated_from_claude {
+                        let _ = persistence::save_session_meta(session);
+                    }
+                }
+            }
+        }
+
+        let state = self.state.read().await;
         let sessions: Vec<SessionInfo> = state
             .sessions
             .values()
@@ -435,8 +448,26 @@ impl CcmDaemon for CcmDaemonService {
         tokio::spawn(async move {
             let mut buf = [0u8; 4096];
             let mut save_counter = 0u32;
+            let mut name_check_counter = 0u32;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+                // Periodically try to update session name from Claude's first message
+                name_check_counter += 1;
+                if name_check_counter >= 50 {
+                    // Check every ~0.5 seconds
+                    name_check_counter = 0;
+                    let mut state = state_clone.write().await;
+                    if let Some(session) = state.sessions.get_mut(&session_id_clone) {
+                        if !session.name_updated_from_claude {
+                            session.update_name_from_claude();
+                            if session.name_updated_from_claude {
+                                // Save updated metadata
+                                let _ = persistence::save_session_meta(session);
+                            }
+                        }
+                    }
+                }
 
                 let state = state_clone.read().await;
                 if let Some(session) = state.sessions.get(&session_id_clone) {
