@@ -1,5 +1,6 @@
 //! Session management
 
+use crate::persistence::{self, SessionMeta};
 use crate::pty::PtyProcess;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -46,6 +47,42 @@ impl Session {
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Restore a session from persisted metadata
+    pub fn from_meta(meta: SessionMeta) -> Self {
+        Self {
+            id: meta.id,
+            name: meta.name,
+            repo_id: meta.repo_id,
+            branch: meta.branch,
+            worktree_path: meta.worktree_path,
+            pty: None, // PTY will be started on demand
+            screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Load terminal history from disk and restore buffer
+    pub fn load_history(&self) -> Result<()> {
+        let history = persistence::load_session_history(&self.id)?;
+        if !history.is_empty() {
+            // Restore raw buffer
+            if let Ok(mut buffer) = self.raw_output_buffer.lock() {
+                *buffer = history.clone();
+            }
+            // Replay through VT100 parser
+            if let Ok(mut parser) = self.screen_buffer.lock() {
+                parser.process(&history);
+            }
+        }
+        Ok(())
+    }
+
+    /// Save session to disk (metadata + history)
+    #[allow(dead_code)]
+    pub fn save(&self) -> Result<()> {
+        persistence::save_session(self)
     }
 
     /// Start the session (spawn PTY)

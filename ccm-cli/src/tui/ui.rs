@@ -1,6 +1,6 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
-use super::app::{App, Focus, InputMode, TerminalMode};
+use super::app::{App, DeleteTarget, Focus, InputMode, TerminalMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -65,6 +65,12 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
     // Check for input mode overlay
     if app.input_mode == InputMode::NewBranch {
         draw_input_overlay(f, area, app);
+        return;
+    }
+
+    // Check for confirm delete overlay
+    if let InputMode::ConfirmDelete(ref target) = app.input_mode {
+        draw_confirm_delete_overlay(f, area, target);
         return;
     }
 
@@ -330,6 +336,53 @@ fn draw_input_overlay(f: &mut Frame, area: Rect, app: &App) {
         popup_area.x + app.input_buffer.len() as u16 + 1,
         popup_area.y + 1,
     ));
+}
+
+/// Draw confirm delete overlay
+fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget) {
+    // Center the confirm box
+    let popup_width = 50.min(area.width.saturating_sub(4));
+    let popup_height = 5;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    // Build message based on target
+    let (title, message) = match target {
+        DeleteTarget::Worktree { branch, .. } => (
+            " Delete Worktree ",
+            format!("Delete worktree '{}'?", branch),
+        ),
+        DeleteTarget::Session { name, .. } => (
+            " Delete Session ",
+            format!("Delete session '{}'?", name),
+        ),
+    };
+
+    let text = vec![
+        Line::from(message),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y/Enter]", Style::default().fg(Color::Green)),
+            Span::raw(" Yes  "),
+            Span::styled("[n/Esc]", Style::default().fg(Color::Red)),
+            Span::raw(" No"),
+        ]),
+    ];
+
+    let confirm = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))
+                .title(title),
+        );
+    f.render_widget(confirm, popup_area);
 }
 
 /// Draw status bar at the bottom

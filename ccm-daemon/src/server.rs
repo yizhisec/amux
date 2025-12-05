@@ -1,6 +1,7 @@
 //! gRPC server implementation
 
 use crate::git::GitOps;
+use crate::persistence;
 use crate::repo::{self, Repo};
 use crate::session::{self, Session, SessionStatus};
 use crate::state::SharedState;
@@ -318,6 +319,11 @@ impl CcmDaemon for CcmDaemonService {
             status: session_status::SessionStatus::Running as i32,
         };
 
+        // Save session metadata to disk
+        if let Err(e) = persistence::save_session_meta(&session) {
+            tracing::warn!("Failed to persist session metadata: {}", e);
+        }
+
         state.sessions.insert(id, session);
 
         Ok(Response::new(info))
@@ -336,6 +342,11 @@ impl CcmDaemon for CcmDaemonService {
             .ok_or_else(|| Status::not_found("Session not found"))?;
 
         session.stop().ok();
+
+        // Delete persisted session data
+        if let Err(e) = persistence::delete_session_data(&req.session_id) {
+            tracing::warn!("Failed to delete session data: {}", e);
+        }
 
         Ok(Response::new(Empty {}))
     }
@@ -389,6 +400,7 @@ impl CcmDaemon for CcmDaemonService {
         // Spawn task to read from PTY and send to client
         tokio::spawn(async move {
             let mut buf = [0u8; 4096];
+            let mut save_counter = 0u32;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
@@ -403,11 +415,24 @@ impl CcmDaemon for CcmDaemonService {
                                 data: buf[..n].to_vec(),
                             };
                             if tx.send(Ok(output)).await.is_err() {
+                                // Client disconnected, save history before exit
+                                let _ = persistence::save_session_history(session);
                                 break;
+                            }
+
+                            // Periodically save history (every ~1 second of output)
+                            save_counter += 1;
+                            if save_counter >= 100 {
+                                save_counter = 0;
+                                let _ = persistence::save_session_history(session);
                             }
                         }
                         Ok(_) => {}
-                        Err(_) => break,
+                        Err(_) => {
+                            // PTY error, save history before exit
+                            let _ = persistence::save_session_history(session);
+                            break;
+                        }
                     }
                 } else {
                     break;

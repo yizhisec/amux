@@ -11,6 +11,11 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
         return handle_input_mode(app, key).await;
     }
 
+    // Handle confirm delete mode
+    if matches!(app.input_mode, InputMode::ConfirmDelete(_)) {
+        return handle_confirm_delete(app, key).await;
+    }
+
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
         return match app.terminal_mode {
@@ -21,6 +26,22 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
 
     // Handle sidebar navigation
     handle_navigation_input(app, key).await
+}
+
+/// Handle input when in confirm delete mode
+async fn handle_confirm_delete(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        // Confirm with y or Enter
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.confirm_delete().await?;
+        }
+        // Cancel with n, N, or Esc
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.cancel_input();
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Handle input when in text entry mode (new branch name)
@@ -69,7 +90,7 @@ async fn handle_terminal_normal_mode(app: &mut App, key: KeyEvent) -> Result<()>
         }
 
         // Exit to Sessions (or exit fullscreen first)
-        KeyCode::Esc => {
+        KeyCode::Esc | KeyCode::BackTab => {
             app.exit_terminal();
         }
 
@@ -135,7 +156,7 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
                 Focus::Sessions => {
                     // Enter terminal Normal mode if session is active
                     if app.active_session_id.is_some() {
-                        app.enter_terminal_normal().await?;
+                        app.enter_terminal().await?;
                     }
                 }
                 Focus::Terminal => {
@@ -144,8 +165,8 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
             }
         }
 
-        // Esc: backward navigation
-        KeyCode::Esc => {
+        // Esc/Shift+Tab: backward navigation
+        KeyCode::Esc | KeyCode::BackTab => {
             match app.focus {
                 Focus::Branches => {
                     // Already at the beginning
@@ -174,7 +195,7 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
             }
             Focus::Sessions => {
                 if app.active_session_id.is_some() {
-                    app.enter_terminal_normal().await?;
+                    app.enter_terminal().await?;
                 }
             }
             Focus::Terminal => {}
@@ -185,9 +206,9 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
             app.create_new().await?;
         }
 
-        // Delete
+        // Delete (with confirmation)
         KeyCode::Char('d') => {
-            app.delete().await?;
+            app.request_delete();
         }
 
         // Refresh

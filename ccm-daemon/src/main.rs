@@ -1,6 +1,7 @@
 //! CCM Daemon - Claude Code Manager Daemon
 
 mod git;
+mod persistence;
 mod pty;
 mod repo;
 mod server;
@@ -51,6 +52,27 @@ async fn main() -> Result<()> {
             state_guard.repos.insert(r.id.clone(), r);
         }
         info!("Loaded {} repos from disk", state_guard.repos.len());
+    }
+
+    // Load persisted sessions
+    if let Ok(sessions) = persistence::load_all_sessions() {
+        let mut state_guard = state.write().await;
+        for meta in sessions {
+            // Only restore if repo still exists
+            if state_guard.repos.contains_key(&meta.repo_id) {
+                let session = session::Session::from_meta(meta);
+                // Load terminal history
+                if let Err(e) = session.load_history() {
+                    info!("Failed to load history for session {}: {}", session.id, e);
+                }
+                state_guard.sessions.insert(session.id.clone(), session);
+            } else {
+                // Clean up orphaned session data
+                info!("Removing orphaned session {} (repo not found)", meta.id);
+                let _ = persistence::delete_session_data(&meta.id);
+            }
+        }
+        info!("Restored {} sessions", state_guard.sessions.len());
     }
 
     // Create Unix socket listener

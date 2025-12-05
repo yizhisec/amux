@@ -27,11 +27,19 @@ pub enum Focus {
     Terminal, // Terminal interaction area
 }
 
+/// Delete target for confirmation
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeleteTarget {
+    Worktree { repo_id: String, branch: String },
+    Session { session_id: String, name: String },
+}
+
 /// Input mode for text entry
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
     Normal,
-    NewBranch, // Entering new branch name
+    NewBranch,                           // Entering new branch name
+    ConfirmDelete(DeleteTarget),         // Confirm deletion
 }
 
 /// Terminal mode (vim-style)
@@ -299,13 +307,12 @@ impl App {
         };
     }
 
-    /// Enter terminal Normal mode (from Sessions)
-    pub async fn enter_terminal_normal(&mut self) -> Result<()> {
+    /// Enter terminal Insert mode (from Sessions)
+    pub async fn enter_terminal(&mut self) -> Result<()> {
         if self.active_session_id.is_some() {
             self.focus = Focus::Terminal;
-            self.terminal_mode = TerminalMode::Normal;
+            self.terminal_mode = TerminalMode::Insert;
             self.scroll_to_bottom();
-            deactivate_ime();
 
             // Ensure stream is connected
             if self.terminal_stream.is_none() {
@@ -379,10 +386,10 @@ impl App {
         }
     }
 
-    /// Enter interactive mode (deprecated, use enter_terminal_normal)
+    /// Enter interactive mode (deprecated, use enter_terminal)
     #[allow(dead_code)]
     pub async fn enter_interactive(&mut self) -> Result<()> {
-        self.enter_terminal_normal().await
+        self.enter_terminal().await
     }
 
     /// Exit interactive mode
@@ -420,7 +427,7 @@ impl App {
                                 self.session_idx = idx;
                                 self.update_active_session().await;
                             }
-                            self.enter_terminal_normal().await?;
+                            self.enter_terminal().await?;
                         }
                         Err(e) => {
                             self.error_message = Some(e.to_string());
@@ -469,7 +476,7 @@ impl App {
                         }
                     }
                     self.focus = Focus::Sessions;
-                    self.enter_terminal_normal().await?;
+                    self.enter_terminal().await?;
                 }
                 Err(e) => {
                     self.error_message = Some(e.to_string());
@@ -486,8 +493,8 @@ impl App {
         self.status_message = None;
     }
 
-    /// Delete selected item
-    pub async fn delete(&mut self) -> Result<()> {
+    /// Request deletion (enters confirm mode)
+    pub fn request_delete(&mut self) {
         match self.focus {
             Focus::Branches => {
                 if let (Some(repo), Some(wt)) = (
@@ -495,16 +502,10 @@ impl App {
                     self.branches.get(self.branch_idx).cloned(),
                 ) {
                     if !wt.is_main && !wt.path.is_empty() {
-                        match self.client.remove_worktree(&repo.id, &wt.branch).await {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some(format!("Removed worktree: {}", wt.branch));
-                                self.refresh_branches().await?;
-                            }
-                            Err(e) => {
-                                self.error_message = Some(e.to_string());
-                            }
-                        }
+                        self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
+                            repo_id: repo.id,
+                            branch: wt.branch,
+                        });
                     } else {
                         self.error_message = Some("Cannot remove main worktree".to_string());
                     }
@@ -512,25 +513,55 @@ impl App {
             }
             Focus::Sessions => {
                 if let Some(session) = self.sessions.get(self.session_idx).cloned() {
-                    // Disconnect if this is the active session
-                    if self.active_session_id.as_ref() == Some(&session.id) {
-                        self.disconnect_stream();
-                    }
-
-                    match self.client.destroy_session(&session.id).await {
-                        Ok(_) => {
-                            self.status_message =
-                                Some(format!("Destroyed session: {}", session.name));
-                            self.refresh_sessions().await?;
-                        }
-                        Err(e) => {
-                            self.error_message = Some(e.to_string());
-                        }
-                    }
+                    self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
+                        session_id: session.id,
+                        name: session.name,
+                    });
                 }
             }
             Focus::Terminal => {}
         }
+    }
+
+    /// Confirm and execute deletion
+    pub async fn confirm_delete(&mut self) -> Result<()> {
+        let target = match &self.input_mode {
+            InputMode::ConfirmDelete(t) => t.clone(),
+            _ => return Ok(()),
+        };
+
+        self.input_mode = InputMode::Normal;
+
+        match target {
+            DeleteTarget::Worktree { repo_id, branch } => {
+                match self.client.remove_worktree(&repo_id, &branch).await {
+                    Ok(_) => {
+                        self.status_message = Some(format!("Removed worktree: {}", branch));
+                        self.refresh_branches().await?;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e.to_string());
+                    }
+                }
+            }
+            DeleteTarget::Session { session_id, name } => {
+                // Disconnect if this is the active session
+                if self.active_session_id.as_ref() == Some(&session_id) {
+                    self.disconnect_stream();
+                }
+
+                match self.client.destroy_session(&session_id).await {
+                    Ok(_) => {
+                        self.status_message = Some(format!("Destroyed session: {}", name));
+                        self.refresh_sessions().await?;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e.to_string());
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
