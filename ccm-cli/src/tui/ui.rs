@@ -260,12 +260,8 @@ fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
     // Render terminal content using vt100
     if app.active_session_id.is_some() {
         let lines = app.get_terminal_lines(inner.height, inner.width);
-        for (row, line) in lines.iter().enumerate() {
-            if row < inner.height as usize {
-                let y = inner.y + row as u16;
-                f.render_widget(Paragraph::new(line.clone()), Rect::new(inner.x, y, inner.width, 1));
-            }
-        }
+        let paragraph = Paragraph::new(lines);
+        f.render_widget(paragraph, inner);
     } else {
         // Show placeholder
         let placeholder = Paragraph::new("Select a session to see terminal output")
@@ -297,12 +293,8 @@ fn draw_terminal_fullscreen(f: &mut Frame, area: Rect, app: &App) {
 
     // Render terminal content
     let lines = app.get_terminal_lines(inner.height, inner.width);
-    for (row, line) in lines.iter().enumerate() {
-        if row < inner.height as usize {
-            let y = inner.y + row as u16;
-            f.render_widget(Paragraph::new(line.clone()), Rect::new(inner.x, y, inner.width, 1));
-        }
-    }
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, inner);
 }
 
 /// Draw input overlay for new branch

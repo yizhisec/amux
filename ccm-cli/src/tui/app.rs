@@ -50,6 +50,7 @@ pub struct TerminalStream {
 fn deactivate_ime() {
     let _ = std::process::Command::new("dbus-send")
         .args([
+            "--session",
             "--dest=org.fcitx.Fcitx5",
             "/controller",
             "org.fcitx.Fcitx.Controller1.Deactivate",
@@ -61,6 +62,7 @@ fn deactivate_ime() {
 fn activate_ime() {
     let _ = std::process::Command::new("dbus-send")
         .args([
+            "--session",
             "--dest=org.fcitx.Fcitx5",
             "/controller",
             "org.fcitx.Fcitx.Controller1.Activate",
@@ -530,8 +532,20 @@ impl App {
             None => return Ok(()),
         };
 
-        // Get terminal size
-        let (cols, rows) = size()?;
+        // Get terminal size and calculate inner area
+        // Layout: Tab bar (3) + Main content + Status bar (3)
+        // Main content: Sidebar (25%) + Terminal (75%)
+        // Terminal has borders (2 lines, 2 cols)
+        let (full_cols, full_rows) = size()?;
+        let main_height = full_rows.saturating_sub(6); // tab + status bars
+        let terminal_width = (full_cols as f32 * 0.75) as u16;
+        let inner_rows = main_height.saturating_sub(2); // borders
+        let inner_cols = terminal_width.saturating_sub(2); // borders
+
+        // Resize vt100 parser to match
+        if let Ok(mut parser) = self.terminal_parser.lock() {
+            parser.set_size(inner_rows, inner_cols);
+        }
 
         // Create input channel
         let (input_tx, input_rx) = mpsc::channel::<AttachInput>(32);
@@ -541,8 +555,8 @@ impl App {
             .send(AttachInput {
                 session_id: session_id.clone(),
                 data: vec![],
-                rows: Some(rows as u32),
-                cols: Some(cols as u32),
+                rows: Some(inner_rows as u32),
+                cols: Some(inner_cols as u32),
             })
             .await?;
 
@@ -616,9 +630,15 @@ impl App {
 
     /// Send resize to terminal
     pub async fn resize_terminal(&mut self, rows: u16, cols: u16) -> Result<()> {
+        // Calculate inner area (same as connect_stream)
+        let main_height = rows.saturating_sub(6);
+        let terminal_width = (cols as f32 * 0.75) as u16;
+        let inner_rows = main_height.saturating_sub(2);
+        let inner_cols = terminal_width.saturating_sub(2);
+
         // Resize parser
         if let Ok(mut parser) = self.terminal_parser.lock() {
-            parser.set_size(rows, cols);
+            parser.set_size(inner_rows, inner_cols);
         }
 
         if let Some(stream) = &self.terminal_stream {
@@ -627,8 +647,8 @@ impl App {
                 .send(AttachInput {
                     session_id: stream.session_id.clone(),
                     data: vec![],
-                    rows: Some(rows as u32),
-                    cols: Some(cols as u32),
+                    rows: Some(inner_rows as u32),
+                    cols: Some(inner_cols as u32),
                 })
                 .await?;
         }
@@ -641,47 +661,60 @@ impl App {
 
         if let Ok(parser) = self.terminal_parser.lock() {
             let screen = parser.screen();
+
             for row in 0..height {
-                let mut spans = Vec::new();
-                for col in 0..width {
-                    let cell = screen.cell(row, col);
-                    if let Some(cell) = cell {
+                let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+                let mut col = 0u16;
+
+                while col < width {
+                    if let Some(cell) = screen.cell(row, col) {
                         let ch = cell.contents();
-                        let ch = if ch.is_empty() { " ".to_string() } else { ch.to_string() };
+                        if ch.is_empty() {
+                            spans.push(ratatui::text::Span::raw(" "));
+                            col += 1;
+                        } else {
+                            // Build style from cell attributes
+                            let mut style = ratatui::style::Style::default();
 
-                        let mut style = ratatui::style::Style::default();
+                            // Apply foreground color
+                            let fg = cell.fgcolor();
+                            if fg != vt100::Color::Default {
+                                style = style.fg(vt100_color_to_ratatui(fg));
+                            }
 
-                        // Apply foreground color
-                        let fg = cell.fgcolor();
-                        if fg != vt100::Color::Default {
-                            style = style.fg(vt100_color_to_ratatui(fg));
-                        }
+                            // Apply background color
+                            let bg = cell.bgcolor();
+                            if bg != vt100::Color::Default {
+                                style = style.bg(vt100_color_to_ratatui(bg));
+                            }
 
-                        // Apply background color
-                        let bg = cell.bgcolor();
-                        if bg != vt100::Color::Default {
-                            style = style.bg(vt100_color_to_ratatui(bg));
-                        }
+                            // Apply attributes
+                            if cell.bold() {
+                                style = style.add_modifier(ratatui::style::Modifier::BOLD);
+                            }
+                            if cell.italic() {
+                                style = style.add_modifier(ratatui::style::Modifier::ITALIC);
+                            }
+                            if cell.underline() {
+                                style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
+                            }
+                            if cell.inverse() {
+                                style = style.add_modifier(ratatui::style::Modifier::REVERSED);
+                            }
 
-                        // Apply attributes
-                        if cell.bold() {
-                            style = style.add_modifier(ratatui::style::Modifier::BOLD);
-                        }
-                        if cell.italic() {
-                            style = style.add_modifier(ratatui::style::Modifier::ITALIC);
-                        }
-                        if cell.underline() {
-                            style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
-                        }
-                        if cell.inverse() {
-                            style = style.add_modifier(ratatui::style::Modifier::REVERSED);
-                        }
+                            spans.push(ratatui::text::Span::styled(ch.clone(), style));
 
-                        spans.push(ratatui::text::Span::styled(ch, style));
+                            // Skip columns for wide characters
+                            use unicode_width::UnicodeWidthStr;
+                            let w = ch.width();
+                            col += w.max(1) as u16;
+                        }
                     } else {
                         spans.push(ratatui::text::Span::raw(" "));
+                        col += 1;
                     }
                 }
+
                 lines.push(ratatui::text::Line::from(spans));
             }
         }

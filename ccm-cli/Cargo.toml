@@ -24,3 +24,4 @@ dialoguer = { version = "0.11", features = ["fuzzy-select"] }
 vt100 = "0.15"
 dirs = "5"
 tokio-stream = "0.1"
+unicode-width = "0.2"

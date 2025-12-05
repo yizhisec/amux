@@ -8,7 +8,7 @@ use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, dup2, execvp, fork, read, setsid, write, ForkResult, Pid};
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
 /// PTY process handle
@@ -32,15 +32,21 @@ impl PtyProcess {
         // Open PTY
         let pty = openpty(&winsize, None).context("Failed to open PTY")?;
 
+        // Get raw fds before fork (consume OwnedFd to avoid double-close)
+        let master_raw = pty.master.into_raw_fd();
+        let slave_raw = pty.slave.into_raw_fd();
+
         // Fork
         match unsafe { fork() }.context("Failed to fork")? {
             ForkResult::Parent { child } => {
                 // Parent: close slave, keep master
-                close(pty.slave.as_raw_fd()).ok();
+                close(slave_raw).ok();
 
                 // Set master to non-blocking
-                let master_fd = pty.master;
-                fcntl(master_fd.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok();
+                fcntl(master_raw, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok();
+
+                // Wrap master_raw back into OwnedFd
+                let master_fd = unsafe { OwnedFd::from_raw_fd(master_raw) };
 
                 Ok(Self {
                     master_fd,
@@ -49,23 +55,23 @@ impl PtyProcess {
             }
             ForkResult::Child => {
                 // Child: setup PTY and exec claude
-                close(pty.master.as_raw_fd()).ok();
+                close(master_raw).ok();
 
                 // Create new session
                 setsid().ok();
 
                 // Set controlling terminal
                 unsafe {
-                    libc::ioctl(pty.slave.as_raw_fd(), libc::TIOCSCTTY, 0);
+                    libc::ioctl(slave_raw, libc::TIOCSCTTY, 0);
                 }
 
                 // Redirect stdio to slave
-                dup2(pty.slave.as_raw_fd(), libc::STDIN_FILENO).ok();
-                dup2(pty.slave.as_raw_fd(), libc::STDOUT_FILENO).ok();
-                dup2(pty.slave.as_raw_fd(), libc::STDERR_FILENO).ok();
+                dup2(slave_raw, libc::STDIN_FILENO).ok();
+                dup2(slave_raw, libc::STDOUT_FILENO).ok();
+                dup2(slave_raw, libc::STDERR_FILENO).ok();
 
-                if pty.slave.as_raw_fd() > libc::STDERR_FILENO {
-                    close(pty.slave.as_raw_fd()).ok();
+                if slave_raw > libc::STDERR_FILENO {
+                    close(slave_raw).ok();
                 }
 
                 // Change to working directory
@@ -91,7 +97,7 @@ impl PtyProcess {
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         match read(self.master_fd.as_raw_fd(), buf) {
             Ok(n) => Ok(n),
-            Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EWOULDBLOCK) => Ok(0),
+            Err(nix::errno::Errno::EAGAIN) => Ok(0),
             Err(e) => Err(anyhow!("PTY read error: {}", e)),
         }
     }
