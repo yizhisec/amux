@@ -48,8 +48,23 @@ async fn main() -> Result<()> {
     // Load persisted repos
     if let Ok(repos) = repo::load_repos() {
         let mut state_guard = state.write().await;
+        let original_count = repos.len();
+        let mut valid_repos = Vec::new();
         for r in repos {
+            // Check if repo path still exists
+            if !r.path.exists() {
+                info!(
+                    "Removing orphaned repo {} (path not found: {:?})",
+                    r.name, r.path
+                );
+                continue;
+            }
+            valid_repos.push(r.clone());
             state_guard.repos.insert(r.id.clone(), r);
+        }
+        // Save cleaned repo list if any were removed
+        if valid_repos.len() < original_count {
+            let _ = repo::save_repos(&valid_repos);
         }
         info!("Loaded {} repos from disk", state_guard.repos.len());
     }
@@ -58,19 +73,27 @@ async fn main() -> Result<()> {
     if let Ok(sessions) = persistence::load_all_sessions() {
         let mut state_guard = state.write().await;
         for meta in sessions {
-            // Only restore if repo still exists
-            if state_guard.repos.contains_key(&meta.repo_id) {
-                let session = session::Session::from_meta(meta);
-                // Load terminal history
-                if let Err(e) = session.load_history() {
-                    info!("Failed to load history for session {}: {}", session.id, e);
-                }
-                state_guard.sessions.insert(session.id.clone(), session);
-            } else {
-                // Clean up orphaned session data
+            // Check if repo still exists
+            if !state_guard.repos.contains_key(&meta.repo_id) {
                 info!("Removing orphaned session {} (repo not found)", meta.id);
                 let _ = persistence::delete_session_data(&meta.id);
+                continue;
             }
+            // Check if worktree path still exists
+            if !meta.worktree_path.exists() {
+                info!(
+                    "Removing orphaned session {} (worktree not found: {:?})",
+                    meta.id, meta.worktree_path
+                );
+                let _ = persistence::delete_session_data(&meta.id);
+                continue;
+            }
+            let session = session::Session::from_meta(meta);
+            // Load terminal history
+            if let Err(e) = session.load_history() {
+                info!("Failed to load history for session {}: {}", session.id, e);
+            }
+            state_guard.sessions.insert(session.id.clone(), session);
         }
         info!("Restored {} sessions", state_guard.sessions.len());
     }

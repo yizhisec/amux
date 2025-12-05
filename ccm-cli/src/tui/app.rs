@@ -501,13 +501,15 @@ impl App {
                     self.repos.get(self.repo_idx).cloned(),
                     self.branches.get(self.branch_idx).cloned(),
                 ) {
-                    if !wt.is_main && !wt.path.is_empty() {
+                    if wt.is_main {
+                        self.error_message = Some("Cannot remove main worktree".to_string());
+                    } else if wt.path.is_empty() {
+                        self.error_message = Some("No worktree to remove".to_string());
+                    } else {
                         self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
                             repo_id: repo.id,
                             branch: wt.branch,
                         });
-                    } else {
-                        self.error_message = Some("Cannot remove main worktree".to_string());
                     }
                 }
             }

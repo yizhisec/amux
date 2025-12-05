@@ -376,11 +376,21 @@ impl CcmDaemon for CcmDaemonService {
 
         let session_id = first_msg.session_id.clone();
 
-        // Verify session exists
+        // Verify session exists and start if needed (handles restored sessions)
         {
-            let state = state.read().await;
-            if !state.sessions.contains_key(&session_id) {
-                return Err(Status::not_found("Session not found"));
+            let mut state = state.write().await;
+            let session = state.sessions.get_mut(&session_id)
+                .ok_or_else(|| Status::not_found("Session not found"))?;
+
+            // Start session if not running
+            if session.status() == SessionStatus::Stopped {
+                session.start()
+                    .map_err(|e| Status::internal(format!("Failed to start session: {}", e)))?;
+
+                // Save updated metadata (in case claude_session_id was auto-generated)
+                if let Err(e) = persistence::save_session_meta(session) {
+                    tracing::warn!("Failed to persist session metadata: {}", e);
+                }
             }
         }
 

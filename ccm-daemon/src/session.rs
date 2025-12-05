@@ -100,11 +100,16 @@ impl Session {
             return Ok(()); // Already running
         }
 
+        // Auto-generate claude_session_id if not set (for legacy sessions)
+        if self.claude_session_id.is_none() {
+            self.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
+        }
+
         // Determine session mode based on claude_session_id and started flag
         let session_mode = match &self.claude_session_id {
             Some(id) if self.claude_session_started => ClaudeSessionMode::Resume(id.clone()),
             Some(id) => ClaudeSessionMode::New(id.clone()),
-            None => ClaudeSessionMode::None,
+            None => unreachable!(), // We just set it above
         };
 
         let pty = PtyProcess::spawn_with_session(&self.worktree_path, session_mode)?;
