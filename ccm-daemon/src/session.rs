@@ -1,7 +1,7 @@
 //! Session management
 
 use crate::persistence::{self, SessionMeta};
-use crate::pty::PtyProcess;
+use crate::pty::{ClaudeSessionMode, PtyProcess};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,8 @@ pub struct Session {
     pub repo_id: String,
     pub branch: String,
     pub worktree_path: PathBuf,
+    pub claude_session_id: Option<String>,  // Associated Claude Code session ID
+    pub claude_session_started: bool,       // Whether Claude session has been started before
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
@@ -36,6 +38,7 @@ impl Session {
         repo_id: String,
         branch: String,
         worktree_path: PathBuf,
+        claude_session_id: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -43,6 +46,8 @@ impl Session {
             repo_id,
             branch,
             worktree_path,
+            claude_session_id,
+            claude_session_started: false,  // New session, not started yet
             pty: None,
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -51,12 +56,16 @@ impl Session {
 
     /// Restore a session from persisted metadata
     pub fn from_meta(meta: SessionMeta) -> Self {
+        // If session has claude_session_id, assume it was started before (restored session)
+        let claude_session_started = meta.claude_session_id.is_some();
         Self {
             id: meta.id,
             name: meta.name,
             repo_id: meta.repo_id,
             branch: meta.branch,
             worktree_path: meta.worktree_path,
+            claude_session_id: meta.claude_session_id,
+            claude_session_started,  // Restored session was likely started before
             pty: None, // PTY will be started on demand
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -91,8 +100,19 @@ impl Session {
             return Ok(()); // Already running
         }
 
-        let pty = PtyProcess::spawn(&self.worktree_path)?;
+        // Determine session mode based on claude_session_id and started flag
+        let session_mode = match &self.claude_session_id {
+            Some(id) if self.claude_session_started => ClaudeSessionMode::Resume(id.clone()),
+            Some(id) => ClaudeSessionMode::New(id.clone()),
+            None => ClaudeSessionMode::None,
+        };
+
+        let pty = PtyProcess::spawn_with_session(&self.worktree_path, session_mode)?;
         self.pty = Some(pty);
+
+        // Mark as started for next time
+        self.claude_session_started = true;
+
         Ok(())
     }
 

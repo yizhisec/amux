@@ -17,6 +17,8 @@ pub struct SessionMeta {
     pub worktree_path: PathBuf,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub claude_session_id: Option<String>,  // Associated Claude Code session ID
 }
 
 impl SessionMeta {
@@ -35,6 +37,7 @@ impl SessionMeta {
             worktree_path: session.worktree_path.clone(),
             created_at: now,
             updated_at: now,
+            claude_session_id: session.claude_session_id.clone(),
         }
     }
 }

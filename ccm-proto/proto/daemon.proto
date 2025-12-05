@@ -101,6 +101,7 @@ message SessionInfo {
     string branch = 4;
     string worktree_path = 5;
     SessionStatus status = 6;
+    optional string claude_session_id = 7;  // Associated Claude Code session ID
 }
 
 enum SessionStatus {

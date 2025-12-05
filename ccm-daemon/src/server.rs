@@ -251,6 +251,7 @@ impl CcmDaemon for CcmDaemonService {
                     SessionStatus::Running => session_status::SessionStatus::Running as i32,
                     SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
                 },
+                claude_session_id: s.claude_session_id.clone(),
             })
             .collect();
 
@@ -295,14 +296,16 @@ impl CcmDaemon for CcmDaemonService {
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| session::generate_session_name(&req.branch, &existing_names));
 
-        // Create session
+        // Create session with auto-generated Claude session ID
         let id = session::generate_session_id();
+        let claude_session_id = Some(uuid::Uuid::new_v4().to_string());
         let mut session = Session::new(
             id.clone(),
             name.clone(),
             req.repo_id.clone(),
             req.branch.clone(),
             worktree_path.clone(),
+            claude_session_id.clone(),
         );
 
         // Start session
@@ -317,6 +320,7 @@ impl CcmDaemon for CcmDaemonService {
             branch: session.branch.clone(),
             worktree_path: session.worktree_path.to_string_lossy().to_string(),
             status: session_status::SessionStatus::Running as i32,
+            claude_session_id,
         };
 
         // Save session metadata to disk

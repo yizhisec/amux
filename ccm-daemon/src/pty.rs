@@ -11,6 +11,17 @@ use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
+/// Claude session mode
+#[derive(Debug, Clone)]
+pub enum ClaudeSessionMode {
+    /// No specific session - just run claude
+    None,
+    /// New session with specific ID
+    New(String),
+    /// Resume existing session
+    Resume(String),
+}
+
 /// PTY process handle
 pub struct PtyProcess {
     /// Master file descriptor
@@ -21,7 +32,13 @@ pub struct PtyProcess {
 
 impl PtyProcess {
     /// Spawn a new PTY process running `claude` in the given working directory
+    #[allow(dead_code)]
     pub fn spawn(working_dir: &Path) -> Result<Self> {
+        Self::spawn_with_session(working_dir, ClaudeSessionMode::None)
+    }
+
+    /// Spawn a new PTY process running `claude` with optional session ID
+    pub fn spawn_with_session(working_dir: &Path, session_mode: ClaudeSessionMode) -> Result<Self> {
         let winsize = Winsize {
             ws_row: 24,
             ws_col: 80,
@@ -77,9 +94,21 @@ impl PtyProcess {
                 // Change to working directory
                 std::env::set_current_dir(working_dir).ok();
 
-                // Exec claude
+                // Build claude command with session args
                 let cmd = CString::new("claude").unwrap();
-                let args: Vec<CString> = vec![cmd.clone()];
+                let args: Vec<CString> = match session_mode {
+                    ClaudeSessionMode::None => vec![cmd.clone()],
+                    ClaudeSessionMode::New(id) => vec![
+                        cmd.clone(),
+                        CString::new("--session-id").unwrap(),
+                        CString::new(id).unwrap(),
+                    ],
+                    ClaudeSessionMode::Resume(id) => vec![
+                        cmd.clone(),
+                        CString::new("--resume").unwrap(),
+                        CString::new(id).unwrap(),
+                    ],
+                };
                 execvp(&cmd, &args).ok();
 
                 // If exec fails, exit
