@@ -357,13 +357,13 @@ fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
             app.scroll_down(1);
         }
 
-        // Half page up
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        // Half page up (Ctrl+u or u)
+        KeyCode::Char('u') => {
             app.scroll_up(10);
         }
 
-        // Half page down
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        // Half page down (Ctrl+d or d)
+        KeyCode::Char('d') => {
             app.scroll_down(10);
         }
 

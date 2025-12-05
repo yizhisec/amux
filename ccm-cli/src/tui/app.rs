@@ -558,7 +558,7 @@ impl App {
         if let Ok(mut parser) = self.terminal_parser.lock() {
             let current = parser.screen().scrollback();
             let new_offset = current + lines;
-            parser.set_scrollback(new_offset);
+            parser.screen_mut().set_scrollback(new_offset);
             self.scroll_offset = parser.screen().scrollback();
         }
     }
@@ -568,7 +568,7 @@ impl App {
         if let Ok(mut parser) = self.terminal_parser.lock() {
             let current = parser.screen().scrollback();
             let new_offset = current.saturating_sub(lines);
-            parser.set_scrollback(new_offset);
+            parser.screen_mut().set_scrollback(new_offset);
             self.scroll_offset = parser.screen().scrollback();
         }
     }
@@ -576,7 +576,7 @@ impl App {
     /// Scroll to top
     pub fn scroll_to_top(&mut self) {
         if let Ok(mut parser) = self.terminal_parser.lock() {
-            parser.set_scrollback(usize::MAX);
+            parser.screen_mut().set_scrollback(usize::MAX);
             self.scroll_offset = parser.screen().scrollback();
         }
     }
@@ -584,7 +584,7 @@ impl App {
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
         if let Ok(mut parser) = self.terminal_parser.lock() {
-            parser.set_scrollback(0);
+            parser.screen_mut().set_scrollback(0);
             self.scroll_offset = 0;
         }
     }
@@ -950,7 +950,7 @@ impl App {
 
         // Resize vt100 parser to match
         if let Ok(mut parser) = self.terminal_parser.lock() {
-            parser.set_size(inner_rows, inner_cols);
+            parser.screen_mut().set_size(inner_rows, inner_cols);
         }
 
         // Create input channel
@@ -1200,7 +1200,7 @@ impl App {
 
         // Resize parser
         if let Ok(mut parser) = self.terminal_parser.lock() {
-            parser.set_size(inner_rows, inner_cols);
+            parser.screen_mut().set_size(inner_rows, inner_cols);
         }
 
         if let Some(stream) = &self.terminal_stream {
@@ -1265,11 +1265,11 @@ impl App {
                                 style = style.add_modifier(ratatui::style::Modifier::REVERSED);
                             }
 
-                            spans.push(ratatui::text::Span::styled(ch.clone(), style));
+                            spans.push(ratatui::text::Span::styled(ch.to_owned(), style));
 
                             // Skip columns for wide characters
                             use unicode_width::UnicodeWidthStr;
-                            let w = ch.width();
+                            let w = UnicodeWidthStr::width(ch);
                             col += w.max(1) as u16;
                         }
                     } else {

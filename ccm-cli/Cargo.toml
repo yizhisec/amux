@@ -20,9 +20,9 @@ tracing-subscriber.workspace = true
 tower = "0.5"
 hyper-util = { version = "0.1", features = ["tokio"] }
 async-stream = "0.3"
-ratatui = "0.29"
+ratatui = "0.30.0-beta.0"
 dialoguer = { version = "0.11", features = ["fuzzy-select"] }
-vt100 = "0.15"
+vt100 = "0.16"
 dirs = "5"
 tokio-stream = "0.1"
 unicode-width = "0.2"
