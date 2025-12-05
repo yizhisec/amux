@@ -4,6 +4,7 @@ members = [
     "ccm-proto",
     "ccm-cli",
     "ccm-daemon",
+    "xtask",
 ]
 
 [workspace.package]
