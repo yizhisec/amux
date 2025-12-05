@@ -1,8 +1,8 @@
 //! Session persistence - save and restore sessions across daemon restarts
 
+use crate::error::PersistenceError;
 use crate::session::Session;
 use crate::state::AppState;
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{info, warn};
@@ -66,33 +66,36 @@ pub fn session_history_file(session_id: &str) -> PathBuf {
 }
 
 /// Ensure sessions directory exists
-pub fn ensure_sessions_dir() -> Result<()> {
+pub fn ensure_sessions_dir() -> Result<(), PersistenceError> {
     let dir = sessions_dir();
     if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(PersistenceError::CreateDir)?;
     }
     Ok(())
 }
 
 /// Save session metadata
-pub fn save_session_meta(session: &Session) -> Result<()> {
+pub fn save_session_meta(session: &Session) -> Result<(), PersistenceError> {
     ensure_sessions_dir()?;
 
     let dir = session_dir(&session.id);
     if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(PersistenceError::CreateDir)?;
     }
 
     let meta = SessionMeta::from_session(session);
     let path = session_meta_file(&session.id);
     let content = serde_json::to_string_pretty(&meta)?;
-    std::fs::write(&path, content)?;
+    std::fs::write(&path, &content).map_err(|e| PersistenceError::WriteFile {
+        path: path.clone(),
+        source: e,
+    })?;
 
     Ok(())
 }
 
 /// Save session terminal history
-pub fn save_session_history(session: &Session) -> Result<()> {
+pub fn save_session_history(session: &Session) -> Result<(), PersistenceError> {
     let path = session_history_file(&session.id);
 
     // Get raw output buffer
@@ -101,30 +104,39 @@ pub fn save_session_history(session: &Session) -> Result<()> {
         return Ok(());
     }
 
-    std::fs::write(&path, &history)?;
+    std::fs::write(&path, &history).map_err(|e| PersistenceError::WriteFile {
+        path: path.clone(),
+        source: e,
+    })?;
     Ok(())
 }
 
 /// Load session metadata
-pub fn load_session_meta(session_id: &str) -> Result<SessionMeta> {
+pub fn load_session_meta(session_id: &str) -> Result<SessionMeta, PersistenceError> {
     let path = session_meta_file(session_id);
-    let content = std::fs::read_to_string(&path)?;
+    let content = std::fs::read_to_string(&path).map_err(|e| PersistenceError::ReadFile {
+        path: path.clone(),
+        source: e,
+    })?;
     let meta: SessionMeta = serde_json::from_str(&content)?;
     Ok(meta)
 }
 
 /// Load session terminal history
-pub fn load_session_history(session_id: &str) -> Result<Vec<u8>> {
+pub fn load_session_history(session_id: &str) -> Result<Vec<u8>, PersistenceError> {
     let path = session_history_file(session_id);
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let history = std::fs::read(&path)?;
+    let history = std::fs::read(&path).map_err(|e| PersistenceError::ReadFile {
+        path: path.clone(),
+        source: e,
+    })?;
     Ok(history)
 }
 
 /// Load all persisted sessions
-pub fn load_all_sessions() -> Result<Vec<SessionMeta>> {
+pub fn load_all_sessions() -> Result<Vec<SessionMeta>, PersistenceError> {
     let dir = sessions_dir();
     if !dir.exists() {
         return Ok(Vec::new());
@@ -132,9 +144,15 @@ pub fn load_all_sessions() -> Result<Vec<SessionMeta>> {
 
     let mut sessions = Vec::new();
 
-    for entry in std::fs::read_dir(&dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
+    for entry in std::fs::read_dir(&dir).map_err(|e| PersistenceError::ReadFile {
+        path: dir.clone(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| PersistenceError::ReadFile {
+            path: dir.clone(),
+            source: e,
+        })?;
+        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
             let session_id = entry.file_name().to_string_lossy().to_string();
             match load_session_meta(&session_id) {
                 Ok(meta) => sessions.push(meta),
@@ -150,17 +168,20 @@ pub fn load_all_sessions() -> Result<Vec<SessionMeta>> {
 }
 
 /// Delete session persistence data
-pub fn delete_session_data(session_id: &str) -> Result<()> {
+pub fn delete_session_data(session_id: &str) -> Result<(), PersistenceError> {
     let dir = session_dir(session_id);
     if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
+        std::fs::remove_dir_all(&dir).map_err(|e| PersistenceError::RemoveDir {
+            path: dir.clone(),
+            source: e,
+        })?;
     }
     Ok(())
 }
 
 /// Save session (metadata + history)
 #[allow(dead_code)]
-pub fn save_session(session: &Session) -> Result<()> {
+pub fn save_session(session: &Session) -> Result<(), PersistenceError> {
     save_session_meta(session)?;
     save_session_history(session)?;
     Ok(())

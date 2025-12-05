@@ -1,6 +1,6 @@
 //! Git operations wrapper
 
-use anyhow::{anyhow, Context, Result};
+use crate::error::GitError;
 use git2::Repository;
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,11 @@ impl GitOps {
     }
 
     /// Open a repository at the given path
-    pub fn open(path: &Path) -> Result<Repository> {
-        Repository::open(path).with_context(|| format!("Failed to open git repo at {:?}", path))
+    pub fn open(path: &Path) -> Result<Repository, GitError> {
+        Repository::open(path).map_err(|e| GitError::OpenRepo {
+            path: path.to_path_buf(),
+            source: e,
+        })
     }
 
     /// Get the repository name (directory name)
@@ -27,7 +30,7 @@ impl GitOps {
     }
 
     /// List all branches (local)
-    pub fn list_branches(repo: &Repository) -> Result<Vec<String>> {
+    pub fn list_branches(repo: &Repository) -> Result<Vec<String>, GitError> {
         let branches = repo.branches(Some(git2::BranchType::Local))?;
         let mut result = Vec::new();
         for branch in branches {
@@ -40,21 +43,19 @@ impl GitOps {
     }
 
     /// Get current branch name
-    pub fn current_branch(repo: &Repository) -> Result<String> {
+    pub fn current_branch(repo: &Repository) -> Result<String, GitError> {
         let head = repo.head()?;
         head.shorthand()
             .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("Cannot get current branch name"))
+            .ok_or(GitError::NoBranchName)
     }
 
     /// List all worktrees for a repository
-    pub fn list_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
+    pub fn list_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>, GitError> {
         let mut worktrees = Vec::new();
 
         // Main worktree
-        let main_path = repo
-            .workdir()
-            .ok_or_else(|| anyhow!("Repository has no working directory"))?;
+        let main_path = repo.workdir().ok_or(GitError::NoWorkdir)?;
         let main_branch = Self::current_branch(repo).unwrap_or_else(|_| "HEAD".to_string());
         worktrees.push(WorktreeInfo {
             path: main_path.to_path_buf(),
@@ -83,7 +84,7 @@ impl GitOps {
     }
 
     /// Get the branch associated with a worktree
-    fn worktree_branch(wt: &git2::Worktree) -> Result<String> {
+    fn worktree_branch(wt: &git2::Worktree) -> Result<String, GitError> {
         // wt.path() returns the gitdir path (e.g., .git/worktrees/branch-name)
         // We need to open it as a repository to get HEAD
         let wt_repo = Repository::open(wt.path())?;
@@ -91,17 +92,18 @@ impl GitOps {
     }
 
     /// Get the working directory path for a worktree
-    fn worktree_workdir(wt: &git2::Worktree) -> Result<PathBuf> {
+    fn worktree_workdir(wt: &git2::Worktree) -> Result<PathBuf, GitError> {
         // wt.path() returns the gitdir path, open it to get the workdir
         let wt_repo = Repository::open(wt.path())?;
-        wt_repo
-            .workdir()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| anyhow!("Worktree has no working directory"))
+        wt_repo.workdir().map(|p| p.to_path_buf()).ok_or(GitError::NoWorkdir)
     }
 
     /// Create a new worktree for a branch
-    pub fn create_worktree(repo: &Repository, branch: &str, base_path: &Path) -> Result<PathBuf> {
+    pub fn create_worktree(
+        repo: &Repository,
+        branch: &str,
+        base_path: &Path,
+    ) -> Result<PathBuf, GitError> {
         // Worktree path: {base_path}--{branch}
         let wt_name = branch.replace('/', "-");
         let wt_path = base_path.with_file_name(format!(
@@ -124,13 +126,9 @@ impl GitOps {
             if wt_path.join(".git").exists() {
                 // It's a git directory, might be an orphaned worktree
                 // Try to repair by removing and recreating
-                std::fs::remove_dir_all(&wt_path)
-                    .with_context(|| format!("Failed to remove orphaned worktree at {:?}", wt_path))?;
+                std::fs::remove_dir_all(&wt_path)?;
             } else {
-                return Err(anyhow!(
-                    "Path already exists and is not a git worktree: {:?}",
-                    wt_path
-                ));
+                return Err(GitError::PathNotWorktree(wt_path));
             }
         }
 
@@ -153,7 +151,7 @@ impl GitOps {
     }
 
     /// Remove a worktree
-    pub fn remove_worktree(repo: &Repository, branch: &str) -> Result<()> {
+    pub fn remove_worktree(repo: &Repository, branch: &str) -> Result<(), GitError> {
         let wt_name = branch.replace('/', "-");
 
         // Find and prune the worktree
@@ -190,29 +188,29 @@ impl GitOps {
     }
 
     /// Delete a local branch
-    pub fn delete_branch(repo: &Repository, branch: &str) -> Result<()> {
+    pub fn delete_branch(repo: &Repository, branch: &str) -> Result<(), GitError> {
         // Check if branch has a worktree
         let worktrees = Self::list_worktrees(repo)?;
         if worktrees.iter().any(|wt| wt.branch == branch) {
-            return Err(anyhow!(
-                "Cannot delete branch '{}': it has an active worktree",
-                branch
-            ));
+            return Err(GitError::CannotDeleteBranch {
+                branch: branch.to_string(),
+                reason: "it has an active worktree".to_string(),
+            });
         }
 
         // Find and delete the branch
         let mut branch_ref = repo
             .find_branch(branch, git2::BranchType::Local)
-            .with_context(|| format!("Branch '{}' not found", branch))?;
+            .map_err(|_| GitError::BranchNotFound(branch.to_string()))?;
 
         // Check if it's the current branch in main worktree
         if let Ok(head) = repo.head() {
             if let Some(head_name) = head.shorthand() {
                 if head_name == branch {
-                    return Err(anyhow!(
-                        "Cannot delete branch '{}': it is the current branch",
-                        branch
-                    ));
+                    return Err(GitError::CannotDeleteBranch {
+                        branch: branch.to_string(),
+                        reason: "it is the current branch".to_string(),
+                    });
                 }
             }
         }

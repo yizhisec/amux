@@ -47,7 +47,7 @@ impl AppState {
     }
 
     /// Ensure data directory exists
-    pub fn ensure_data_dir() -> anyhow::Result<()> {
+    pub fn ensure_data_dir() -> std::io::Result<()> {
         let dir = Self::data_dir();
         if !dir.exists() {
             std::fs::create_dir_all(&dir)?;

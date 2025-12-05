@@ -1,11 +1,11 @@
 //! gRPC server implementation
 
+use crate::error::{DaemonError, RepoError, SessionError};
 use crate::git::GitOps;
 use crate::persistence;
 use crate::repo::{self, Repo};
 use crate::session::{self, Session, SessionStatus};
 use crate::state::SharedState;
-use anyhow::Result;
 use ccm_proto::daemon::ccm_daemon_server::CcmDaemon;
 use ccm_proto::daemon::*;
 use std::pin::Pin;
@@ -35,13 +35,15 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let path = std::path::PathBuf::from(&req.path);
 
-        // Create repo
-        let repo = Repo::new(path).map_err(|e| Status::invalid_argument(e.to_string()))?;
+        // Create repo - convert RepoError to DaemonError to Status
+        let repo = Repo::new(path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         // Add to state
         let mut state = self.state.write().await;
         if state.repos.contains_key(&repo.id) {
-            return Err(Status::already_exists("Repo already added"));
+            return Err(Status::from(DaemonError::Repo(RepoError::AlreadyExists(
+                repo.id.clone(),
+            ))));
         }
 
         let info = RepoInfo {
@@ -56,7 +58,7 @@ impl CcmDaemon for CcmDaemonService {
         // Save to disk
         let repos: Vec<_> = state.repos.values().cloned().collect();
         drop(state);
-        repo::save_repos(&repos).map_err(|e| Status::internal(e.to_string()))?;
+        repo::save_repos(&repos).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(info))
     }
@@ -108,12 +110,12 @@ impl CcmDaemon for CcmDaemonService {
         state
             .repos
             .remove(&req.id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?;
+            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.id.clone()))))?;
 
         // Save to disk
         let repos: Vec<_> = state.repos.values().cloned().collect();
         drop(state);
-        repo::save_repos(&repos).map_err(|e| Status::internal(e.to_string()))?;
+        repo::save_repos(&repos).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(Empty {}))
     }
@@ -130,17 +132,17 @@ impl CcmDaemon for CcmDaemonService {
         let repo = state
             .repos
             .get(&req.repo_id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?;
+            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
 
-        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         // Get worktrees from git
         let git_worktrees =
-            GitOps::list_worktrees(&git_repo).map_err(|e| Status::internal(e.to_string()))?;
+            GitOps::list_worktrees(&git_repo).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         // Get all branches
         let branches =
-            GitOps::list_branches(&git_repo).map_err(|e| Status::internal(e.to_string()))?;
+            GitOps::list_branches(&git_repo).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         // Build response: include all branches, mark those with worktrees
         let mut worktrees: Vec<WorktreeInfo> = Vec::new();
@@ -177,12 +179,12 @@ impl CcmDaemon for CcmDaemonService {
         let repo = state
             .repos
             .get(&req.repo_id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?;
+            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
 
-        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         let wt_path = GitOps::create_worktree(&git_repo, &req.branch, &repo.path)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(WorktreeInfo {
             repo_id: req.repo_id,
@@ -215,12 +217,12 @@ impl CcmDaemon for CcmDaemonService {
         let repo = state
             .repos
             .get(&req.repo_id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?;
+            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
 
-        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         GitOps::remove_worktree(&git_repo, &req.branch)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(Empty {}))
     }
@@ -235,12 +237,12 @@ impl CcmDaemon for CcmDaemonService {
         let repo = state
             .repos
             .get(&req.repo_id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?;
+            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
 
-        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         GitOps::delete_branch(&git_repo, &req.branch)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(Empty {}))
     }
@@ -301,10 +303,12 @@ impl CcmDaemon for CcmDaemonService {
         let repo = state
             .repos
             .get(&req.repo_id)
-            .ok_or_else(|| Status::not_found("Repo not found"))?
+            .ok_or_else(|| {
+                Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone())))
+            })?
             .clone();
 
-        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         // Find or create worktree
         let worktree_path = match GitOps::find_worktree_path(&git_repo, &req.branch) {
@@ -312,7 +316,7 @@ impl CcmDaemon for CcmDaemonService {
             None => {
                 // Auto-create worktree
                 GitOps::create_worktree(&git_repo, &req.branch, &repo.path)
-                    .map_err(|e| Status::internal(format!("Failed to create worktree: {}", e)))?
+                    .map_err(|e| Status::from(DaemonError::from(e)))?
             }
         };
 
@@ -342,9 +346,9 @@ impl CcmDaemon for CcmDaemonService {
         );
 
         // Start session
-        session
-            .start()
-            .map_err(|e| Status::internal(format!("Failed to start session: {}", e)))?;
+        session.start().map_err(|e| {
+            Status::from(DaemonError::Session(SessionError::Start(e.to_string())))
+        })?;
 
         let info = SessionInfo {
             id: session.id.clone(),
@@ -376,9 +380,15 @@ impl CcmDaemon for CcmDaemonService {
         let mut session = state
             .sessions
             .remove(&req.session_id)
-            .ok_or_else(|| Status::not_found("Session not found"))?;
+            .ok_or_else(|| {
+                Status::from(DaemonError::Session(SessionError::NotFound(
+                    req.session_id.clone(),
+                )))
+            })?;
 
-        session.stop().ok();
+        if let Err(e) = session.stop() {
+            tracing::warn!("Failed to stop session {}: {}", req.session_id, e);
+        }
 
         // Delete persisted session data
         if let Err(e) = persistence::delete_session_data(&req.session_id) {
@@ -427,13 +437,17 @@ impl CcmDaemon for CcmDaemonService {
         // Verify session exists and start if needed (handles restored sessions)
         {
             let mut state = state.write().await;
-            let session = state.sessions.get_mut(&session_id)
-                .ok_or_else(|| Status::not_found("Session not found"))?;
+            let session = state.sessions.get_mut(&session_id).ok_or_else(|| {
+                Status::from(DaemonError::Session(SessionError::NotFound(
+                    session_id.clone(),
+                )))
+            })?;
 
             // Start session if not running
             if session.status() == SessionStatus::Stopped {
-                session.start()
-                    .map_err(|e| Status::internal(format!("Failed to start session: {}", e)))?;
+                session.start().map_err(|e| {
+                    Status::from(DaemonError::Session(SessionError::Start(e.to_string())))
+                })?;
 
                 // Save updated metadata (in case claude_session_id was auto-generated)
                 if let Err(e) = persistence::save_session_meta(session) {

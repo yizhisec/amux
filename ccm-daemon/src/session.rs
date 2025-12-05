@@ -95,7 +95,7 @@ impl Session {
     /// Save session to disk (metadata + history)
     #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
-        persistence::save_session(self)
+        Ok(persistence::save_session(self)?)
     }
 
     /// Start the session (spawn PTY)
@@ -144,7 +144,7 @@ impl Session {
     /// Read from PTY
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         match &self.pty {
-            Some(pty) => pty.read(buf),
+            Some(pty) => Ok(pty.read(buf)?),
             None => Ok(0),
         }
     }
@@ -152,7 +152,7 @@ impl Session {
     /// Write to PTY
     pub fn write(&self, data: &[u8]) -> Result<usize> {
         match &self.pty {
-            Some(pty) => pty.write(data),
+            Some(pty) => Ok(pty.write(data)?),
             None => Ok(0),
         }
     }

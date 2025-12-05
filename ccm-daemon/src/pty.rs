@@ -1,6 +1,6 @@
 //! PTY process management
 
-use anyhow::{anyhow, Context, Result};
+use crate::error::PtyError;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::libc;
 use nix::pty::{openpty, Winsize};
@@ -33,12 +33,15 @@ pub struct PtyProcess {
 impl PtyProcess {
     /// Spawn a new PTY process running `claude` in the given working directory
     #[allow(dead_code)]
-    pub fn spawn(working_dir: &Path) -> Result<Self> {
+    pub fn spawn(working_dir: &Path) -> Result<Self, PtyError> {
         Self::spawn_with_session(working_dir, ClaudeSessionMode::None)
     }
 
     /// Spawn a new PTY process running `claude` with optional session ID
-    pub fn spawn_with_session(working_dir: &Path, session_mode: ClaudeSessionMode) -> Result<Self> {
+    pub fn spawn_with_session(
+        working_dir: &Path,
+        session_mode: ClaudeSessionMode,
+    ) -> Result<Self, PtyError> {
         let winsize = Winsize {
             ws_row: 24,
             ws_col: 80,
@@ -47,14 +50,14 @@ impl PtyProcess {
         };
 
         // Open PTY
-        let pty = openpty(&winsize, None).context("Failed to open PTY")?;
+        let pty = openpty(&winsize, None).map_err(PtyError::Open)?;
 
         // Get raw fds before fork (consume OwnedFd to avoid double-close)
         let master_raw = pty.master.into_raw_fd();
         let slave_raw = pty.slave.into_raw_fd();
 
         // Fork
-        match unsafe { fork() }.context("Failed to fork")? {
+        match unsafe { fork() }.map_err(PtyError::Fork)? {
             ForkResult::Parent { child } => {
                 // Parent: close slave, keep master
                 close(slave_raw).ok();
@@ -124,21 +127,21 @@ impl PtyProcess {
     }
 
     /// Read data from PTY (non-blocking)
-    pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
+    pub fn read(&self, buf: &mut [u8]) -> Result<usize, PtyError> {
         match read(self.master_fd.as_raw_fd(), buf) {
             Ok(n) => Ok(n),
             Err(nix::errno::Errno::EAGAIN) => Ok(0),
-            Err(e) => Err(anyhow!("PTY read error: {}", e)),
+            Err(e) => Err(PtyError::Read(e)),
         }
     }
 
     /// Write data to PTY
-    pub fn write(&self, data: &[u8]) -> Result<usize> {
-        write(&self.master_fd, data).map_err(|e| anyhow!("PTY write error: {}", e))
+    pub fn write(&self, data: &[u8]) -> Result<usize, PtyError> {
+        write(&self.master_fd, data).map_err(PtyError::Write)
     }
 
     /// Resize the PTY window
-    pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+    pub fn resize(&self, rows: u16, cols: u16) -> Result<(), PtyError> {
         let winsize = Winsize {
             ws_row: rows,
             ws_col: cols,
@@ -148,7 +151,7 @@ impl PtyProcess {
 
         unsafe {
             if libc::ioctl(self.master_fd.as_raw_fd(), libc::TIOCSWINSZ, &winsize) < 0 {
-                return Err(anyhow!("Failed to resize PTY"));
+                return Err(PtyError::Resize(nix::errno::Errno::last()));
             }
         }
         Ok(())
@@ -163,12 +166,12 @@ impl PtyProcess {
     }
 
     /// Kill the process
-    pub fn kill(&self) -> Result<()> {
-        kill(self.child_pid, Signal::SIGTERM).ok();
+    pub fn kill(&self) -> Result<(), PtyError> {
+        kill(self.child_pid, Signal::SIGTERM).map_err(PtyError::Kill)?;
         // Give it a moment, then force kill if needed
         std::thread::sleep(std::time::Duration::from_millis(100));
         if self.is_running() {
-            kill(self.child_pid, Signal::SIGKILL).ok();
+            kill(self.child_pid, Signal::SIGKILL).map_err(PtyError::Kill)?;
         }
         Ok(())
     }

@@ -75,6 +75,12 @@ pub enum SessionError {
     #[error("session not running: {0}")]
     NotRunning(String),
 
+    #[error("failed to start session: {0}")]
+    Start(String),
+
+    #[error("failed to stop session: {0}")]
+    Stop(String),
+
     #[error("failed to spawn pty: {0}")]
     PtySpawn(#[source] PtyError),
 
