@@ -1,6 +1,6 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
-use super::app::{App, DeleteTarget, Focus, InputMode, TerminalMode};
+use super::app::{App, DeleteTarget, Focus, InputMode, PrefixMode, TerminalMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -561,16 +561,26 @@ fn draw_confirm_delete_worktree_sessions_overlay(f: &mut Frame, area: Rect, bran
 
 /// Draw status bar at the bottom
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
+    // Prefix mode takes priority - show available commands
+    if app.prefix_mode == PrefixMode::WaitingForCommand {
+        let prefix_help = "Prefix: [b] Branches | [s] Sessions | [t] Terminal | [n] New | [a] Add | [d] Delete | [r] Refresh | [f] Fullscreen | [1-9] Repo | [q] Quit";
+        let paragraph = Paragraph::new(prefix_help)
+            .style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Magenta)));
+        f.render_widget(paragraph, area);
+        return;
+    }
+
     let (message, color) = if let Some(err) = &app.error_message {
         (err.clone(), Color::Red)
     } else if let Some(status) = &app.status_message {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
-            Focus::Branches => "[1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [d] Delete | [q] Quit",
-            Focus::Sessions => "[Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [d] Delete | [q] Quit",
+            Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [d] Delete | [q] Quit",
+            Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [d] Delete | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
-                TerminalMode::Normal => "[j/k] Scroll | [Ctrl+d/u] Page | [G] Bottom | [g] Top | [i] Insert | [f] Fullscreen | [Esc] Exit",
+                TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [Esc] Exit",
                 TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",
             },
         };

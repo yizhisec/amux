@@ -1,11 +1,25 @@
 //! Input handling - navigation mode vs terminal Normal/Insert modes
+//!
+//! Supports both direct keybindings and prefix key mode (Ctrl+s as prefix).
+//! Prefix mode allows access to navigation commands from any context.
 
-use super::app::{App, Focus, InputMode, TerminalMode};
+use super::app::{App, Focus, InputMode, PrefixMode, TerminalMode};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handle keyboard input
 pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    // Check for prefix key (Ctrl+s) - works in any context except text input
+    if is_prefix_key(&key) && !is_text_input_mode(app) {
+        app.prefix_mode = PrefixMode::WaitingForCommand;
+        return Ok(());
+    }
+
+    // Handle prefix mode commands
+    if app.prefix_mode == PrefixMode::WaitingForCommand {
+        return handle_prefix_command(app, key).await;
+    }
+
     // Handle input mode (new branch name entry)
     if app.input_mode == InputMode::NewBranch {
         return handle_input_mode(app, key).await;
@@ -41,6 +55,111 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
 
     // Handle sidebar navigation
     handle_navigation_input(app, key).await
+}
+
+/// Check if key is the prefix key (Ctrl+s)
+fn is_prefix_key(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s')
+}
+
+/// Check if we're in a text input mode where prefix key shouldn't work
+fn is_text_input_mode(app: &App) -> bool {
+    matches!(app.input_mode, InputMode::NewBranch | InputMode::AddWorktree)
+}
+
+/// Handle commands after prefix key (Ctrl+s + ?)
+async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
+    // Reset prefix mode first
+    app.prefix_mode = PrefixMode::None;
+
+    // Esc cancels prefix mode
+    if key.code == KeyCode::Esc {
+        return Ok(());
+    }
+
+    match key.code {
+        // Navigation: b = go to Branches, s = go to Sessions
+        KeyCode::Char('b') => {
+            // Exit terminal if needed
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::Branches;
+        }
+        KeyCode::Char('s') => {
+            // Exit terminal if needed
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::Sessions;
+        }
+
+        // Terminal: t = go to Terminal (enter insert mode)
+        KeyCode::Char('t') => {
+            if app.active_session_id.is_some() {
+                app.enter_terminal().await?;
+            }
+        }
+
+        // Actions: n = new (session/worktree based on context)
+        KeyCode::Char('n') => {
+            // Exit terminal first if needed
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.create_new().await?;
+        }
+
+        // Actions: a = add worktree
+        KeyCode::Char('a') => {
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::Branches;
+            app.start_add_worktree();
+        }
+
+        // Actions: d = delete
+        KeyCode::Char('d') => {
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.request_delete();
+        }
+
+        // Actions: r = refresh
+        KeyCode::Char('r') => {
+            app.refresh_all().await?;
+        }
+
+        // Actions: f = toggle fullscreen (terminal)
+        KeyCode::Char('f') | KeyCode::Char('z') => {
+            if app.focus == Focus::Terminal || app.active_session_id.is_some() {
+                app.toggle_fullscreen();
+            }
+        }
+
+        // Repo switching: 1-9
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            let idx = (c as usize) - ('1' as usize);
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.switch_repo(idx).await;
+        }
+
+        // Quit: q
+        KeyCode::Char('q') => {
+            app.should_quit = true;
+        }
+
+        // Unknown command - show hint
+        _ => {
+            app.status_message = Some("Prefix: b=branches s=sessions t=terminal n=new d=delete r=refresh q=quit".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle input when in confirm delete mode

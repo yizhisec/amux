@@ -60,6 +60,15 @@ pub enum TerminalMode {
     Insert, // Interactive input mode
 }
 
+/// Prefix key mode state
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrefixMode {
+    /// Normal mode - no prefix active
+    None,
+    /// Waiting for command after Ctrl+s prefix
+    WaitingForCommand,
+}
+
 /// Terminal stream state for a session
 pub struct TerminalStream {
     pub session_id: String,
@@ -119,6 +128,9 @@ pub struct App {
 
     // Event subscription
     pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
+
+    // Prefix key mode
+    pub prefix_mode: PrefixMode,
 }
 
 impl App {
@@ -148,6 +160,7 @@ impl App {
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
             event_rx: None,
+            prefix_mode: PrefixMode::None,
         };
 
         // Load initial data

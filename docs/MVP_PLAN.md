@@ -93,13 +93,30 @@ Protocol buffer definitions for gRPC:
 
 ## Keybindings
 
+### Prefix Key (Ctrl+s)
+Works from any context (except text input). Press `Ctrl+s` then:
+- `b`: Go to Branches
+- `s`: Go to Sessions
+- `t`: Go to Terminal (Insert mode)
+- `n`: New session/worktree
+- `a`: Add worktree
+- `d`: Delete
+- `r`: Refresh all
+- `f/z`: Toggle fullscreen
+- `1-9`: Switch repos
+- `q`: Quit
+- `Esc`: Cancel prefix
+
 ### Navigation Mode (Sidebar)
 - `1-9`: Switch repos
 - `Tab`: Move focus (Branches → Sessions → Terminal)
+- `Shift+Tab/Esc`: Move focus backward
 - `j/k`: Move selection
 - `Enter`: Enter terminal / create session
 - `n`: New branch/session
+- `a`: Add worktree (in Branches)
 - `d`: Delete branch/session
+- `r`: Refresh all
 - `q`: Quit
 
 ### Terminal Normal Mode
@@ -108,7 +125,7 @@ Protocol buffer definitions for gRPC:
 - `g/G`: Top/bottom
 - `i/Enter`: Enter Insert mode
 - `f/z`: Toggle fullscreen
-- `Esc`: Exit to Sessions
+- `Esc/Shift+Tab`: Exit to Sessions
 
 ### Terminal Insert Mode
 - All keys sent to terminal
