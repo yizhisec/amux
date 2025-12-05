@@ -243,6 +243,7 @@ fn key_to_bytes(key: &KeyEvent) -> Vec<u8> {
         Char(c) => c.to_string().into_bytes(),
         Enter => vec![b'\r'],
         Tab => vec![b'\t'],
+        BackTab => b"\x1b[Z".to_vec(), // Shift+Tab escape sequence
         Backspace => vec![0x7f],
         Esc => vec![0x1b],
         Up => b"\x1b[A".to_vec(),
