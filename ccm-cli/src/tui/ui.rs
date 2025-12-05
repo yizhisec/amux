@@ -93,7 +93,12 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // Check for confirm delete worktree sessions overlay
-    if let InputMode::ConfirmDeleteWorktreeSessions { ref branch, session_count, .. } = app.input_mode {
+    if let InputMode::ConfirmDeleteWorktreeSessions {
+        ref branch,
+        session_count,
+        ..
+    } = app.input_mode
+    {
         draw_confirm_delete_worktree_sessions_overlay(f, area, branch, session_count);
         return;
     }
@@ -406,10 +411,9 @@ fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget)
             " Delete Worktree ",
             format!("Delete worktree '{}'?", branch),
         ),
-        DeleteTarget::Session { name, .. } => (
-            " Delete Session ",
-            format!("Delete session '{}'?", name),
-        ),
+        DeleteTarget::Session { name, .. } => {
+            (" Delete Session ", format!("Delete session '{}'?", name))
+        }
     };
 
     let text = vec![
@@ -511,7 +515,11 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App) {
     } else {
         &app.input_buffer
     };
-    let prefix = if !app.input_buffer.is_empty() { "> " } else { "  " };
+    let prefix = if !app.input_buffer.is_empty() {
+        "> "
+    } else {
+        "  "
+    };
     let input = Paragraph::new(format!("{}New: {}", prefix, input_text)).style(input_style);
     f.render_widget(input, chunks[4]);
 
@@ -560,7 +568,12 @@ fn draw_confirm_delete_branch_overlay(f: &mut Frame, area: Rect, branch: &str) {
 }
 
 /// Draw confirm delete worktree sessions overlay
-fn draw_confirm_delete_worktree_sessions_overlay(f: &mut Frame, area: Rect, branch: &str, session_count: i32) {
+fn draw_confirm_delete_worktree_sessions_overlay(
+    f: &mut Frame,
+    area: Rect,
+    branch: &str,
+    session_count: i32,
+) {
     // Center the confirm box
     let popup_width = 60.min(area.width.saturating_sub(4));
     let popup_height = 7;
@@ -572,9 +585,16 @@ fn draw_confirm_delete_worktree_sessions_overlay(f: &mut Frame, area: Rect, bran
     let clear = Block::default().style(Style::default().bg(Color::Black));
     f.render_widget(clear, area);
 
-    let session_word = if session_count == 1 { "session" } else { "sessions" };
+    let session_word = if session_count == 1 {
+        "session"
+    } else {
+        "sessions"
+    };
     let text = vec![
-        Line::from(format!("Worktree '{}' has {} active {}.", branch, session_count, session_word)),
+        Line::from(format!(
+            "Worktree '{}' has {} active {}.",
+            branch, session_count, session_word
+        )),
         Line::from("Delete sessions first to remove worktree?"),
         Line::from(""),
         Line::from(vec![
@@ -602,8 +622,16 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     if app.prefix_mode == PrefixMode::WaitingForCommand {
         let prefix_help = "Prefix: [b] Branches | [s] Sessions | [t] Terminal | [n] New | [a] Add | [d] Delete | [r] Refresh | [f] Fullscreen | [1-9] Repo | [q] Quit";
         let paragraph = Paragraph::new(prefix_help)
-            .style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Magenta)));
+            .style(
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            );
         f.render_widget(paragraph, area);
         return;
     }

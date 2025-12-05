@@ -95,7 +95,10 @@ impl GitOps {
     fn worktree_workdir(wt: &git2::Worktree) -> Result<PathBuf, GitError> {
         // wt.path() returns the gitdir path, open it to get the workdir
         let wt_repo = Repository::open(wt.path())?;
-        wt_repo.workdir().map(|p| p.to_path_buf()).ok_or(GitError::NoWorkdir)
+        wt_repo
+            .workdir()
+            .map(|p| p.to_path_buf())
+            .ok_or(GitError::NoWorkdir)
     }
 
     /// Create a new worktree for a branch

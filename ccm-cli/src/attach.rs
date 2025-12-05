@@ -11,9 +11,11 @@ use std::io::{self, Write};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+#[allow(dead_code)]
 type Result<T> = std::result::Result<T, AttachError>;
 
 /// Attach to a session
+#[allow(dead_code)]
 pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
     // Get terminal size
     let (cols, rows) = size().map_err(AttachError::Terminal)?;
@@ -107,17 +109,15 @@ pub async fn attach(client: &mut Client, session_id: &str) -> Result<()> {
 }
 
 /// Convert a key event to bytes to send to PTY
+#[allow(dead_code)]
 fn key_to_bytes(key: &crossterm::event::KeyEvent) -> Vec<u8> {
     use KeyCode::*;
 
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            Char(c) => {
-                // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
-                let ctrl_char = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a' - 1);
-                return vec![ctrl_char];
-            }
-            _ => {}
+        if let Char(c) = key.code {
+            // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
+            let ctrl_char = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a' - 1);
+            return vec![ctrl_char];
         }
     }
 

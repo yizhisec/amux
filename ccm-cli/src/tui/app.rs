@@ -23,7 +23,7 @@ use tracing::{debug, warn};
 
 type Result<T> = std::result::Result<T, TuiError>;
 
-use super::input::handle_input;
+use super::input::handle_input_sync;
 use super::ui::draw;
 
 /// Focus position in the TUI
@@ -45,12 +45,15 @@ pub enum DeleteTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
     Normal,
-    NewBranch,                           // Entering new branch name (deprecated, use AddWorktree)
-    AddWorktree,                         // Adding worktree (select branch or enter new name)
-    RenameSession { session_id: String }, // Renaming a session
-    ConfirmDelete(DeleteTarget),         // Confirm deletion
-    ConfirmDeleteBranch(String),         // Confirm deleting branch after worktree (branch name)
-    ConfirmDeleteWorktreeSessions {      // Worktree has sessions, confirm deleting them first
+    NewBranch,   // Entering new branch name (deprecated, use AddWorktree)
+    AddWorktree, // Adding worktree (select branch or enter new name)
+    RenameSession {
+        session_id: String,
+    }, // Renaming a session
+    ConfirmDelete(DeleteTarget), // Confirm deletion
+    ConfirmDeleteBranch(String), // Confirm deleting branch after worktree (branch name)
+    ConfirmDeleteWorktreeSessions {
+        // Worktree has sessions, confirm deleting them first
         repo_id: String,
         branch: String,
         session_count: i32,
@@ -71,6 +74,64 @@ pub enum PrefixMode {
     None,
     /// Waiting for command after Ctrl+s prefix
     WaitingForCommand,
+}
+
+/// Tracks which UI components need redrawing
+#[derive(Default, Clone)]
+#[allow(dead_code)]
+pub struct DirtyFlags {
+    pub sidebar: bool,     // repo/branch/session list changed
+    pub terminal: bool,    // terminal content changed
+    pub status_bar: bool,  // status bar info changed
+    pub full_redraw: bool, // need full redraw (e.g., resize)
+}
+
+#[allow(dead_code)]
+impl DirtyFlags {
+    pub fn any(&self) -> bool {
+        self.sidebar || self.terminal || self.status_bar || self.full_redraw
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn mark_all(&mut self) {
+        self.sidebar = true;
+        self.terminal = true;
+        self.status_bar = true;
+    }
+}
+
+/// Async actions that can be queued from sync input handlers
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum AsyncAction {
+    RefreshAll,
+    RefreshSessions,
+    RefreshBranches,
+    CreateSession,
+    SubmitInput,
+    SubmitRenameSession,
+    SubmitAddWorktree,
+    ConfirmDelete,
+    ConfirmDeleteBranch,
+    ConfirmDeleteWorktreeSessions,
+    DestroySession {
+        session_id: String,
+    },
+    RenameSession {
+        session_id: String,
+        new_name: String,
+    },
+    ConnectStream,
+    ResizeTerminal {
+        rows: u16,
+        cols: u16,
+    },
+    SendToTerminal {
+        data: Vec<u8>,
+    },
 }
 
 /// Terminal stream state for a session
@@ -108,14 +169,14 @@ pub struct App {
 
     // Data
     pub repos: Vec<RepoInfo>,
-    pub worktrees: Vec<WorktreeInfo>,           // Only branches with worktrees
-    pub available_branches: Vec<WorktreeInfo>,  // Branches without worktrees (for add worktree)
-    pub add_worktree_idx: usize,                // Selection index in add worktree popup
+    pub worktrees: Vec<WorktreeInfo>, // Only branches with worktrees
+    pub available_branches: Vec<WorktreeInfo>, // Branches without worktrees (for add worktree)
+    pub add_worktree_idx: usize,      // Selection index in add worktree popup
     pub sessions: Vec<SessionInfo>,
 
     // Terminal state
     pub terminal_parser: Arc<Mutex<vt100::Parser>>,
-    pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>,  // Per-session parsers
+    pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>, // Per-session parsers
     pub active_session_id: Option<String>,
     pub is_interactive: bool,
     pub terminal_stream: Option<TerminalStream>,
@@ -135,6 +196,9 @@ pub struct App {
 
     // Prefix key mode
     pub prefix_mode: PrefixMode,
+
+    // Dirty flags for optimized rendering
+    pub dirty: DirtyFlags,
 }
 
 impl App {
@@ -165,6 +229,7 @@ impl App {
             input_buffer: String::new(),
             event_rx: None,
             prefix_mode: PrefixMode::None,
+            dirty: DirtyFlags::default(),
         };
 
         // Load initial data
@@ -233,11 +298,13 @@ impl App {
         if let Some(repo) = self.repos.get(self.repo_idx) {
             let all_branches = self.client.list_worktrees(&repo.id).await?;
             // Split into worktrees (has path) and available branches (no path)
-            self.worktrees = all_branches.iter()
+            self.worktrees = all_branches
+                .iter()
                 .filter(|b| !b.path.is_empty())
                 .cloned()
                 .collect();
-            self.available_branches = all_branches.into_iter()
+            self.available_branches = all_branches
+                .into_iter()
                 .filter(|b| b.path.is_empty())
                 .collect();
         } else {
@@ -296,12 +363,14 @@ impl App {
 
             // Save current parser to map if there's an active session
             if let Some(old_id) = &self.active_session_id {
-                self.session_parsers.insert(old_id.clone(), self.terminal_parser.clone());
+                self.session_parsers
+                    .insert(old_id.clone(), self.terminal_parser.clone());
             }
 
             // Get or create parser for new session
             if let Some(new_id) = &new_session_id {
-                self.terminal_parser = self.session_parsers
+                self.terminal_parser = self
+                    .session_parsers
                     .entry(new_id.clone())
                     .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
                     .clone();
@@ -340,51 +409,94 @@ impl App {
         }
     }
 
-    /// Move selection up
-    pub async fn select_prev(&mut self) {
+    // ========== Sync versions for responsive input handling ==========
+
+    /// Move selection up (sync version - returns async action if needed)
+    pub fn select_prev_sync(&mut self) -> Option<AsyncAction> {
         match self.focus {
             Focus::Branches => {
                 if self.branch_idx > 0 {
                     self.branch_idx -= 1;
-                    let _ = self.refresh_sessions().await;
+                    self.dirty.sidebar = true;
+                    return Some(AsyncAction::RefreshSessions);
                 }
             }
             Focus::Sessions => {
                 if self.session_idx > 0 {
                     self.session_idx -= 1;
-                    self.update_active_session().await;
+                    self.dirty.sidebar = true;
+                    self.dirty.terminal = true;
+                    self.update_active_session_sync();
                 }
             }
             Focus::Terminal => {}
         }
+        None
     }
 
-    /// Move selection down
-    pub async fn select_next(&mut self) {
+    /// Move selection down (sync version - returns async action if needed)
+    pub fn select_next_sync(&mut self) -> Option<AsyncAction> {
         match self.focus {
             Focus::Branches => {
                 if !self.worktrees.is_empty() && self.branch_idx < self.worktrees.len() - 1 {
                     self.branch_idx += 1;
-                    let _ = self.refresh_sessions().await;
+                    self.dirty.sidebar = true;
+                    return Some(AsyncAction::RefreshSessions);
                 }
             }
             Focus::Sessions => {
                 if !self.sessions.is_empty() && self.session_idx < self.sessions.len() - 1 {
                     self.session_idx += 1;
-                    self.update_active_session().await;
+                    self.dirty.sidebar = true;
+                    self.dirty.terminal = true;
+                    self.update_active_session_sync();
                 }
             }
             Focus::Terminal => {}
         }
+        None
     }
 
-    /// Switch to repo by index (1-9 keys)
-    pub async fn switch_repo(&mut self, idx: usize) {
+    /// Switch to repo by index (sync version)
+    pub fn switch_repo_sync(&mut self, idx: usize) -> Option<AsyncAction> {
         if idx < self.repos.len() {
             self.repo_idx = idx;
             self.branch_idx = 0;
             self.session_idx = 0;
-            let _ = self.refresh_branches().await;
+            self.dirty.sidebar = true;
+            return Some(AsyncAction::RefreshBranches);
+        }
+        None
+    }
+
+    /// Update active session state (sync version - no stream connection)
+    fn update_active_session_sync(&mut self) {
+        let new_session_id = self.sessions.get(self.session_idx).map(|s| s.id.clone());
+
+        if self.active_session_id != new_session_id {
+            self.disconnect_stream();
+
+            // Save current parser to map if there's an active session
+            if let Some(old_id) = &self.active_session_id {
+                self.session_parsers
+                    .insert(old_id.clone(), self.terminal_parser.clone());
+            }
+
+            // Get or create parser for new session
+            if let Some(new_id) = &new_session_id {
+                self.terminal_parser = self
+                    .session_parsers
+                    .entry(new_id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                    .clone();
+            } else {
+                self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+            }
+
+            self.scroll_offset = 0;
+            self.active_session_id = new_session_id;
+            self.dirty.terminal = true;
+            // Note: Stream connection is deferred - will happen when user enters terminal
         }
     }
 
@@ -678,9 +790,9 @@ impl App {
     /// Confirm deletion of sessions and worktree
     pub async fn confirm_delete_worktree_sessions(&mut self) -> Result<()> {
         let (repo_id, branch) = match &self.input_mode {
-            InputMode::ConfirmDeleteWorktreeSessions { repo_id, branch, .. } => {
-                (repo_id.clone(), branch.clone())
-            }
+            InputMode::ConfirmDeleteWorktreeSessions {
+                repo_id, branch, ..
+            } => (repo_id.clone(), branch.clone()),
             _ => return Ok(()),
         };
 
@@ -700,10 +812,7 @@ impl App {
         }
 
         // Now proceed to delete worktree (show confirmation for worktree deletion)
-        self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
-            repo_id,
-            branch,
-        });
+        self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree { repo_id, branch });
 
         // Refresh sessions to update the UI
         self.refresh_sessions().await?;
@@ -894,6 +1003,8 @@ impl App {
     }
 
     /// Poll terminal output (non-blocking)
+    /// Note: Not used with tokio::select! architecture, kept for potential fallback
+    #[allow(dead_code)]
     pub fn poll_terminal_output(&mut self) {
         if let Some(stream) = &mut self.terminal_stream {
             // Try to receive without blocking
@@ -907,6 +1018,8 @@ impl App {
 
     /// Poll daemon events (non-blocking)
     /// Returns true if any event was processed, or if resubscription is needed
+    /// Note: Not used with tokio::select! architecture, kept for potential fallback
+    #[allow(dead_code)]
     pub fn poll_events(&mut self) -> bool {
         let mut processed = false;
         let mut channel_closed = false;
@@ -955,7 +1068,10 @@ impl App {
     fn handle_daemon_event(&mut self, event: DaemonEvent) {
         match event.event {
             Some(daemon_event::Event::SessionCreated(e)) => {
-                debug!("Event: SessionCreated {:?}", e.session.as_ref().map(|s| &s.id));
+                debug!(
+                    "Event: SessionCreated {:?}",
+                    e.session.as_ref().map(|s| &s.id)
+                );
                 if let Some(session) = e.session {
                     // Only add if it matches current repo/branch filter
                     if let (Some(repo), Some(branch)) = (
@@ -978,14 +1094,20 @@ impl App {
                 }
             }
             Some(daemon_event::Event::SessionNameUpdated(e)) => {
-                debug!("Event: SessionNameUpdated {} -> {}", e.session_id, e.new_name);
+                debug!(
+                    "Event: SessionNameUpdated {} -> {}",
+                    e.session_id, e.new_name
+                );
                 // Update session name in list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
                     session.name = e.new_name;
                 }
             }
             Some(daemon_event::Event::SessionStatusChanged(e)) => {
-                debug!("Event: SessionStatusChanged {} -> {}", e.session_id, e.new_status);
+                debug!(
+                    "Event: SessionStatusChanged {} -> {}",
+                    e.session_id, e.new_status
+                );
                 // Update session status in list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
                     session.status = e.new_status;
@@ -993,6 +1115,62 @@ impl App {
             }
             None => {}
         }
+    }
+
+    /// Execute a queued async action
+    pub async fn execute_async_action(&mut self, action: AsyncAction) -> Result<()> {
+        match action {
+            AsyncAction::RefreshAll => {
+                self.refresh_all().await?;
+            }
+            AsyncAction::RefreshSessions => {
+                let _ = self.refresh_sessions().await;
+            }
+            AsyncAction::RefreshBranches => {
+                let _ = self.refresh_branches().await;
+            }
+            AsyncAction::CreateSession => {
+                self.create_new().await?;
+            }
+            AsyncAction::SubmitInput => {
+                self.submit_input().await?;
+            }
+            AsyncAction::SubmitRenameSession => {
+                self.submit_rename_session().await?;
+            }
+            AsyncAction::SubmitAddWorktree => {
+                self.submit_add_worktree().await?;
+            }
+            AsyncAction::ConfirmDelete => {
+                self.confirm_delete().await?;
+            }
+            AsyncAction::ConfirmDeleteBranch => {
+                self.confirm_delete_branch().await?;
+            }
+            AsyncAction::ConfirmDeleteWorktreeSessions => {
+                self.confirm_delete_worktree_sessions().await?;
+            }
+            AsyncAction::DestroySession { session_id } => {
+                self.client.destroy_session(&session_id).await?;
+                let _ = self.refresh_sessions().await;
+            }
+            AsyncAction::RenameSession {
+                session_id,
+                new_name,
+            } => {
+                self.client.rename_session(&session_id, &new_name).await?;
+            }
+            AsyncAction::ConnectStream => {
+                self.enter_terminal().await?;
+            }
+            AsyncAction::ResizeTerminal { rows, cols } => {
+                self.resize_terminal(rows, cols).await?;
+            }
+            AsyncAction::SendToTerminal { data } => {
+                self.send_to_terminal(data).await?;
+            }
+        }
+        Ok(())
     }
 
     /// Send data to terminal
@@ -1123,6 +1301,21 @@ pub enum RunResult {
     Quit,
 }
 
+/// Spawn a thread to read crossterm events (blocking I/O)
+fn spawn_input_reader() -> mpsc::Receiver<Event> {
+    let (tx, rx) = mpsc::channel(32);
+
+    std::thread::spawn(move || {
+        while let Ok(event) = event::read() {
+            if tx.blocking_send(event).is_err() {
+                break; // Receiver dropped
+            }
+        }
+    });
+
+    rx
+}
+
 /// Run the TUI application
 pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     // Deactivate IME at startup
@@ -1131,49 +1324,109 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     // Setup terminal
     enable_raw_mode().map_err(TuiError::TerminalInit)?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-        .map_err(TuiError::TerminalInit)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(TuiError::TerminalInit)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(TuiError::TerminalInit)?;
 
-    // Fallback: Timer for periodic session refresh (if event subscription fails/disconnects)
+    // Spawn input reader thread (crossterm events are blocking)
+    let mut input_rx = spawn_input_reader();
+
+    // Render interval (~60fps)
+    let mut render_interval = tokio::time::interval(std::time::Duration::from_millis(16));
+    render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Fallback timers
     let mut last_refresh = std::time::Instant::now();
     let mut last_resubscribe_attempt = std::time::Instant::now();
     let refresh_interval = std::time::Duration::from_secs(5);
     let resubscribe_interval = std::time::Duration::from_secs(10);
 
-    // Main loop
+    // State
+    let mut dirty = true;
+    let mut pending_action: Option<AsyncAction> = None;
+
+    // Main loop with tokio::select!
     loop {
-        // Poll terminal output
-        app.poll_terminal_output();
+        tokio::select! {
+            biased; // Check branches in priority order
 
-        // Poll daemon events (real-time updates)
-        app.poll_events();
-
-        // Check if we need to resubscribe (event channel disconnected)
-        if app.needs_resubscribe() {
-            // Fallback: Periodic session refresh while disconnected
-            if last_refresh.elapsed() >= refresh_interval {
-                let _ = app.refresh_sessions().await;
-                last_refresh = std::time::Instant::now();
+            // 1. Highest priority: keyboard input (immediate response)
+            Some(event) = input_rx.recv() => {
+                match event {
+                    Event::Key(key) => {
+                        // Sync input handling - returns optional async action
+                        if let Some(action) = handle_input_sync(&mut app, key) {
+                            // If already have a pending action, execute it immediately
+                            if let Some(old_action) = pending_action.take() {
+                                let _ = app.execute_async_action(old_action).await;
+                            }
+                            pending_action = Some(action);
+                        }
+                        dirty = true;
+                    }
+                    Event::Resize(cols, rows) => {
+                        let _ = app.resize_terminal(rows, cols).await;
+                        dirty = true;
+                    }
+                    _ => {}
+                }
             }
 
-            // Periodically attempt to resubscribe
-            if last_resubscribe_attempt.elapsed() >= resubscribe_interval {
-                app.try_resubscribe().await;
-                last_resubscribe_attempt = std::time::Instant::now();
+            // 2. Terminal PTY output
+            Some(data) = async {
+                match app.terminal_stream.as_mut() {
+                    Some(stream) => stream.output_rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Ok(mut parser) = app.terminal_parser.lock() {
+                    parser.process(&data);
+                }
+                dirty = true;
             }
-        }
 
-        // Draw UI
-        terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
+            // 3. Daemon events
+            Some(event) = async {
+                match app.event_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                app.handle_daemon_event(event);
+                dirty = true;
+            }
 
-        // Handle events with short timeout for responsive terminal preview
-        if event::poll(std::time::Duration::from_millis(50)).map_err(TuiError::EventHandling)? {
-            if let Event::Key(key) = event::read().map_err(TuiError::EventHandling)? {
-                handle_input(&mut app, key).await?;
-            } else if let Event::Resize(cols, rows) = event::read().map_err(TuiError::EventHandling)? {
-                let _ = app.resize_terminal(rows, cols).await;
+            // 4. Render tick + execute pending async actions
+            _ = render_interval.tick() => {
+                // Execute pending async action
+                if let Some(action) = pending_action.take() {
+                    if let Err(e) = app.execute_async_action(action).await {
+                        app.error_message = Some(format!("{}", e));
+                    }
+                    dirty = true;
+                }
+
+                // Check if we need to resubscribe (event channel disconnected)
+                if app.needs_resubscribe() {
+                    // Fallback: Periodic session refresh while disconnected
+                    if last_refresh.elapsed() >= refresh_interval {
+                        let _ = app.refresh_sessions().await;
+                        last_refresh = std::time::Instant::now();
+                        dirty = true;
+                    }
+
+                    // Periodically attempt to resubscribe
+                    if last_resubscribe_attempt.elapsed() >= resubscribe_interval {
+                        app.try_resubscribe().await;
+                        last_resubscribe_attempt = std::time::Instant::now();
+                    }
+                }
+
+                // Only render if dirty
+                if dirty {
+                    terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
+                    dirty = false;
+                }
             }
         }
 

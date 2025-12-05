@@ -18,9 +18,9 @@ pub struct SessionMeta {
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]
-    pub claude_session_id: Option<String>,  // Associated Claude Code session ID
+    pub claude_session_id: Option<String>, // Associated Claude Code session ID
     #[serde(default)]
-    pub name_updated_from_claude: bool,     // Whether name was updated from Claude's first message
+    pub name_updated_from_claude: bool, // Whether name was updated from Claude's first message
 }
 
 impl SessionMeta {

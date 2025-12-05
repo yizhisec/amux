@@ -2,66 +2,71 @@
 //!
 //! Supports both direct keybindings and prefix key mode (Ctrl+s as prefix).
 //! Prefix mode allows access to navigation commands from any context.
+//!
+//! All input handlers are synchronous and return Option<AsyncAction> for deferred execution.
 
-use super::app::{App, Focus, InputMode, PrefixMode, TerminalMode};
-use crate::error::TuiError;
+use super::app::{App, AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-type Result<T> = std::result::Result<T, TuiError>;
-
-/// Handle keyboard input
-pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
+/// Handle keyboard input (sync version - returns async action if needed)
+pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     // Check for prefix key (Ctrl+s) - works in any context except text input
     if is_prefix_key(&key) && !is_text_input_mode(app) {
         app.prefix_mode = PrefixMode::WaitingForCommand;
-        return Ok(());
+        return None;
     }
 
     // Handle prefix mode commands
     if app.prefix_mode == PrefixMode::WaitingForCommand {
-        return handle_prefix_command(app, key).await;
+        return handle_prefix_command_sync(app, key);
     }
 
     // Handle input mode (new branch name entry)
     if app.input_mode == InputMode::NewBranch {
-        return handle_input_mode(app, key).await;
+        return handle_input_mode_sync(app, key);
     }
 
     // Handle add worktree mode
     if app.input_mode == InputMode::AddWorktree {
-        return handle_add_worktree_mode(app, key).await;
+        return handle_add_worktree_mode_sync(app, key);
     }
 
     // Handle rename session mode
     if matches!(app.input_mode, InputMode::RenameSession { .. }) {
-        return handle_rename_session_mode(app, key).await;
+        return handle_rename_session_mode_sync(app, key);
     }
 
     // Handle confirm delete mode
     if matches!(app.input_mode, InputMode::ConfirmDelete(_)) {
-        return handle_confirm_delete(app, key).await;
+        return handle_confirm_delete_sync(app, key);
     }
 
     // Handle confirm delete branch mode
     if matches!(app.input_mode, InputMode::ConfirmDeleteBranch(_)) {
-        return handle_confirm_delete_branch(app, key).await;
+        return handle_confirm_delete_branch_sync(app, key);
     }
 
     // Handle confirm delete worktree sessions mode
-    if matches!(app.input_mode, InputMode::ConfirmDeleteWorktreeSessions { .. }) {
-        return handle_confirm_delete_worktree_sessions(app, key).await;
+    if matches!(
+        app.input_mode,
+        InputMode::ConfirmDeleteWorktreeSessions { .. }
+    ) {
+        return handle_confirm_delete_worktree_sessions_sync(app, key);
     }
 
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
         return match app.terminal_mode {
-            TerminalMode::Insert => handle_insert_mode(app, key).await,
-            TerminalMode::Normal => handle_terminal_normal_mode(app, key).await,
+            TerminalMode::Insert => handle_insert_mode_sync(app, key),
+            TerminalMode::Normal => {
+                handle_terminal_normal_mode_sync(app, key);
+                None
+            }
         };
     }
 
     // Handle sidebar navigation
-    handle_navigation_input(app, key).await
+    handle_navigation_input_sync(app, key)
 }
 
 /// Check if key is the prefix key (Ctrl+s)
@@ -78,13 +83,13 @@ fn is_text_input_mode(app: &App) -> bool {
 }
 
 /// Handle commands after prefix key (Ctrl+s + ?)
-async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     // Reset prefix mode first
     app.prefix_mode = PrefixMode::None;
 
     // Esc cancels prefix mode
     if key.code == KeyCode::Esc {
-        return Ok(());
+        return None;
     }
 
     match key.code {
@@ -95,6 +100,7 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.exit_terminal();
             }
             app.focus = Focus::Branches;
+            None
         }
         KeyCode::Char('s') => {
             // Exit terminal if needed
@@ -102,12 +108,15 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.exit_terminal();
             }
             app.focus = Focus::Sessions;
+            None
         }
 
         // Terminal: t = go to Terminal (enter insert mode)
         KeyCode::Char('t') => {
             if app.active_session_id.is_some() {
-                app.enter_terminal().await?;
+                Some(AsyncAction::ConnectStream)
+            } else {
+                None
             }
         }
 
@@ -117,7 +126,7 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.create_new().await?;
+            Some(AsyncAction::CreateSession)
         }
 
         // Actions: a = add worktree
@@ -127,6 +136,7 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
             }
             app.focus = Focus::Branches;
             app.start_add_worktree();
+            None
         }
 
         // Actions: d = delete
@@ -135,18 +145,18 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.exit_terminal();
             }
             app.request_delete();
+            None
         }
 
         // Actions: r = refresh
-        KeyCode::Char('r') => {
-            app.refresh_all().await?;
-        }
+        KeyCode::Char('r') => Some(AsyncAction::RefreshAll),
 
         // Actions: f = toggle fullscreen (terminal)
         KeyCode::Char('f') | KeyCode::Char('z') => {
             if app.focus == Focus::Terminal || app.active_session_id.is_some() {
                 app.toggle_fullscreen();
             }
+            None
         }
 
         // Repo switching: 1-9
@@ -155,166 +165,172 @@ async fn handle_prefix_command(app: &mut App, key: KeyEvent) -> Result<()> {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.switch_repo(idx).await;
+            app.switch_repo_sync(idx)
         }
 
         // Quit: q
         KeyCode::Char('q') => {
             app.should_quit = true;
+            None
         }
 
         // Unknown command - show hint
         _ => {
-            app.status_message = Some("Prefix: b=branches s=sessions t=terminal n=new d=delete r=refresh q=quit".to_string());
+            app.status_message = Some(
+                "Prefix: b=branches s=sessions t=terminal n=new d=delete r=refresh q=quit"
+                    .to_string(),
+            );
+            None
         }
     }
-
-    Ok(())
 }
 
 /// Handle input when in confirm delete mode
-async fn handle_confirm_delete(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_confirm_delete_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
         // Confirm with y or Enter
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.confirm_delete().await?;
+            Some(AsyncAction::ConfirmDelete)
         }
         // Cancel with n, N, or Esc
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             app.cancel_input();
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input when in confirm delete branch mode (after worktree deletion)
-async fn handle_confirm_delete_branch(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_confirm_delete_branch_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
         // Confirm with y - delete the branch
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            app.confirm_delete_branch().await?;
-        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => Some(AsyncAction::ConfirmDeleteBranch),
         // Cancel with n, N, or Esc - keep the branch
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             app.cancel_input();
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input when in confirm delete worktree sessions mode
-async fn handle_confirm_delete_worktree_sessions(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_confirm_delete_worktree_sessions_sync(
+    app: &mut App,
+    key: KeyEvent,
+) -> Option<AsyncAction> {
     match key.code {
         // Confirm with y or Enter - delete sessions and proceed to worktree deletion
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            app.confirm_delete_worktree_sessions().await?;
+            Some(AsyncAction::ConfirmDeleteWorktreeSessions)
         }
         // Cancel with n, N, or Esc
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             app.cancel_input();
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input when in add worktree mode
-async fn handle_add_worktree_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
         // Cancel
         KeyCode::Esc => {
             app.cancel_input();
+            None
         }
         // Confirm selection
-        KeyCode::Enter => {
-            app.submit_add_worktree().await?;
-        }
+        KeyCode::Enter => Some(AsyncAction::SubmitAddWorktree),
         // Navigate up in branch list (clear input buffer if typing)
         KeyCode::Up | KeyCode::Char('k') if app.input_buffer.is_empty() => {
             if app.add_worktree_idx > 0 {
                 app.add_worktree_idx -= 1;
             }
+            None
         }
         // Navigate down in branch list
         KeyCode::Down | KeyCode::Char('j') if app.input_buffer.is_empty() => {
             if app.add_worktree_idx + 1 < app.available_branches.len() {
                 app.add_worktree_idx += 1;
             }
+            None
         }
         // Backspace - delete character or if empty, go back to list selection
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            None
         }
         // Type character - switch to new branch input mode
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input when in rename session mode
-async fn handle_rename_session_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_rename_session_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
-        KeyCode::Enter => {
-            app.submit_rename_session().await?;
-        }
+        KeyCode::Enter => Some(AsyncAction::SubmitRenameSession),
         KeyCode::Esc => {
             app.cancel_input();
+            None
         }
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            None
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input when in text entry mode (new branch name)
-async fn handle_input_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
-        KeyCode::Enter => {
-            app.submit_input().await?;
-        }
+        KeyCode::Enter => Some(AsyncAction::SubmitInput),
         KeyCode::Esc => {
             app.cancel_input();
+            None
         }
         KeyCode::Backspace => {
             app.input_buffer.pop();
+            None
         }
         KeyCode::Char(c) => {
             app.input_buffer.push(c);
+            None
         }
-        _ => {}
+        _ => None,
     }
-    Ok(())
 }
 
 /// Handle input in terminal Insert mode (send to PTY)
-async fn handle_insert_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_insert_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     // Esc exits to Normal mode
     if key.code == KeyCode::Esc {
         app.exit_to_normal_mode();
-        return Ok(());
+        return None;
     }
 
     // Convert key to bytes and send to terminal
     let data = key_to_bytes(&key);
     if !data.is_empty() {
-        app.send_to_terminal(data).await?;
+        Some(AsyncAction::SendToTerminal { data })
+    } else {
+        None
     }
-
-    Ok(())
 }
 
 /// Handle input in terminal Normal mode (scroll/browse)
-async fn handle_terminal_normal_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
     match key.code {
         // Toggle fullscreen
         KeyCode::Char('f') | KeyCode::Char('z') => {
@@ -363,12 +379,10 @@ async fn handle_terminal_normal_mode(app: &mut App, key: KeyEvent) -> Result<()>
 
         _ => {}
     }
-
-    Ok(())
 }
 
 /// Handle input in navigation mode (sidebar)
-async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     // Clear status messages on any key press
     app.status_message = None;
 
@@ -376,7 +390,7 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
         // Repo switching (1-9)
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             let idx = (c as usize) - ('1' as usize);
-            app.switch_repo(idx).await;
+            app.switch_repo_sync(idx)
         }
 
         // Tab: forward navigation (Branches -> Sessions -> Terminal Normal)
@@ -388,13 +402,14 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
                 Focus::Sessions => {
                     // Enter terminal Normal mode if session is active
                     if app.active_session_id.is_some() {
-                        app.enter_terminal().await?;
+                        return Some(AsyncAction::ConnectStream);
                     }
                 }
                 Focus::Terminal => {
                     // Shouldn't happen here
                 }
             }
+            None
         }
 
         // Esc/Shift+Tab: backward navigation
@@ -410,63 +425,61 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
                     // Handled in terminal modes
                 }
             }
+            None
         }
 
         // Navigation
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.select_prev().await;
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.select_next().await;
-        }
+        KeyCode::Up | KeyCode::Char('k') => app.select_prev_sync(),
+        KeyCode::Down | KeyCode::Char('j') => app.select_next_sync(),
 
         // Enter: forward navigation
         KeyCode::Enter => match app.focus {
             Focus::Branches => {
                 app.focus = Focus::Sessions;
+                None
             }
             Focus::Sessions => {
                 if app.active_session_id.is_some() {
-                    app.enter_terminal().await?;
+                    Some(AsyncAction::ConnectStream)
+                } else {
+                    None
                 }
             }
-            Focus::Terminal => {}
+            Focus::Terminal => None,
         },
 
         // Create new (n for sessions, a for worktrees)
-        KeyCode::Char('n') => {
-            app.create_new().await?;
-        }
+        KeyCode::Char('n') => Some(AsyncAction::CreateSession),
 
         // Add worktree (when in Branches focus)
         KeyCode::Char('a') if app.focus == Focus::Branches => {
             app.start_add_worktree();
+            None
         }
 
         // Delete (with confirmation)
         KeyCode::Char('d') => {
             app.request_delete();
+            None
         }
 
         // Rename session (R when in Sessions focus)
         KeyCode::Char('R') if app.focus == Focus::Sessions => {
             app.start_rename_session();
+            None
         }
 
         // Refresh (lowercase r)
-        KeyCode::Char('r') => {
-            app.refresh_all().await?;
-        }
+        KeyCode::Char('r') => Some(AsyncAction::RefreshAll),
 
         // Quit
         KeyCode::Char('q') => {
             app.should_quit = true;
+            None
         }
 
-        _ => {}
+        _ => None,
     }
-
-    Ok(())
 }
 
 /// Convert a key event to bytes to send to PTY

@@ -1,5 +1,8 @@
 //! CCM CLI - Claude Code Manager TUI
 
+// Allow large error types - tonic::Status is large but boxing it would add complexity
+#![allow(clippy::result_large_err)]
+
 mod attach;
 mod client;
 pub mod error;

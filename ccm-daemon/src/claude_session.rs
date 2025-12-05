@@ -35,7 +35,7 @@ pub fn get_first_user_message(worktree_path: &Path, claude_session_id: &str) -> 
     let file = File::open(&session_file).ok()?;
     let reader = BufReader::new(file);
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         if let Ok(entry) = serde_json::from_str::<SessionEntry>(&line) {
             if entry.entry_type == "user" {
                 if let Some(msg) = entry.message {

@@ -131,10 +131,9 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let state = self.state.read().await;
 
-        let repo = state
-            .repos
-            .get(&req.repo_id)
-            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
+        let repo = state.repos.get(&req.repo_id).ok_or_else(|| {
+            Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone())))
+        })?;
 
         let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
@@ -178,10 +177,9 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let state = self.state.read().await;
 
-        let repo = state
-            .repos
-            .get(&req.repo_id)
-            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
+        let repo = state.repos.get(&req.repo_id).ok_or_else(|| {
+            Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone())))
+        })?;
 
         let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
@@ -216,10 +214,9 @@ impl CcmDaemon for CcmDaemonService {
             ));
         }
 
-        let repo = state
-            .repos
-            .get(&req.repo_id)
-            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
+        let repo = state.repos.get(&req.repo_id).ok_or_else(|| {
+            Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone())))
+        })?;
 
         let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
@@ -236,10 +233,9 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let state = self.state.read().await;
 
-        let repo = state
-            .repos
-            .get(&req.repo_id)
-            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
+        let repo = state.repos.get(&req.repo_id).ok_or_else(|| {
+            Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone())))
+        })?;
 
         let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
@@ -348,9 +344,9 @@ impl CcmDaemon for CcmDaemonService {
         );
 
         // Start session
-        session.start().map_err(|e| {
-            Status::from(DaemonError::Session(SessionError::Start(e.to_string())))
-        })?;
+        session
+            .start()
+            .map_err(|e| Status::from(DaemonError::Session(SessionError::Start(e.to_string()))))?;
 
         let info = SessionInfo {
             id: session.id.clone(),
@@ -424,14 +420,11 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let mut state = self.state.write().await;
 
-        let mut session = state
-            .sessions
-            .remove(&req.session_id)
-            .ok_or_else(|| {
-                Status::from(DaemonError::Session(SessionError::NotFound(
-                    req.session_id.clone(),
-                )))
-            })?;
+        let mut session = state.sessions.remove(&req.session_id).ok_or_else(|| {
+            Status::from(DaemonError::Session(SessionError::NotFound(
+                req.session_id.clone(),
+            )))
+        })?;
 
         // Capture info for event before stopping
         let session_id = session.id.clone();
@@ -480,12 +473,11 @@ impl CcmDaemon for CcmDaemonService {
                         // Apply repo_id filter if specified
                         let should_send = match (&repo_filter, &event.event) {
                             (None, _) => true, // No filter, send all
-                            (Some(filter_repo_id), Some(event::Event::SessionCreated(e))) => {
-                                e.session
-                                    .as_ref()
-                                    .map(|s| &s.repo_id == filter_repo_id)
-                                    .unwrap_or(false)
-                            }
+                            (Some(filter_repo_id), Some(event::Event::SessionCreated(e))) => e
+                                .session
+                                .as_ref()
+                                .map(|s| &s.repo_id == filter_repo_id)
+                                .unwrap_or(false),
                             (Some(filter_repo_id), Some(event::Event::SessionDestroyed(e))) => {
                                 &e.repo_id == filter_repo_id
                             }
