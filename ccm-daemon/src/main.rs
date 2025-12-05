@@ -14,6 +14,7 @@ use crate::state::{AppState, SharedState};
 use anyhow::Result;
 use ccm_proto::daemon::ccm_daemon_server::CcmDaemonServer;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -98,6 +99,24 @@ async fn main() -> Result<()> {
         }
         info!("Restored {} sessions", state_guard.sessions.len());
     }
+
+    // Spawn background task to update session names from Claude
+    let state_for_bg = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let mut state_guard = state_for_bg.write().await;
+            for session in state_guard.sessions.values_mut() {
+                if !session.name_updated_from_claude {
+                    session.update_name_from_claude();
+                    if session.name_updated_from_claude {
+                        let _ = persistence::save_session_meta(session);
+                    }
+                }
+            }
+        }
+    });
 
     // Create Unix socket listener
     let listener = UnixListener::bind(&socket_path)?;
