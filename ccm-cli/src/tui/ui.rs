@@ -74,6 +74,12 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Check for rename session overlay
+    if matches!(app.input_mode, InputMode::RenameSession { .. }) {
+        draw_rename_session_overlay(f, area, app);
+        return;
+    }
+
     // Check for confirm delete overlay
     if let InputMode::ConfirmDelete(ref target) = app.input_mode {
         draw_confirm_delete_overlay(f, area, target);
@@ -350,6 +356,37 @@ fn draw_input_overlay(f: &mut Frame, area: Rect, app: &App) {
     ));
 }
 
+/// Draw rename session overlay
+fn draw_rename_session_overlay(f: &mut Frame, area: Rect, app: &App) {
+    // Center the input box
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = 5;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    // Draw input box
+    let input = Paragraph::new(app.input_buffer.as_str())
+        .style(Style::default().fg(Color::Yellow))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green))
+                .title(" Rename Session (Enter=save, Esc=cancel) "),
+        );
+    f.render_widget(input, popup_area);
+
+    // Show cursor
+    f.set_cursor_position((
+        popup_area.x + app.input_buffer.len() as u16 + 1,
+        popup_area.y + 1,
+    ));
+}
+
 /// Draw confirm delete overlay
 fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget) {
     // Center the confirm box
@@ -578,7 +615,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let help = match app.focus {
             Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [d] Delete | [q] Quit",
-            Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [d] Delete | [q] Quit",
+            Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [R] Rename | [d] Delete | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
                 TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [Esc] Exit",
                 TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",

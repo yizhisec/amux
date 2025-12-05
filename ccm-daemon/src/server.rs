@@ -375,6 +375,48 @@ impl CcmDaemon for CcmDaemonService {
         Ok(Response::new(info))
     }
 
+    async fn rename_session(
+        &self,
+        request: Request<RenameSessionRequest>,
+    ) -> Result<Response<SessionInfo>, Status> {
+        let req = request.into_inner();
+        let mut state = self.state.write().await;
+
+        let session = state.sessions.get_mut(&req.session_id).ok_or_else(|| {
+            Status::from(DaemonError::Session(SessionError::NotFound(
+                req.session_id.clone(),
+            )))
+        })?;
+
+        let old_name = session.name.clone();
+        session.name = req.new_name.clone();
+        session.name_updated_from_claude = true; // Mark as manually updated
+
+        // Save updated metadata
+        if let Err(e) = persistence::save_session_meta(session) {
+            tracing::warn!("Failed to persist session metadata after rename: {}", e);
+        }
+
+        let info = SessionInfo {
+            id: session.id.clone(),
+            name: session.name.clone(),
+            repo_id: session.repo_id.clone(),
+            branch: session.branch.clone(),
+            worktree_path: session.worktree_path.to_string_lossy().to_string(),
+            status: match session.status() {
+                SessionStatus::Running => session_status::SessionStatus::Running as i32,
+                SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
+            },
+            claude_session_id: session.claude_session_id.clone(),
+        };
+
+        // Emit session name updated event
+        self.events
+            .emit_session_name_updated(req.session_id, old_name, req.new_name);
+
+        Ok(Response::new(info))
+    }
+
     async fn destroy_session(
         &self,
         request: Request<DestroySessionRequest>,

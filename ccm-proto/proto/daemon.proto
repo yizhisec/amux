@@ -17,6 +17,7 @@ service CcmDaemon {
     // Session management
     rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
     rpc CreateSession(CreateSessionRequest) returns (SessionInfo);
+    rpc RenameSession(RenameSessionRequest) returns (SessionInfo);
     rpc DestroySession(DestroySessionRequest) returns (Empty);
 
     // Attach/Detach
@@ -97,6 +98,11 @@ message CreateSessionRequest {
     string repo_id = 1;
     string branch = 2;
     optional string name = 3;  // Custom name (optional)
+}
+
+message RenameSessionRequest {
+    string session_id = 1;
+    string new_name = 2;
 }
 
 message DestroySessionRequest {

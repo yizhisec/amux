@@ -32,6 +32,11 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
         return handle_add_worktree_mode(app, key).await;
     }
 
+    // Handle rename session mode
+    if matches!(app.input_mode, InputMode::RenameSession { .. }) {
+        return handle_rename_session_mode(app, key).await;
+    }
+
     // Handle confirm delete mode
     if matches!(app.input_mode, InputMode::ConfirmDelete(_)) {
         return handle_confirm_delete(app, key).await;
@@ -66,7 +71,10 @@ fn is_prefix_key(key: &KeyEvent) -> bool {
 
 /// Check if we're in a text input mode where prefix key shouldn't work
 fn is_text_input_mode(app: &App) -> bool {
-    matches!(app.input_mode, InputMode::NewBranch | InputMode::AddWorktree)
+    matches!(
+        app.input_mode,
+        InputMode::NewBranch | InputMode::AddWorktree | InputMode::RenameSession { .. }
+    )
 }
 
 /// Handle commands after prefix key (Ctrl+s + ?)
@@ -248,6 +256,26 @@ async fn handle_add_worktree_mode(app: &mut App, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
+/// Handle input when in rename session mode
+async fn handle_rename_session_mode(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        KeyCode::Enter => {
+            app.submit_rename_session().await?;
+        }
+        KeyCode::Esc => {
+            app.cancel_input();
+        }
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
+        KeyCode::Char(c) => {
+            app.input_buffer.push(c);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Handle input when in text entry mode (new branch name)
 async fn handle_input_mode(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
@@ -420,7 +448,12 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
             app.request_delete();
         }
 
-        // Refresh
+        // Rename session (R when in Sessions focus)
+        KeyCode::Char('R') if app.focus == Focus::Sessions => {
+            app.start_rename_session();
+        }
+
+        // Refresh (lowercase r)
         KeyCode::Char('r') => {
             app.refresh_all().await?;
         }

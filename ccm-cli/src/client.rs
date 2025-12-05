@@ -204,6 +204,21 @@ impl Client {
         Ok(response.into_inner())
     }
 
+    pub async fn rename_session(
+        &mut self,
+        session_id: &str,
+        new_name: &str,
+    ) -> Result<SessionInfo> {
+        let response = self
+            .inner
+            .rename_session(RenameSessionRequest {
+                session_id: session_id.to_string(),
+                new_name: new_name.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
     pub async fn destroy_session(&mut self, session_id: &str) -> Result<()> {
         self.inner
             .destroy_session(DestroySessionRequest {

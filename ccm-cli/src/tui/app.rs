@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tracing::{debug, warn};
 
 type Result<T> = std::result::Result<T, TuiError>;
 
@@ -46,6 +47,7 @@ pub enum InputMode {
     Normal,
     NewBranch,                           // Entering new branch name (deprecated, use AddWorktree)
     AddWorktree,                         // Adding worktree (select branch or enter new name)
+    RenameSession { session_id: String }, // Renaming a session
     ConfirmDelete(DeleteTarget),         // Confirm deletion
     ConfirmDeleteBranch(String),         // Confirm deleting branch after worktree (branch name)
     ConfirmDeleteWorktreeSessions {      // Worktree has sessions, confirm deleting them first
@@ -176,8 +178,10 @@ impl App {
 
     /// Subscribe to daemon events
     async fn subscribe_events(&mut self) {
+        debug!("Subscribing to daemon events");
         match self.client.subscribe_events(None).await {
             Ok(mut stream) => {
+                debug!("Event subscription successful");
                 let (tx, rx) = mpsc::channel::<DaemonEvent>(64);
                 self.event_rx = Some(rx);
 
@@ -189,11 +193,12 @@ impl App {
                             break;
                         }
                     }
+                    debug!("Event stream ended");
                 });
             }
             Err(e) => {
                 // Non-fatal: fall back to polling
-                tracing::warn!("Failed to subscribe to events: {}", e);
+                warn!("Failed to subscribe to events: {}", e);
             }
         }
     }
@@ -586,6 +591,48 @@ impl App {
         self.add_worktree_idx = 0;
     }
 
+    /// Start rename session mode
+    pub fn start_rename_session(&mut self) {
+        if let Some(session) = self.sessions.get(self.session_idx) {
+            self.input_mode = InputMode::RenameSession {
+                session_id: session.id.clone(),
+            };
+            self.input_buffer = session.name.clone();
+        }
+    }
+
+    /// Submit rename session
+    pub async fn submit_rename_session(&mut self) -> Result<()> {
+        let session_id = match &self.input_mode {
+            InputMode::RenameSession { session_id } => session_id.clone(),
+            _ => return Ok(()),
+        };
+
+        let new_name = self.input_buffer.trim().to_string();
+        self.input_mode = InputMode::Normal;
+        self.input_buffer.clear();
+
+        if new_name.is_empty() {
+            self.error_message = Some("Session name cannot be empty".to_string());
+            return Ok(());
+        }
+
+        match self.client.rename_session(&session_id, &new_name).await {
+            Ok(_) => {
+                self.status_message = Some(format!("Renamed session to: {}", new_name));
+                // Update local session list
+                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) {
+                    session.name = new_name;
+                }
+            }
+            Err(e) => {
+                self.error_message = Some(e.to_string());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Submit add worktree (create worktree for selected or new branch)
     pub async fn submit_add_worktree(&mut self) -> Result<()> {
         // Determine branch name: typed input or selected from list
@@ -859,16 +906,33 @@ impl App {
     }
 
     /// Poll daemon events (non-blocking)
-    /// Returns true if any event was processed
+    /// Returns true if any event was processed, or if resubscription is needed
     pub fn poll_events(&mut self) -> bool {
         let mut processed = false;
+        let mut channel_closed = false;
+
         // Collect events first to avoid borrow issues
         let mut events = Vec::new();
         if let Some(rx) = &mut self.event_rx {
-            while let Ok(event) = rx.try_recv() {
-                events.push(event);
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        // Channel closed, need to resubscribe
+                        channel_closed = true;
+                        break;
+                    }
+                }
             }
         }
+
+        // Mark channel as closed so we can resubscribe
+        if channel_closed {
+            warn!("Event channel disconnected, will attempt resubscription");
+            self.event_rx = None;
+        }
+
         // Process collected events
         for event in events {
             self.handle_daemon_event(event);
@@ -877,10 +941,21 @@ impl App {
         processed
     }
 
+    /// Check if event subscription needs to be restored
+    pub fn needs_resubscribe(&self) -> bool {
+        self.event_rx.is_none()
+    }
+
+    /// Try to resubscribe to events
+    pub async fn try_resubscribe(&mut self) {
+        self.subscribe_events().await;
+    }
+
     /// Handle a daemon event
     fn handle_daemon_event(&mut self, event: DaemonEvent) {
         match event.event {
             Some(daemon_event::Event::SessionCreated(e)) => {
+                debug!("Event: SessionCreated {:?}", e.session.as_ref().map(|s| &s.id));
                 if let Some(session) = e.session {
                     // Only add if it matches current repo/branch filter
                     if let (Some(repo), Some(branch)) = (
@@ -894,6 +969,7 @@ impl App {
                 }
             }
             Some(daemon_event::Event::SessionDestroyed(e)) => {
+                debug!("Event: SessionDestroyed {}", e.session_id);
                 // Remove session from list
                 self.sessions.retain(|s| s.id != e.session_id);
                 // Clamp session index
@@ -902,12 +978,14 @@ impl App {
                 }
             }
             Some(daemon_event::Event::SessionNameUpdated(e)) => {
+                debug!("Event: SessionNameUpdated {} -> {}", e.session_id, e.new_name);
                 // Update session name in list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
                     session.name = e.new_name;
                 }
             }
             Some(daemon_event::Event::SessionStatusChanged(e)) => {
+                debug!("Event: SessionStatusChanged {} -> {}", e.session_id, e.new_status);
                 // Update session status in list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
                     session.status = e.new_status;
@@ -1058,10 +1136,11 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(TuiError::TerminalInit)?;
 
-    // Fallback: Timer for periodic session refresh (if event subscription failed)
+    // Fallback: Timer for periodic session refresh (if event subscription fails/disconnects)
     let mut last_refresh = std::time::Instant::now();
+    let mut last_resubscribe_attempt = std::time::Instant::now();
     let refresh_interval = std::time::Duration::from_secs(5);
-    let use_polling = app.event_rx.is_none();
+    let resubscribe_interval = std::time::Duration::from_secs(10);
 
     // Main loop
     loop {
@@ -1071,10 +1150,19 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
         // Poll daemon events (real-time updates)
         app.poll_events();
 
-        // Fallback: Periodic session refresh (only if event subscription failed)
-        if use_polling && last_refresh.elapsed() >= refresh_interval {
-            let _ = app.refresh_sessions().await;
-            last_refresh = std::time::Instant::now();
+        // Check if we need to resubscribe (event channel disconnected)
+        if app.needs_resubscribe() {
+            // Fallback: Periodic session refresh while disconnected
+            if last_refresh.elapsed() >= refresh_interval {
+                let _ = app.refresh_sessions().await;
+                last_refresh = std::time::Instant::now();
+            }
+
+            // Periodically attempt to resubscribe
+            if last_resubscribe_attempt.elapsed() >= resubscribe_interval {
+                app.try_resubscribe().await;
+                last_resubscribe_attempt = std::time::Instant::now();
+            }
         }
 
         // Draw UI
