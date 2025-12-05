@@ -215,4 +215,20 @@ impl Client {
     pub fn inner_mut(&mut self) -> &mut CcmDaemonClient<Channel> {
         &mut self.inner
     }
+
+    // ============ Events ============
+
+    /// Subscribe to events from the daemon
+    pub async fn subscribe_events(
+        &mut self,
+        repo_id: Option<&str>,
+    ) -> Result<tonic::Streaming<Event>> {
+        let response = self
+            .inner
+            .subscribe_events(SubscribeEventsRequest {
+                repo_id: repo_id.map(String::from),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
 }

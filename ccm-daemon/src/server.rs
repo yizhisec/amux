@@ -1,6 +1,7 @@
 //! gRPC server implementation
 
 use crate::error::{DaemonError, RepoError, SessionError};
+use crate::events::EventBroadcaster;
 use crate::git::GitOps;
 use crate::persistence;
 use crate::repo::{self, Repo};
@@ -16,11 +17,12 @@ use tonic::{Request, Response, Status, Streaming};
 /// CCM Daemon gRPC service
 pub struct CcmDaemonService {
     state: SharedState,
+    events: EventBroadcaster,
 }
 
 impl CcmDaemonService {
-    pub fn new(state: SharedState) -> Self {
-        Self { state }
+    pub fn new(state: SharedState, events: EventBroadcaster) -> Self {
+        Self { state, events }
     }
 }
 
@@ -367,6 +369,9 @@ impl CcmDaemon for CcmDaemonService {
 
         state.sessions.insert(id, session);
 
+        // Emit session created event
+        self.events.emit_session_created(info.clone());
+
         Ok(Response::new(info))
     }
 
@@ -386,6 +391,11 @@ impl CcmDaemon for CcmDaemonService {
                 )))
             })?;
 
+        // Capture info for event before stopping
+        let session_id = session.id.clone();
+        let repo_id = session.repo_id.clone();
+        let branch = session.branch.clone();
+
         if let Err(e) = session.stop() {
             tracing::warn!("Failed to stop session {}: {}", req.session_id, e);
         }
@@ -394,6 +404,10 @@ impl CcmDaemon for CcmDaemonService {
         if let Err(e) = persistence::delete_session_data(&req.session_id) {
             tracing::warn!("Failed to delete session data: {}", e);
         }
+
+        // Emit session destroyed event
+        self.events
+            .emit_session_destroyed(session_id, repo_id, branch);
 
         Ok(Response::new(Empty {}))
     }
@@ -405,11 +419,61 @@ impl CcmDaemon for CcmDaemonService {
 
     async fn subscribe_events(
         &self,
-        _request: Request<SubscribeEventsRequest>,
+        request: Request<SubscribeEventsRequest>,
     ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
-        // TODO: Implement event broadcasting
-        // For now, return an empty stream that never sends anything
-        let (_tx, rx) = mpsc::channel::<Result<Event, Status>>(32);
+        let req = request.into_inner();
+        let repo_filter = req.repo_id;
+
+        // Subscribe to event broadcaster
+        let mut event_rx = self.events.subscribe();
+
+        // Create output channel for filtered events
+        let (tx, rx) = mpsc::channel::<Result<Event, Status>>(32);
+
+        // Spawn task to forward events with filtering
+        tokio::spawn(async move {
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        // Apply repo_id filter if specified
+                        let should_send = match (&repo_filter, &event.event) {
+                            (None, _) => true, // No filter, send all
+                            (Some(filter_repo_id), Some(event::Event::SessionCreated(e))) => {
+                                e.session
+                                    .as_ref()
+                                    .map(|s| &s.repo_id == filter_repo_id)
+                                    .unwrap_or(false)
+                            }
+                            (Some(filter_repo_id), Some(event::Event::SessionDestroyed(e))) => {
+                                &e.repo_id == filter_repo_id
+                            }
+                            // Name/status updates don't have repo_id, send all for now
+                            // TUI can filter client-side if needed
+                            (Some(_), Some(event::Event::SessionNameUpdated(_))) => true,
+                            (Some(_), Some(event::Event::SessionStatusChanged(_))) => true,
+                            (_, None) => false,
+                        };
+
+                        if should_send {
+                            // Clone the Arc'd event
+                            if tx.send(Ok((*event).clone())).await.is_err() {
+                                // Client disconnected
+                                break;
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Event subscriber lagged, missed {} events", n);
+                        // Continue receiving
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // Broadcaster closed, exit
+                        break;
+                    }
+                }
+            }
+        });
+
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 

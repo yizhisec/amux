@@ -2,7 +2,9 @@
 
 use crate::client::Client;
 use anyhow::Result;
-use ccm_proto::daemon::{AttachInput, RepoInfo, SessionInfo, WorktreeInfo};
+use ccm_proto::daemon::{
+    event as daemon_event, AttachInput, Event as DaemonEvent, RepoInfo, SessionInfo, WorktreeInfo,
+};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -16,6 +18,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
 
 use super::input::handle_input;
 use super::ui::draw;
@@ -113,6 +116,9 @@ pub struct App {
     pub status_message: Option<String>,
     pub input_mode: InputMode,
     pub input_buffer: String,
+
+    // Event subscription
+    pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
 }
 
 impl App {
@@ -141,12 +147,40 @@ impl App {
             status_message: None,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            event_rx: None,
         };
 
         // Load initial data
         app.refresh_all().await?;
 
+        // Subscribe to events (don't fail if subscription fails)
+        app.subscribe_events().await;
+
         Ok(app)
+    }
+
+    /// Subscribe to daemon events
+    async fn subscribe_events(&mut self) {
+        match self.client.subscribe_events(None).await {
+            Ok(mut stream) => {
+                let (tx, rx) = mpsc::channel::<DaemonEvent>(64);
+                self.event_rx = Some(rx);
+
+                // Spawn task to receive events and forward to channel
+                tokio::spawn(async move {
+                    while let Some(Ok(event)) = stream.next().await {
+                        if tx.send(event).await.is_err() {
+                            // Receiver dropped, exit
+                            break;
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                // Non-fatal: fall back to polling
+                tracing::warn!("Failed to subscribe to events: {}", e);
+            }
+        }
     }
 
     /// Refresh all data (repos, branches, sessions)
@@ -808,6 +842,65 @@ impl App {
         }
     }
 
+    /// Poll daemon events (non-blocking)
+    /// Returns true if any event was processed
+    pub fn poll_events(&mut self) -> bool {
+        let mut processed = false;
+        // Collect events first to avoid borrow issues
+        let mut events = Vec::new();
+        if let Some(rx) = &mut self.event_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+        // Process collected events
+        for event in events {
+            self.handle_daemon_event(event);
+            processed = true;
+        }
+        processed
+    }
+
+    /// Handle a daemon event
+    fn handle_daemon_event(&mut self, event: DaemonEvent) {
+        match event.event {
+            Some(daemon_event::Event::SessionCreated(e)) => {
+                if let Some(session) = e.session {
+                    // Only add if it matches current repo/branch filter
+                    if let (Some(repo), Some(branch)) = (
+                        self.repos.get(self.repo_idx),
+                        self.worktrees.get(self.branch_idx),
+                    ) {
+                        if session.repo_id == repo.id && session.branch == branch.branch {
+                            self.sessions.push(session);
+                        }
+                    }
+                }
+            }
+            Some(daemon_event::Event::SessionDestroyed(e)) => {
+                // Remove session from list
+                self.sessions.retain(|s| s.id != e.session_id);
+                // Clamp session index
+                if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
+                    self.session_idx = self.sessions.len() - 1;
+                }
+            }
+            Some(daemon_event::Event::SessionNameUpdated(e)) => {
+                // Update session name in list
+                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
+                    session.name = e.new_name;
+                }
+            }
+            Some(daemon_event::Event::SessionStatusChanged(e)) => {
+                // Update session status in list
+                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
+                    session.status = e.new_status;
+                }
+            }
+            None => {}
+        }
+    }
+
     /// Send data to terminal
     pub async fn send_to_terminal(&mut self, data: Vec<u8>) -> Result<()> {
         if let Some(stream) = &self.terminal_stream {
@@ -946,17 +1039,21 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Timer for periodic session refresh
+    // Fallback: Timer for periodic session refresh (if event subscription failed)
     let mut last_refresh = std::time::Instant::now();
-    let refresh_interval = std::time::Duration::from_secs(3);
+    let refresh_interval = std::time::Duration::from_secs(5);
+    let use_polling = app.event_rx.is_none();
 
     // Main loop
     loop {
         // Poll terminal output
         app.poll_terminal_output();
 
-        // Periodic session refresh (to pick up name updates from daemon)
-        if last_refresh.elapsed() >= refresh_interval {
+        // Poll daemon events (real-time updates)
+        app.poll_events();
+
+        // Fallback: Periodic session refresh (only if event subscription failed)
+        if use_polling && last_refresh.elapsed() >= refresh_interval {
             let _ = app.refresh_sessions().await;
             last_refresh = std::time::Instant::now();
         }

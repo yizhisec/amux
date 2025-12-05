@@ -2,6 +2,7 @@
 
 mod claude_session;
 pub mod error;
+mod events;
 mod git;
 mod persistence;
 mod pty;
@@ -10,6 +11,7 @@ mod server;
 mod session;
 mod state;
 
+use crate::events::EventBroadcaster;
 use crate::server::CcmDaemonService;
 use crate::state::{AppState, SharedState};
 use anyhow::Result;
@@ -101,8 +103,12 @@ async fn main() -> Result<()> {
         info!("Restored {} sessions", state_guard.sessions.len());
     }
 
+    // Create event broadcaster (before background task so it can emit events)
+    let events = EventBroadcaster::new();
+
     // Spawn background task to update session names from Claude
     let state_for_bg = state.clone();
+    let events_for_bg = events.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -110,9 +116,16 @@ async fn main() -> Result<()> {
             let mut state_guard = state_for_bg.write().await;
             for session in state_guard.sessions.values_mut() {
                 if !session.name_updated_from_claude {
+                    let old_name = session.name.clone();
                     session.update_name_from_claude();
                     if session.name_updated_from_claude {
                         let _ = persistence::save_session_meta(session);
+                        // Emit name updated event
+                        events_for_bg.emit_session_name_updated(
+                            session.id.clone(),
+                            old_name,
+                            session.name.clone(),
+                        );
                     }
                 }
             }
@@ -126,7 +139,7 @@ async fn main() -> Result<()> {
     let incoming = UnixListenerStream::new(listener);
 
     // Create gRPC service
-    let service = CcmDaemonService::new(state);
+    let service = CcmDaemonService::new(state, events);
 
     // Start server
     Server::builder()
