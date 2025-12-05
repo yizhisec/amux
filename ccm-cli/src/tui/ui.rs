@@ -86,6 +86,12 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Check for confirm delete worktree sessions overlay
+    if let InputMode::ConfirmDeleteWorktreeSessions { ref branch, session_count, .. } = app.input_mode {
+        draw_confirm_delete_worktree_sessions_overlay(f, area, branch, session_count);
+        return;
+    }
+
     // Fullscreen terminal mode
     if app.terminal_fullscreen && app.focus == Focus::Terminal {
         draw_terminal_fullscreen(f, area, app);
@@ -512,6 +518,43 @@ fn draw_confirm_delete_branch_overlay(f: &mut Frame, area: Rect, branch: &str) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow))
                 .title(" Delete Branch? "),
+        );
+    f.render_widget(confirm, popup_area);
+}
+
+/// Draw confirm delete worktree sessions overlay
+fn draw_confirm_delete_worktree_sessions_overlay(f: &mut Frame, area: Rect, branch: &str, session_count: i32) {
+    // Center the confirm box
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = 7;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    let session_word = if session_count == 1 { "session" } else { "sessions" };
+    let text = vec![
+        Line::from(format!("Worktree '{}' has {} active {}.", branch, session_count, session_word)),
+        Line::from("Delete sessions first to remove worktree?"),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[y]", Style::default().fg(Color::Red)),
+            Span::raw(" Yes, delete sessions  "),
+            Span::styled("[n/Esc]", Style::default().fg(Color::Green)),
+            Span::raw(" Cancel"),
+        ]),
+    ];
+
+    let confirm = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(" Delete Sessions? "),
         );
     f.render_widget(confirm, popup_area);
 }

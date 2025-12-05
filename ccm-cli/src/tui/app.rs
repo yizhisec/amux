@@ -43,6 +43,11 @@ pub enum InputMode {
     AddWorktree,                         // Adding worktree (select branch or enter new name)
     ConfirmDelete(DeleteTarget),         // Confirm deletion
     ConfirmDeleteBranch(String),         // Confirm deleting branch after worktree (branch name)
+    ConfirmDeleteWorktreeSessions {      // Worktree has sessions, confirm deleting them first
+        repo_id: String,
+        branch: String,
+        session_count: i32,
+    },
 }
 
 /// Terminal mode (vim-style)
@@ -574,6 +579,42 @@ impl App {
         Ok(())
     }
 
+    /// Confirm deletion of sessions and worktree
+    pub async fn confirm_delete_worktree_sessions(&mut self) -> Result<()> {
+        let (repo_id, branch) = match &self.input_mode {
+            InputMode::ConfirmDeleteWorktreeSessions { repo_id, branch, .. } => {
+                (repo_id.clone(), branch.clone())
+            }
+            _ => return Ok(()),
+        };
+
+        // Get sessions for this worktree
+        let sessions = self
+            .client
+            .list_sessions(Some(&repo_id), Some(&branch))
+            .await?;
+
+        // Delete all sessions
+        for session in sessions {
+            // Disconnect if this is the active session
+            if self.active_session_id.as_ref() == Some(&session.id) {
+                self.disconnect_stream();
+            }
+            self.client.destroy_session(&session.id).await?;
+        }
+
+        // Now proceed to delete worktree (show confirmation for worktree deletion)
+        self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
+            repo_id,
+            branch,
+        });
+
+        // Refresh sessions to update the UI
+        self.refresh_sessions().await?;
+
+        Ok(())
+    }
+
     /// Confirm and delete branch (called after worktree deletion)
     pub async fn confirm_delete_branch(&mut self) -> Result<()> {
         let branch_name = match &self.input_mode {
@@ -615,6 +656,13 @@ impl App {
                         self.error_message = Some("Cannot remove main worktree".to_string());
                     } else if wt.path.is_empty() {
                         self.error_message = Some("No worktree to remove".to_string());
+                    } else if wt.session_count > 0 {
+                        // Worktree has sessions, ask to delete them first
+                        self.input_mode = InputMode::ConfirmDeleteWorktreeSessions {
+                            repo_id: repo.id,
+                            branch: wt.branch,
+                            session_count: wt.session_count,
+                        };
                     } else {
                         self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
                             repo_id: repo.id,

@@ -26,6 +26,11 @@ pub async fn handle_input(app: &mut App, key: KeyEvent) -> Result<()> {
         return handle_confirm_delete_branch(app, key).await;
     }
 
+    // Handle confirm delete worktree sessions mode
+    if matches!(app.input_mode, InputMode::ConfirmDeleteWorktreeSessions { .. }) {
+        return handle_confirm_delete_worktree_sessions(app, key).await;
+    }
+
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
         return match app.terminal_mode {
@@ -62,6 +67,22 @@ async fn handle_confirm_delete_branch(app: &mut App, key: KeyEvent) -> Result<()
             app.confirm_delete_branch().await?;
         }
         // Cancel with n, N, or Esc - keep the branch
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.cancel_input();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Handle input when in confirm delete worktree sessions mode
+async fn handle_confirm_delete_worktree_sessions(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        // Confirm with y or Enter - delete sessions and proceed to worktree deletion
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            app.confirm_delete_worktree_sessions().await?;
+        }
+        // Cancel with n, N, or Esc
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             app.cancel_input();
         }

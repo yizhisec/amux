@@ -158,8 +158,9 @@ impl GitOps {
 
         // Find and prune the worktree
         if let Ok(wt) = repo.find_worktree(&wt_name) {
-            // Get the path before pruning
-            let wt_path = wt.path().parent().map(|p| p.to_path_buf());
+            // Get the working directory path before pruning
+            // wt.path() returns the gitdir path, need to get actual workdir
+            let wt_path = Self::worktree_workdir(&wt).ok();
 
             // Prune the worktree (remove from git's tracking)
             wt.prune(Some(
