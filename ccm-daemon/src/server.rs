@@ -27,7 +27,10 @@ impl CcmDaemonService {
 impl CcmDaemon for CcmDaemonService {
     // ============ Repo Management ============
 
-    async fn add_repo(&self, request: Request<AddRepoRequest>) -> Result<Response<RepoInfo>, Status> {
+    async fn add_repo(
+        &self,
+        request: Request<AddRepoRequest>,
+    ) -> Result<Response<RepoInfo>, Status> {
         let req = request.into_inner();
         let path = std::path::PathBuf::from(&req.path);
 
@@ -57,7 +60,10 @@ impl CcmDaemon for CcmDaemonService {
         Ok(Response::new(info))
     }
 
-    async fn list_repos(&self, _request: Request<Empty>) -> Result<Response<ListReposResponse>, Status> {
+    async fn list_repos(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<ListReposResponse>, Status> {
         let state = self.state.read().await;
 
         let repos: Vec<RepoInfo> = state
@@ -82,7 +88,10 @@ impl CcmDaemon for CcmDaemonService {
         Ok(Response::new(ListReposResponse { repos }))
     }
 
-    async fn remove_repo(&self, request: Request<RemoveRepoRequest>) -> Result<Response<Empty>, Status> {
+    async fn remove_repo(
+        &self,
+        request: Request<RemoveRepoRequest>,
+    ) -> Result<Response<Empty>, Status> {
         let req = request.into_inner();
 
         let mut state = self.state.write().await;
@@ -122,8 +131,7 @@ impl CcmDaemon for CcmDaemonService {
             .get(&req.repo_id)
             .ok_or_else(|| Status::not_found("Repo not found"))?;
 
-        let git_repo =
-            GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
 
         // Get worktrees from git
         let git_worktrees =
@@ -147,7 +155,9 @@ impl CcmDaemon for CcmDaemonService {
             worktrees.push(WorktreeInfo {
                 repo_id: req.repo_id.clone(),
                 branch: branch.clone(),
-                path: wt.map(|w| w.path.to_string_lossy().to_string()).unwrap_or_default(),
+                path: wt
+                    .map(|w| w.path.to_string_lossy().to_string())
+                    .unwrap_or_default(),
                 is_main: wt.map(|w| w.is_main).unwrap_or(false),
                 session_count,
             });
@@ -168,8 +178,7 @@ impl CcmDaemon for CcmDaemonService {
             .get(&req.repo_id)
             .ok_or_else(|| Status::not_found("Repo not found"))?;
 
-        let git_repo =
-            GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
 
         let wt_path = GitOps::create_worktree(&git_repo, &req.branch, &repo.path)
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -207,8 +216,7 @@ impl CcmDaemon for CcmDaemonService {
             .get(&req.repo_id)
             .ok_or_else(|| Status::not_found("Repo not found"))?;
 
-        let git_repo =
-            GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
 
         GitOps::remove_worktree(&git_repo, &req.branch)
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -229,8 +237,8 @@ impl CcmDaemon for CcmDaemonService {
             .sessions
             .values()
             .filter(|s| {
-                req.repo_id.as_ref().map_or(true, |id| &s.repo_id == id)
-                    && req.branch.as_ref().map_or(true, |b| &s.branch == b)
+                req.repo_id.as_ref().is_none_or(|id| &s.repo_id == id)
+                    && req.branch.as_ref().is_none_or(|b| &s.branch == b)
             })
             .map(|s| SessionInfo {
                 id: s.id.clone(),
@@ -261,8 +269,7 @@ impl CcmDaemon for CcmDaemonService {
             .ok_or_else(|| Status::not_found("Repo not found"))?
             .clone();
 
-        let git_repo =
-            GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
+        let git_repo = GitOps::open(&repo.path).map_err(|e| Status::internal(e.to_string()))?;
 
         // Find or create worktree
         let worktree_path = match GitOps::find_worktree_path(&git_repo, &req.branch) {

@@ -64,18 +64,16 @@ impl GitOps {
 
         // Additional worktrees
         let wt_names = repo.worktrees()?;
-        for name in wt_names.iter() {
-            if let Some(name) = name {
-                if let Ok(wt) = repo.find_worktree(name) {
-                    if let Some(path) = wt.path().parent() {
-                        // Get branch from worktree
-                        let branch = Self::worktree_branch(&wt).unwrap_or_else(|_| name.to_string());
-                        worktrees.push(WorktreeInfo {
-                            path: path.to_path_buf(),
-                            branch,
-                            is_main: false,
-                        });
-                    }
+        for name in wt_names.iter().flatten() {
+            if let Ok(wt) = repo.find_worktree(name) {
+                if let Some(path) = wt.path().parent() {
+                    // Get branch from worktree
+                    let branch = Self::worktree_branch(&wt).unwrap_or_else(|_| name.to_string());
+                    worktrees.push(WorktreeInfo {
+                        path: path.to_path_buf(),
+                        branch,
+                        is_main: false,
+                    });
                 }
             }
         }
@@ -120,7 +118,9 @@ impl GitOps {
 
         // Create worktree
         let wt_name = branch.replace('/', "-");
-        repo.worktree(&wt_name, &wt_path, Some(&mut git2::WorktreeAddOptions::new().reference(Some(&reference))))?;
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&reference));
+        repo.worktree(&wt_name, &wt_path, Some(&opts))?;
 
         Ok(wt_path)
     }
@@ -135,7 +135,11 @@ impl GitOps {
             let wt_path = wt.path().parent().map(|p| p.to_path_buf());
 
             // Prune the worktree (remove from git's tracking)
-            wt.prune(Some(&mut git2::WorktreePruneOptions::new().valid(true).working_tree(true)))?;
+            wt.prune(Some(
+                &mut git2::WorktreePruneOptions::new()
+                    .valid(true)
+                    .working_tree(true),
+            ))?;
 
             // Remove the directory if it exists
             if let Some(path) = wt_path {

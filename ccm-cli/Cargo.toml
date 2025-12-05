@@ -25,3 +25,6 @@ vt100 = "0.15"
 dirs = "5"
 tokio-stream = "0.1"
 unicode-width = "0.2"
+
+[dev-dependencies]
+cargo-husky.workspace = true

@@ -65,6 +65,7 @@ impl Client {
         Ok(response.into_inner().repos)
     }
 
+    #[allow(dead_code)]
     pub async fn remove_repo(&mut self, id: &str) -> Result<()> {
         self.inner
             .remove_repo(RemoveRepoRequest { id: id.to_string() })
@@ -84,6 +85,7 @@ impl Client {
         Ok(response.into_inner().worktrees)
     }
 
+    #[allow(dead_code)]
     pub async fn create_worktree(&mut self, repo_id: &str, branch: &str) -> Result<WorktreeInfo> {
         let response = self
             .inner

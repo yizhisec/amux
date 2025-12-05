@@ -6,7 +6,9 @@ use ccm_proto::daemon::{AttachInput, RepoInfo, SessionInfo, WorktreeInfo};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
@@ -20,9 +22,9 @@ use super::ui::draw;
 /// Focus position in the TUI
 #[derive(Debug, Clone, PartialEq)]
 pub enum Focus {
-    Branches,  // Branch list in sidebar
-    Sessions,  // Session list in sidebar
-    Terminal,  // Terminal interaction area
+    Branches, // Branch list in sidebar
+    Sessions, // Session list in sidebar
+    Terminal, // Terminal interaction area
 }
 
 /// Input mode for text entry
@@ -35,8 +37,8 @@ pub enum InputMode {
 /// Terminal mode (vim-style)
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminalMode {
-    Normal,  // View/scroll mode
-    Insert,  // Interactive input mode
+    Normal, // View/scroll mode
+    Insert, // Interactive input mode
 }
 
 /// Terminal stream state for a session
@@ -220,6 +222,7 @@ impl App {
     }
 
     /// Get current list length based on focus
+    #[allow(dead_code)]
     pub fn current_list_len(&self) -> usize {
         match self.focus {
             Focus::Branches => self.branches.len(),
@@ -229,6 +232,7 @@ impl App {
     }
 
     /// Get current selection index based on focus
+    #[allow(dead_code)]
     pub fn current_idx(&self) -> usize {
         match self.focus {
             Focus::Branches => self.branch_idx,
@@ -286,6 +290,7 @@ impl App {
     }
 
     /// Toggle focus between Branches and Sessions
+    #[allow(dead_code)]
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
             Focus::Branches => Focus::Sessions,
@@ -375,11 +380,13 @@ impl App {
     }
 
     /// Enter interactive mode (deprecated, use enter_terminal_normal)
+    #[allow(dead_code)]
     pub async fn enter_interactive(&mut self) -> Result<()> {
         self.enter_terminal_normal().await
     }
 
     /// Exit interactive mode
+    #[allow(dead_code)]
     pub fn exit_interactive(&mut self) {
         self.is_interactive = false;
         self.focus = Focus::Sessions;
@@ -400,11 +407,16 @@ impl App {
                     self.repos.get(self.repo_idx).cloned(),
                     self.branches.get(self.branch_idx).cloned(),
                 ) {
-                    match self.client.create_session(&repo.id, &branch.branch, None).await {
+                    match self
+                        .client
+                        .create_session(&repo.id, &branch.branch, None)
+                        .await
+                    {
                         Ok(session) => {
                             self.refresh_sessions().await?;
                             // Find and select the new session
-                            if let Some(idx) = self.sessions.iter().position(|s| s.id == session.id) {
+                            if let Some(idx) = self.sessions.iter().position(|s| s.id == session.id)
+                            {
                                 self.session_idx = idx;
                                 self.update_active_session().await;
                             }
@@ -439,11 +451,16 @@ impl App {
 
         // Create session (will auto-create worktree if needed)
         if let Some(repo) = self.repos.get(self.repo_idx).cloned() {
-            match self.client.create_session(&repo.id, &branch_name, None).await {
+            match self
+                .client
+                .create_session(&repo.id, &branch_name, None)
+                .await
+            {
                 Ok(session) => {
                     self.refresh_branches().await?;
                     // Find the branch and session
-                    if let Some(b_idx) = self.branches.iter().position(|b| b.branch == branch_name) {
+                    if let Some(b_idx) = self.branches.iter().position(|b| b.branch == branch_name)
+                    {
                         self.branch_idx = b_idx;
                         self.refresh_sessions().await?;
                         if let Some(s_idx) = self.sessions.iter().position(|s| s.id == session.id) {
@@ -480,7 +497,8 @@ impl App {
                     if !wt.is_main && !wt.path.is_empty() {
                         match self.client.remove_worktree(&repo.id, &wt.branch).await {
                             Ok(_) => {
-                                self.status_message = Some(format!("Removed worktree: {}", wt.branch));
+                                self.status_message =
+                                    Some(format!("Removed worktree: {}", wt.branch));
                                 self.refresh_branches().await?;
                             }
                             Err(e) => {
@@ -501,7 +519,8 @@ impl App {
 
                     match self.client.destroy_session(&session.id).await {
                         Ok(_) => {
-                            self.status_message = Some(format!("Destroyed session: {}", session.name));
+                            self.status_message =
+                                Some(format!("Destroyed session: {}", session.name));
                             self.refresh_sessions().await?;
                         }
                         Err(e) => {
@@ -564,14 +583,9 @@ impl App {
 
         // Spawn task to read from output stream
         tokio::spawn(async move {
-            loop {
-                match output_stream.message().await {
-                    Ok(Some(msg)) => {
-                        if output_tx.send(msg.data).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(None) | Err(_) => break,
+            while let Ok(Some(msg)) = output_stream.message().await {
+                if output_tx.send(msg.data).await.is_err() {
+                    break;
                 }
             }
         });

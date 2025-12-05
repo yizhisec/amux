@@ -104,6 +104,7 @@ impl Session {
     }
 
     /// Get PTY master fd for polling
+    #[allow(dead_code)]
     pub fn master_fd(&self) -> Option<i32> {
         self.pty.as_ref().map(|p| p.master_fd())
     }

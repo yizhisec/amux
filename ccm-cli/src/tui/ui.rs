@@ -152,7 +152,11 @@ fn draw_branches(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let title = if is_focused { " Branches [*] " } else { " Branches " };
+    let title = if is_focused {
+        " Branches [*] "
+    } else {
+        " Branches "
+    };
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)

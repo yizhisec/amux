@@ -168,19 +168,17 @@ async fn handle_navigation_input(app: &mut App, key: KeyEvent) -> Result<()> {
         }
 
         // Enter: forward navigation
-        KeyCode::Enter => {
-            match app.focus {
-                Focus::Branches => {
-                    app.focus = Focus::Sessions;
-                }
-                Focus::Sessions => {
-                    if app.active_session_id.is_some() {
-                        app.enter_terminal_normal().await?;
-                    }
-                }
-                Focus::Terminal => {}
+        KeyCode::Enter => match app.focus {
+            Focus::Branches => {
+                app.focus = Focus::Sessions;
             }
-        }
+            Focus::Sessions => {
+                if app.active_session_id.is_some() {
+                    app.enter_terminal_normal().await?;
+                }
+            }
+            Focus::Terminal => {}
+        },
 
         // Create new
         KeyCode::Char('n') => {

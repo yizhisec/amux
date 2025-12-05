@@ -16,7 +16,7 @@ use tokio::net::UnixListener;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
-use tracing::{error, info};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {

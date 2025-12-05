@@ -89,6 +89,7 @@ impl PtyProcess {
     }
 
     /// Get the master file descriptor (for polling)
+    #[allow(dead_code)]
     pub fn master_fd(&self) -> RawFd {
         self.master_fd.as_raw_fd()
     }
@@ -104,8 +105,7 @@ impl PtyProcess {
 
     /// Write data to PTY
     pub fn write(&self, data: &[u8]) -> Result<usize> {
-        write(&self.master_fd, data)
-            .map_err(|e| anyhow!("PTY write error: {}", e))
+        write(&self.master_fd, data).map_err(|e| anyhow!("PTY write error: {}", e))
     }
 
     /// Resize the PTY window
@@ -127,10 +127,10 @@ impl PtyProcess {
 
     /// Check if the process is still running
     pub fn is_running(&self) -> bool {
-        match waitpid(self.child_pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => true,
-            _ => false,
-        }
+        matches!(
+            waitpid(self.child_pid, Some(WaitPidFlag::WNOHANG)),
+            Ok(WaitStatus::StillAlive)
+        )
     }
 
     /// Kill the process
@@ -145,6 +145,7 @@ impl PtyProcess {
     }
 
     /// Get the child PID
+    #[allow(dead_code)]
     pub fn pid(&self) -> Pid {
         self.child_pid
     }
