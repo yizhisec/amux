@@ -183,6 +183,16 @@ fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
+        // Navigation: w = go to worktree/sidebar (tree view)
+        KeyCode::Char('w') => {
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            // Go to sidebar in tree view mode
+            app.focus = Focus::Sidebar;
+            None
+        }
+
         // Repo switching: 1-9
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             let idx = (c as usize) - ('1' as usize);
@@ -201,7 +211,7 @@ fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
         // Unknown command - show hint
         _ => {
             app.status_message = Some(
-                "Prefix: b=branches s=sessions t=terminal [=normal n=new d=delete r=refresh q=quit"
+                "Prefix: w=worktree s=sessions t=terminal [=normal n=new d=delete r=refresh q=quit"
                     .to_string(),
             );
             None
@@ -402,8 +412,18 @@ fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
             app.toggle_fullscreen();
         }
 
-        // Exit to Sessions (or exit fullscreen first)
-        KeyCode::Esc | KeyCode::BackTab => {
+        // Exit fullscreen or do nothing (Esc in Normal mode stays in Normal)
+        // Use Prefix+s or Prefix+w to go back to sidebar
+        KeyCode::Esc => {
+            if app.terminal_fullscreen {
+                app.terminal_fullscreen = false;
+            }
+            // Esc in Normal mode: stay in Normal mode (like Claude Code)
+            // User can use Tab/Shift+Tab or Prefix+s/w to navigate away
+        }
+
+        // Shift+Tab: go back to sidebar
+        KeyCode::BackTab => {
             app.exit_terminal();
         }
 
@@ -716,60 +736,113 @@ fn key_to_bytes(key: &KeyEvent) -> Vec<u8> {
 }
 
 /// Handle mouse events (sync version)
+/// Uses mouse position to determine which area to scroll
 pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
+    // Determine which area the mouse is over based on x position
+    // Layout: 25% sidebar (left), 75% main content (right)
+    // We use a simple heuristic: x < 25% of terminal width = sidebar
+    let terminal_width = app.terminal_cols.unwrap_or(80);
+    let sidebar_width = terminal_width / 4; // ~25%
+    let in_sidebar = mouse.column < sidebar_width;
+
     match mouse.kind {
         MouseEventKind::ScrollUp => {
-            match app.focus {
-                Focus::Terminal if app.terminal_mode == TerminalMode::Normal => {
-                    app.scroll_up(3);
-                }
-                Focus::DiffFiles => {
-                    // Scroll up 3 lines in diff view
-                    for _ in 0..3 {
-                        app.diff_move_up();
+            if in_sidebar {
+                // Scroll sidebar (tree view or legacy lists)
+                match app.focus {
+                    Focus::Sidebar => {
+                        for _ in 0..3 {
+                            let _ = app.sidebar_move_up();
+                        }
+                    }
+                    Focus::Branches | Focus::Sessions => {
+                        for _ in 0..3 {
+                            let _ = app.select_prev_sync();
+                        }
+                    }
+                    _ => {
+                        // Even if focus is elsewhere, scroll sidebar when mouse is there
+                        for _ in 0..3 {
+                            let _ = app.sidebar_move_up();
+                        }
                     }
                 }
-                Focus::Sidebar => {
-                    // Scroll up in tree view
-                    for _ in 0..3 {
-                        let _ = app.sidebar_move_up();
+                app.dirty.sidebar = true;
+            } else {
+                // Scroll main content area (terminal or diff)
+                match app.right_panel_view {
+                    RightPanelView::Terminal => {
+                        // Always allow scroll in terminal preview (Normal mode or not)
+                        app.scroll_up(3);
+                        app.dirty.terminal = true;
+                    }
+                    RightPanelView::Diff => {
+                        for _ in 0..3 {
+                            app.diff_move_up();
+                        }
+                        app.dirty.terminal = true;
                     }
                 }
-                Focus::Branches | Focus::Sessions => {
-                    // Scroll up in legacy sidebar lists
-                    for _ in 0..3 {
-                        let _ = app.select_prev_sync();
-                    }
-                }
-                _ => {}
             }
-            app.dirty.sidebar = true;
-            app.dirty.terminal = true;
         }
         MouseEventKind::ScrollDown => {
-            match app.focus {
-                Focus::Terminal if app.terminal_mode == TerminalMode::Normal => {
-                    app.scroll_down(3);
-                }
-                Focus::DiffFiles => {
-                    // Scroll down 3 lines in diff view
-                    for _ in 0..3 {
-                        app.diff_move_down();
+            if in_sidebar {
+                // Scroll sidebar
+                match app.focus {
+                    Focus::Sidebar => {
+                        for _ in 0..3 {
+                            let _ = app.sidebar_move_down();
+                        }
+                    }
+                    Focus::Branches | Focus::Sessions => {
+                        for _ in 0..3 {
+                            let _ = app.select_next_sync();
+                        }
+                    }
+                    _ => {
+                        for _ in 0..3 {
+                            let _ = app.sidebar_move_down();
+                        }
                     }
                 }
-                Focus::Sidebar => {
-                    // Scroll down in tree view
-                    for _ in 0..3 {
-                        let _ = app.sidebar_move_down();
+                app.dirty.sidebar = true;
+            } else {
+                // Scroll main content area
+                match app.right_panel_view {
+                    RightPanelView::Terminal => {
+                        app.scroll_down(3);
+                        app.dirty.terminal = true;
+                    }
+                    RightPanelView::Diff => {
+                        for _ in 0..3 {
+                            app.diff_move_down();
+                        }
+                        app.dirty.terminal = true;
                     }
                 }
-                Focus::Branches | Focus::Sessions => {
-                    // Scroll down in legacy sidebar lists
-                    for _ in 0..3 {
-                        let _ = app.select_next_sync();
+            }
+        }
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            // Click to focus: left side = sidebar, right side = terminal/diff
+            if in_sidebar {
+                if app.tree_view_enabled {
+                    app.focus = Focus::Sidebar;
+                } else {
+                    // In legacy mode, keep current sidebar focus
+                    if app.focus != Focus::Branches && app.focus != Focus::Sessions {
+                        app.focus = Focus::Branches;
                     }
                 }
-                _ => {}
+            } else {
+                // Click on right panel
+                match app.right_panel_view {
+                    RightPanelView::Terminal => {
+                        app.focus = Focus::Terminal;
+                    }
+                    RightPanelView::Diff => {
+                        app.focus = Focus::DiffFiles;
+                    }
+                }
             }
             app.dirty.sidebar = true;
             app.dirty.terminal = true;

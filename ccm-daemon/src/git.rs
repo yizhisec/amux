@@ -13,6 +13,45 @@ impl GitOps {
         Repository::open(path).is_ok()
     }
 
+    /// Check if a path is a git worktree (not the main repository)
+    /// A worktree has a .git file (not directory) pointing to the main repo's .git/worktrees/
+    #[allow(dead_code)]
+    pub fn is_worktree(path: &Path) -> bool {
+        let git_path = path.join(".git");
+        git_path.is_file()
+    }
+
+    /// Find the main repository path for a given path.
+    /// If the path is a worktree, returns the main repository path.
+    /// If it's already the main repository, returns it as-is.
+    /// Returns None if not a git repository.
+    pub fn find_main_repo_path(path: &Path) -> Option<PathBuf> {
+        let git_path = path.join(".git");
+
+        if git_path.is_dir() {
+            // Regular repository - .git is a directory
+            Some(path.to_path_buf())
+        } else if git_path.is_file() {
+            // Worktree - .git is a file containing: "gitdir: /path/to/.git/worktrees/name"
+            if let Ok(content) = std::fs::read_to_string(&git_path) {
+                if let Some(gitdir) = content.strip_prefix("gitdir: ") {
+                    let gitdir_path = PathBuf::from(gitdir.trim());
+                    // Navigate from .git/worktrees/name to .git to repo_root
+                    // gitdir_path is like /path/to/main/repo/.git/worktrees/branch-name
+                    if let Some(git_dir) = gitdir_path
+                        .ancestors()
+                        .find(|p| p.file_name().map(|n| n == ".git").unwrap_or(false))
+                    {
+                        return git_dir.parent().map(|p| p.to_path_buf());
+                    }
+                }
+            }
+            None
+        } else {
+            None
+        }
+    }
+
     /// Open a repository at the given path
     pub fn open(path: &Path) -> Result<Repository, GitError> {
         Repository::open(path).map_err(|e| GitError::OpenRepo {

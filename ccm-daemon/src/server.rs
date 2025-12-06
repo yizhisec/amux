@@ -39,6 +39,9 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
         let path = std::path::PathBuf::from(&req.path);
 
+        // If the path is a worktree, resolve to main repository
+        let path = crate::git::GitOps::find_main_repo_path(&path).unwrap_or(path);
+
         // Create repo - convert RepoError to DaemonError to Status
         let repo = Repo::new(path).map_err(|e| Status::from(DaemonError::from(e)))?;
 

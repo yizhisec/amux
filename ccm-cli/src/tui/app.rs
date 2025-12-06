@@ -249,6 +249,10 @@ pub struct App {
     pub sidebar_cursor: usize,   // Cursor position in virtual list
     pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>, // Sessions grouped by worktree index
 
+    // Terminal size tracking (for mouse position calculations)
+    pub terminal_cols: Option<u16>,
+    pub terminal_rows: Option<u16>,
+
     // UI state
     pub should_quit: bool,
     pub error_message: Option<String>,
@@ -299,6 +303,8 @@ impl App {
             expanded_worktrees: std::collections::HashSet::new(),
             sidebar_cursor: 0,
             sessions_by_worktree: HashMap::new(),
+            terminal_cols: None,
+            terminal_rows: None,
             should_quit: false,
             error_message: None,
             status_message: None,
@@ -1613,6 +1619,10 @@ impl App {
 
     /// Send resize to terminal
     pub async fn resize_terminal(&mut self, rows: u16, cols: u16) -> Result<()> {
+        // Store terminal size for mouse position calculations
+        self.terminal_cols = Some(cols);
+        self.terminal_rows = Some(rows);
+
         // Calculate inner area (same as connect_stream)
         let main_height = rows.saturating_sub(6);
         let terminal_width = (cols as f32 * 0.75) as u16;
