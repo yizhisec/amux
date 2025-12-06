@@ -104,6 +104,17 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Check for add line comment overlay
+    if let InputMode::AddLineComment {
+        ref file_path,
+        line_number,
+        ..
+    } = app.input_mode
+    {
+        draw_add_line_comment_overlay(f, area, app, file_path, line_number);
+        return;
+    }
+
     // Fullscreen terminal mode
     if app.terminal_fullscreen && app.focus == Focus::Terminal {
         draw_terminal_fullscreen(f, area, app);
@@ -352,8 +363,10 @@ fn draw_diff_fullscreen(f: &mut Frame, area: Rect, app: &App) {
     draw_diff_inline(f, area, app);
 }
 
-/// Draw diff with inline file expansion (single unified view)
+/// Draw diff with inline file expansion (unified navigation view)
 fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
+    use super::app::DiffItem;
+
     let is_focused = app.focus == Focus::DiffFiles;
     let border_style = if is_focused {
         Style::default().fg(Color::Cyan)
@@ -383,19 +396,22 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Get current cursor item for highlighting
+    let current_item = app.current_diff_item();
+
     // Build list of lines: files + expanded diff content
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, file) in app.diff_files.iter().enumerate() {
-        let is_selected = i == app.diff_file_idx;
-        let is_expanded = app.diff_expanded_idx == Some(i);
+    for (file_idx, file) in app.diff_files.iter().enumerate() {
+        let is_file_selected = current_item == DiffItem::File(file_idx);
+        let is_expanded = app.diff_expanded.contains(&file_idx);
 
         // File style
-        let file_style = if is_selected && is_focused {
+        let file_style = if is_file_selected && is_focused {
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD)
-        } else if is_selected {
+        } else if is_file_selected {
             Style::default().fg(Color::White)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -424,7 +440,7 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
         // File line
         lines.push(Line::from(vec![
-            Span::styled(if is_selected { ">" } else { " " }, file_style),
+            Span::styled(if is_file_selected { ">" } else { " " }, file_style),
             Span::styled(
                 format!(" {} ", expand_indicator),
                 Style::default().fg(Color::DarkGray),
@@ -438,58 +454,70 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
         ]));
 
         // If this file is expanded, show diff lines
-        if is_expanded && !app.diff_lines.is_empty() {
-            for diff_line in &app.diff_lines {
-                let line_type =
-                    LineType::try_from(diff_line.line_type).unwrap_or(LineType::Context);
-                let (prefix, style) = match line_type {
-                    LineType::Header => (
-                        "@@",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    LineType::Addition => ("+", Style::default().fg(Color::Green)),
-                    LineType::Deletion => ("-", Style::default().fg(Color::Red)),
-                    LineType::Context | LineType::Unspecified => {
-                        (" ", Style::default().fg(Color::White))
-                    }
-                };
+        if is_expanded {
+            if let Some(file_lines) = app.diff_file_lines.get(&file_idx) {
+                for (line_idx, diff_line) in file_lines.iter().enumerate() {
+                    let is_line_selected = current_item == DiffItem::Line(file_idx, line_idx);
 
-                lines.push(Line::from(vec![
-                    Span::styled("    ", Style::default()), // Indent
-                    Span::styled(prefix, style),
-                    Span::styled(" ", Style::default()),
-                    Span::styled(&diff_line.content, style),
-                ]));
+                    let line_type =
+                        LineType::try_from(diff_line.line_type).unwrap_or(LineType::Context);
+                    let (prefix, base_style) = match line_type {
+                        LineType::Header => (
+                            "@@",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        LineType::Addition => ("+", Style::default().fg(Color::Green)),
+                        LineType::Deletion => ("-", Style::default().fg(Color::Red)),
+                        LineType::Context | LineType::Unspecified => {
+                            (" ", Style::default().fg(Color::White))
+                        }
+                    };
+
+                    // Apply selection highlight
+                    let style = if is_line_selected && is_focused {
+                        base_style.add_modifier(Modifier::REVERSED)
+                    } else {
+                        base_style
+                    };
+
+                    let cursor_indicator = if is_line_selected { ">" } else { " " };
+
+                    // Check if line has a comment
+                    let line_number = diff_line
+                        .new_lineno
+                        .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
+                    let has_comment = app.has_line_comment(&file.path, line_number);
+                    let comment_marker = if has_comment {
+                        Span::styled(" [C]", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::raw("")
+                    };
+
+                    lines.push(Line::from(vec![
+                        Span::styled(cursor_indicator, style),
+                        Span::styled("   ", Style::default()), // Indent
+                        Span::styled(prefix, style),
+                        Span::styled(" ", Style::default()),
+                        Span::styled(&diff_line.content, style),
+                        comment_marker,
+                    ]));
+                }
             }
         }
     }
 
-    // Calculate scroll - we need to ensure selected file is visible
+    // Calculate scroll - we need to ensure cursor is visible
     let visible_height = inner.height as usize;
     let total_lines = lines.len();
+    let cursor_line = app.diff_cursor;
 
-    // Find the line index of the selected file
-    let mut selected_line_idx = 0;
-    let mut line_count = 0;
-    for (i, _) in app.diff_files.iter().enumerate() {
-        if i == app.diff_file_idx {
-            selected_line_idx = line_count;
-            break;
-        }
-        line_count += 1;
-        // Add expanded lines if this file is expanded
-        if app.diff_expanded_idx == Some(i) {
-            line_count += app.diff_lines.len();
-        }
-    }
-
-    // Calculate scroll offset to keep selected file visible
-    let scroll_offset = if selected_line_idx < app.diff_scroll_offset {
-        selected_line_idx
-    } else if selected_line_idx >= app.diff_scroll_offset + visible_height {
-        selected_line_idx.saturating_sub(visible_height / 2)
+    // Calculate scroll offset to keep cursor visible
+    let scroll_offset = if cursor_line < app.diff_scroll_offset {
+        cursor_line
+    } else if cursor_line >= app.diff_scroll_offset + visible_height {
+        cursor_line.saturating_sub(visible_height / 2)
     } else {
         app.diff_scroll_offset
     }
@@ -507,7 +535,7 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
     // Show scroll indicator if needed
     if total_lines > visible_height {
-        let scroll_info = format!(" {}/{} ", scroll_offset + 1, total_lines);
+        let scroll_info = format!(" {}/{} ", cursor_line + 1, total_lines);
         let scroll_len = scroll_info.len() as u16;
         let scroll_span = Span::styled(scroll_info, Style::default().fg(Color::DarkGray));
         let scroll_x = area.x + area.width.saturating_sub(scroll_len + 1);
@@ -818,6 +846,64 @@ fn draw_confirm_delete_worktree_sessions_overlay(
     f.render_widget(confirm, popup_area);
 }
 
+/// Draw add line comment overlay
+fn draw_add_line_comment_overlay(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    file_path: &str,
+    line_number: i32,
+) {
+    // Center the input box
+    let popup_width = 70.min(area.width.saturating_sub(4));
+    let popup_height = 7;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    // Truncate file path if too long
+    let max_path_len = (popup_width as usize).saturating_sub(20);
+    let display_path = if file_path.len() > max_path_len {
+        format!("...{}", &file_path[file_path.len() - max_path_len + 3..])
+    } else {
+        file_path.to_string()
+    };
+
+    let text = vec![
+        Line::from(vec![
+            Span::styled("File: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(display_path, Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Line: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}", line_number), Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Yellow)),
+            Span::styled(&app.input_buffer, Style::default().fg(Color::Yellow)),
+        ]),
+    ];
+
+    let input = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Add Comment (Enter=save, Esc=cancel) "),
+    );
+    f.render_widget(input, popup_area);
+
+    // Show cursor
+    f.set_cursor_position((
+        popup_area.x + 3 + app.input_buffer.len() as u16, // 3 = "> " + border
+        popup_area.y + 4,                                 // Line with input
+    ));
+}
+
 /// Draw status bar at the bottom
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Prefix mode takes priority - show available commands
@@ -850,7 +936,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [d] Diff | [Esc] Exit",
                 TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",
             },
-            Focus::DiffFiles => "[j/k] Move | [o/Enter] Expand | [r] Refresh | [f] Fullscreen | [Esc] Terminal",
+            Focus::DiffFiles => "[j/k] Nav | [o] Expand | [{/}] Files | [c] Comment | [S] Send | [r] Refresh | [Esc] Back",
         };
         (help.to_string(), Color::DarkGray)
     };

@@ -291,4 +291,76 @@ impl Client {
             .await?;
         Ok(response.into_inner())
     }
+
+    // ============ Comments ============
+
+    /// Create a line comment
+    pub async fn create_line_comment(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+        file_path: &str,
+        line_number: i32,
+        line_type: i32,
+        comment: &str,
+    ) -> Result<LineCommentInfo> {
+        let response = self
+            .inner
+            .create_line_comment(CreateLineCommentRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+                file_path: file_path.to_string(),
+                line_number,
+                line_type,
+                comment: comment.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Update a line comment
+    #[allow(dead_code)]
+    pub async fn update_line_comment(
+        &mut self,
+        comment_id: &str,
+        comment: &str,
+    ) -> Result<LineCommentInfo> {
+        let response = self
+            .inner
+            .update_line_comment(UpdateLineCommentRequest {
+                comment_id: comment_id.to_string(),
+                comment: comment.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Delete a line comment
+    #[allow(dead_code)]
+    pub async fn delete_line_comment(&mut self, comment_id: &str) -> Result<()> {
+        self.inner
+            .delete_line_comment(DeleteLineCommentRequest {
+                comment_id: comment_id.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// List line comments
+    pub async fn list_line_comments(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+        file_path: Option<&str>,
+    ) -> Result<Vec<LineCommentInfo>> {
+        let response = self
+            .inner
+            .list_line_comments(ListLineCommentsRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+                file_path: file_path.map(String::from),
+            })
+            .await?;
+        Ok(response.into_inner().comments)
+    }
 }

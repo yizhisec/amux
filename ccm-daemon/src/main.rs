@@ -8,6 +8,7 @@ mod git;
 mod persistence;
 mod pty;
 mod repo;
+mod review;
 mod server;
 mod session;
 mod state;

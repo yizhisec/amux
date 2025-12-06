@@ -54,6 +54,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         return handle_confirm_delete_worktree_sessions_sync(app, key);
     }
 
+    // Handle add line comment mode
+    if matches!(app.input_mode, InputMode::AddLineComment { .. }) {
+        return handle_add_line_comment_mode_sync(app, key);
+    }
+
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
         return match app.terminal_mode {
@@ -297,6 +302,26 @@ fn handle_rename_session_mode_sync(app: &mut App, key: KeyEvent) -> Option<Async
     }
 }
 
+/// Handle input when adding a line comment
+fn handle_add_line_comment_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    match key.code {
+        KeyCode::Enter => Some(AsyncAction::SubmitLineComment),
+        KeyCode::Esc => {
+            app.cancel_input();
+            None
+        }
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+            None
+        }
+        KeyCode::Char(c) => {
+            app.input_buffer.push(c);
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Handle input when in text entry mode (new branch name)
 fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
@@ -499,17 +524,44 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
     }
 }
 
-/// Handle input in DiffFiles mode (file list navigation)
+/// Handle input in DiffFiles mode (unified file + line navigation)
 fn handle_diff_files_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {
-        // Navigate up
-        KeyCode::Up | KeyCode::Char('k') => app.diff_select_prev(),
+        // Navigate up (files and lines)
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.diff_move_up();
+            None
+        }
 
-        // Navigate down
-        KeyCode::Down | KeyCode::Char('j') => app.diff_select_next(),
+        // Navigate down (files and lines)
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.diff_move_down();
+            None
+        }
+
+        // Jump to previous file
+        KeyCode::Char('{') => {
+            app.diff_prev_file();
+            None
+        }
+
+        // Jump to next file
+        KeyCode::Char('}') => {
+            app.diff_next_file();
+            None
+        }
 
         // Toggle expand/collapse file diff ('o' or Enter)
         KeyCode::Enter | KeyCode::Char('o') => app.toggle_diff_expand(),
+
+        // Add comment on current line
+        KeyCode::Char('c') => {
+            app.start_add_line_comment();
+            None
+        }
+
+        // Submit review to Claude
+        KeyCode::Char('S') => Some(AsyncAction::SubmitReviewToClaude),
 
         // Refresh diff
         KeyCode::Char('r') => Some(AsyncAction::LoadDiffFiles),

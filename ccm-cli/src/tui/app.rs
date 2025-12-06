@@ -3,8 +3,8 @@
 use crate::client::Client;
 use crate::error::TuiError;
 use ccm_proto::daemon::{
-    event as daemon_event, AttachInput, DiffFileInfo, DiffLine, Event as DaemonEvent, RepoInfo,
-    SessionInfo, WorktreeInfo,
+    event as daemon_event, AttachInput, DiffFileInfo, DiffLine, Event as DaemonEvent,
+    LineCommentInfo, RepoInfo, SessionInfo, WorktreeInfo,
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -44,6 +44,14 @@ pub enum RightPanelView {
     Diff,
 }
 
+/// Current item in diff view (for unified navigation)
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiffItem {
+    File(usize),        // File at index
+    Line(usize, usize), // (file_idx, line_idx within that file)
+    None,               // Empty state
+}
+
 /// Delete target for confirmation
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeleteTarget {
@@ -69,6 +77,12 @@ pub enum InputMode {
         repo_id: String,
         branch: String,
         session_count: i32,
+    },
+    AddLineComment {
+        // Adding a comment to a diff line
+        file_path: String,
+        line_number: i32,
+        line_type: i32,
     },
 }
 
@@ -148,6 +162,10 @@ pub enum AsyncAction {
     SwitchToDiffView,
     LoadDiffFiles,
     LoadFileDiff,
+    // Comment actions
+    LoadComments,
+    SubmitLineComment,
+    SubmitReviewToClaude,
 }
 
 /// Terminal stream state for a session
@@ -203,11 +221,14 @@ pub struct App {
     // Diff state
     pub right_panel_view: RightPanelView,
     pub diff_files: Vec<DiffFileInfo>,
-    pub diff_file_idx: usize,
-    pub diff_expanded_idx: Option<usize>, // Which file is expanded (None = all collapsed)
-    pub diff_lines: Vec<DiffLine>,        // Lines for expanded file
-    pub diff_scroll_offset: usize,        // Scroll offset within expanded content
+    pub diff_expanded: std::collections::HashSet<usize>, // Which files are expanded
+    pub diff_file_lines: std::collections::HashMap<usize, Vec<DiffLine>>, // Lines per expanded file
+    pub diff_cursor: usize,                              // Unified cursor position in virtual list
+    pub diff_scroll_offset: usize,                       // Scroll offset for rendering
     pub diff_fullscreen: bool,
+
+    // Comment state
+    pub line_comments: Vec<LineCommentInfo>, // All comments for current branch
 
     // UI state
     pub should_quit: bool,
@@ -249,11 +270,12 @@ impl App {
             terminal_fullscreen: false,
             right_panel_view: RightPanelView::Terminal,
             diff_files: Vec::new(),
-            diff_file_idx: 0,
-            diff_expanded_idx: None,
-            diff_lines: Vec::new(),
+            diff_expanded: std::collections::HashSet::new(),
+            diff_file_lines: std::collections::HashMap::new(),
+            diff_cursor: 0,
             diff_scroll_offset: 0,
             diff_fullscreen: false,
+            line_comments: Vec::new(),
             should_quit: false,
             error_message: None,
             status_message: None,
@@ -439,7 +461,7 @@ impl App {
             Focus::Branches => self.branch_idx,
             Focus::Sessions => self.session_idx,
             Focus::Terminal => 0,
-            Focus::DiffFiles => self.diff_file_idx,
+            Focus::DiffFiles => self.diff_cursor,
         }
     }
 
@@ -465,7 +487,7 @@ impl App {
             }
             Focus::Terminal => {}
             Focus::DiffFiles => {
-                self.diff_select_prev();
+                self.diff_move_up();
             }
         }
         None
@@ -491,7 +513,7 @@ impl App {
             }
             Focus::Terminal => {}
             Focus::DiffFiles => {
-                self.diff_select_next();
+                self.diff_move_down();
             }
         }
         None
@@ -1243,6 +1265,15 @@ impl App {
             AsyncAction::LoadFileDiff => {
                 self.load_file_diff().await?;
             }
+            AsyncAction::LoadComments => {
+                self.load_comments().await?;
+            }
+            AsyncAction::SubmitLineComment => {
+                self.submit_line_comment().await?;
+            }
+            AsyncAction::SubmitReviewToClaude => {
+                self.submit_review_to_claude().await?;
+            }
         }
         Ok(())
     }
@@ -1366,6 +1397,7 @@ impl App {
         self.right_panel_view = RightPanelView::Diff;
         self.focus = Focus::DiffFiles;
         self.load_diff_files().await?;
+        self.load_comments().await?;
         Ok(())
     }
 
@@ -1374,8 +1406,9 @@ impl App {
         self.right_panel_view = RightPanelView::Terminal;
         self.focus = Focus::Sessions;
         self.diff_files.clear();
-        self.diff_lines.clear();
-        self.diff_file_idx = 0;
+        self.diff_expanded.clear();
+        self.diff_file_lines.clear();
+        self.diff_cursor = 0;
         self.diff_scroll_offset = 0;
     }
 
@@ -1388,14 +1421,10 @@ impl App {
             match self.client.get_diff_files(&repo.id, &branch.branch).await {
                 Ok(files) => {
                     self.diff_files = files;
-                    self.diff_file_idx = 0;
-                    self.diff_lines.clear();
+                    self.diff_expanded.clear();
+                    self.diff_file_lines.clear();
+                    self.diff_cursor = 0;
                     self.diff_scroll_offset = 0;
-
-                    // Auto-load first file if available
-                    if !self.diff_files.is_empty() {
-                        self.load_file_diff().await?;
-                    }
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Failed to load diff: {}", e));
@@ -1405,73 +1434,349 @@ impl App {
         Ok(())
     }
 
-    /// Load diff content for selected file
+    /// Load diff content for the file that is being expanded
     pub async fn load_file_diff(&mut self) -> Result<()> {
-        if let (Some(repo), Some(branch), Some(file)) = (
-            self.repos.get(self.repo_idx).cloned(),
-            self.worktrees.get(self.branch_idx).cloned(),
-            self.diff_files.get(self.diff_file_idx).cloned(),
-        ) {
-            match self
-                .client
-                .get_file_diff(&repo.id, &branch.branch, &file.path)
-                .await
-            {
-                Ok(response) => {
-                    self.diff_lines = response.lines;
-                    self.diff_scroll_offset = 0;
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to load file diff: {}", e));
+        // Find which file needs loading (the one that's expanded but has no lines)
+        let file_idx = self
+            .diff_expanded
+            .iter()
+            .find(|&&idx| !self.diff_file_lines.contains_key(&idx))
+            .copied();
+
+        if let Some(file_idx) = file_idx {
+            if let (Some(repo), Some(branch), Some(file)) = (
+                self.repos.get(self.repo_idx).cloned(),
+                self.worktrees.get(self.branch_idx).cloned(),
+                self.diff_files.get(file_idx).cloned(),
+            ) {
+                match self
+                    .client
+                    .get_file_diff(&repo.id, &branch.branch, &file.path)
+                    .await
+                {
+                    Ok(response) => {
+                        self.diff_file_lines.insert(file_idx, response.lines);
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to load file diff: {}", e));
+                        // Remove from expanded since load failed
+                        self.diff_expanded.remove(&file_idx);
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    /// Select previous diff file
-    pub fn diff_select_prev(&mut self) -> Option<AsyncAction> {
-        if self.diff_file_idx > 0 {
-            self.diff_file_idx -= 1;
-            self.diff_scroll_offset = 0; // Reset scroll when changing files
-            self.dirty.sidebar = true;
+    // ========== Unified diff navigation ==========
+
+    /// Get total length of virtual diff list (files + expanded lines)
+    pub fn diff_virtual_list_len(&self) -> usize {
+        let mut len = 0;
+        for (i, _) in self.diff_files.iter().enumerate() {
+            len += 1; // File entry
+            if self.diff_expanded.contains(&i) {
+                len += self.diff_file_lines.get(&i).map(|l| l.len()).unwrap_or(0);
+            }
         }
-        None
+        len
     }
 
-    /// Select next diff file
-    pub fn diff_select_next(&mut self) -> Option<AsyncAction> {
-        if !self.diff_files.is_empty() && self.diff_file_idx < self.diff_files.len() - 1 {
-            self.diff_file_idx += 1;
-            self.diff_scroll_offset = 0; // Reset scroll when changing files
-            self.dirty.sidebar = true;
-        }
-        None
-    }
-
-    /// Toggle expansion of current diff file
-    pub fn toggle_diff_expand(&mut self) -> Option<AsyncAction> {
+    /// Get current item at cursor position
+    pub fn current_diff_item(&self) -> DiffItem {
         if self.diff_files.is_empty() {
-            return None;
+            return DiffItem::None;
         }
 
-        if self.diff_expanded_idx == Some(self.diff_file_idx) {
-            // Collapse
-            self.diff_expanded_idx = None;
-            self.diff_lines.clear();
-            self.diff_scroll_offset = 0;
-            None
+        let mut pos = 0;
+        for (file_idx, _) in self.diff_files.iter().enumerate() {
+            // Check if cursor is on this file
+            if pos == self.diff_cursor {
+                return DiffItem::File(file_idx);
+            }
+            pos += 1;
+
+            // Check if cursor is on one of this file's lines
+            if self.diff_expanded.contains(&file_idx) {
+                if let Some(lines) = self.diff_file_lines.get(&file_idx) {
+                    for line_idx in 0..lines.len() {
+                        if pos == self.diff_cursor {
+                            return DiffItem::Line(file_idx, line_idx);
+                        }
+                        pos += 1;
+                    }
+                }
+            }
+        }
+
+        DiffItem::None
+    }
+
+    /// Get file index from cursor position (even if on a line)
+    #[allow(dead_code)]
+    pub fn current_diff_file_idx(&self) -> Option<usize> {
+        match self.current_diff_item() {
+            DiffItem::File(idx) => Some(idx),
+            DiffItem::Line(file_idx, _) => Some(file_idx),
+            DiffItem::None => None,
+        }
+    }
+
+    /// Move cursor up in diff view
+    pub fn diff_move_up(&mut self) {
+        if self.diff_cursor > 0 {
+            self.diff_cursor -= 1;
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Move cursor down in diff view
+    pub fn diff_move_down(&mut self) {
+        let max = self.diff_virtual_list_len();
+        if max > 0 && self.diff_cursor < max - 1 {
+            self.diff_cursor += 1;
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Jump to previous file
+    pub fn diff_prev_file(&mut self) {
+        let mut pos = 0;
+        let mut last_file_pos = 0;
+        for (file_idx, _) in self.diff_files.iter().enumerate() {
+            if pos >= self.diff_cursor {
+                // Found current or past cursor, go to last file
+                break;
+            }
+            last_file_pos = pos;
+            pos += 1;
+            if self.diff_expanded.contains(&file_idx) {
+                pos += self
+                    .diff_file_lines
+                    .get(&file_idx)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+            }
+        }
+        if self.diff_cursor > 0 {
+            self.diff_cursor = last_file_pos;
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Jump to next file
+    pub fn diff_next_file(&mut self) {
+        let mut pos = 0;
+        for (file_idx, _) in self.diff_files.iter().enumerate() {
+            if pos > self.diff_cursor {
+                // Found next file after cursor
+                self.diff_cursor = pos;
+                self.dirty.sidebar = true;
+                return;
+            }
+            pos += 1;
+            if self.diff_expanded.contains(&file_idx) {
+                pos += self
+                    .diff_file_lines
+                    .get(&file_idx)
+                    .map(|l| l.len())
+                    .unwrap_or(0);
+            }
+        }
+    }
+
+    /// Toggle expansion of current file (only works when cursor is on a file)
+    pub fn toggle_diff_expand(&mut self) -> Option<AsyncAction> {
+        if let DiffItem::File(file_idx) = self.current_diff_item() {
+            if self.diff_expanded.contains(&file_idx) {
+                // Collapse
+                self.diff_expanded.remove(&file_idx);
+                self.diff_file_lines.remove(&file_idx);
+                None
+            } else {
+                // Expand - need to load diff content
+                self.diff_expanded.insert(file_idx);
+                Some(AsyncAction::LoadFileDiff)
+            }
         } else {
-            // Expand - need to load diff content
-            self.diff_expanded_idx = Some(self.diff_file_idx);
-            self.diff_scroll_offset = 0;
-            Some(AsyncAction::LoadFileDiff)
+            None
         }
     }
 
     /// Toggle diff fullscreen mode
     pub fn toggle_diff_fullscreen(&mut self) {
         self.diff_fullscreen = !self.diff_fullscreen;
+    }
+
+    // ========== Comment Operations ==========
+
+    /// Start adding a line comment (only works when cursor is on a diff line)
+    pub fn start_add_line_comment(&mut self) {
+        if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
+            if let (Some(file), Some(lines)) = (
+                self.diff_files.get(file_idx),
+                self.diff_file_lines.get(&file_idx),
+            ) {
+                if let Some(diff_line) = lines.get(line_idx) {
+                    // Get actual line number from diff info
+                    let line_number = diff_line
+                        .new_lineno
+                        .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
+
+                    self.input_mode = InputMode::AddLineComment {
+                        file_path: file.path.clone(),
+                        line_number,
+                        line_type: diff_line.line_type,
+                    };
+                    self.input_buffer.clear();
+                }
+            }
+        } else {
+            self.status_message = Some("Move cursor to a diff line to add comment".to_string());
+        }
+    }
+
+    /// Submit the current line comment
+    pub async fn submit_line_comment(&mut self) -> Result<()> {
+        let (file_path, line_number, line_type) = match &self.input_mode {
+            InputMode::AddLineComment {
+                file_path,
+                line_number,
+                line_type,
+            } => (file_path.clone(), *line_number, *line_type),
+            _ => return Ok(()),
+        };
+
+        let comment_text = self.input_buffer.trim().to_string();
+        self.input_mode = InputMode::Normal;
+        self.input_buffer.clear();
+
+        if comment_text.is_empty() {
+            self.status_message = Some("Comment cannot be empty".to_string());
+            return Ok(());
+        }
+
+        // Get current repo and branch
+        if let (Some(repo), Some(branch)) = (
+            self.repos.get(self.repo_idx).cloned(),
+            self.worktrees.get(self.branch_idx).cloned(),
+        ) {
+            match self
+                .client
+                .create_line_comment(
+                    &repo.id,
+                    &branch.branch,
+                    &file_path,
+                    line_number,
+                    line_type,
+                    &comment_text,
+                )
+                .await
+            {
+                Ok(comment) => {
+                    self.line_comments.push(comment);
+                    self.status_message = Some("Comment added".to_string());
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to add comment: {}", e));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Load comments for current branch
+    pub async fn load_comments(&mut self) -> Result<()> {
+        if let (Some(repo), Some(branch)) = (
+            self.repos.get(self.repo_idx).cloned(),
+            self.worktrees.get(self.branch_idx).cloned(),
+        ) {
+            match self
+                .client
+                .list_line_comments(&repo.id, &branch.branch, None)
+                .await
+            {
+                Ok(comments) => {
+                    self.line_comments = comments;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load comments: {}", e);
+                    self.line_comments.clear();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get comments for a specific file and line
+    pub fn get_line_comment(&self, file_path: &str, line_number: i32) -> Option<&LineCommentInfo> {
+        self.line_comments
+            .iter()
+            .find(|c| c.file_path == file_path && c.line_number == line_number)
+    }
+
+    /// Check if a line has a comment
+    pub fn has_line_comment(&self, file_path: &str, line_number: i32) -> bool {
+        self.get_line_comment(file_path, line_number).is_some()
+    }
+
+    /// Submit all comments as a review to Claude
+    pub async fn submit_review_to_claude(&mut self) -> Result<()> {
+        if self.line_comments.is_empty() {
+            self.status_message = Some("No comments to submit".to_string());
+            return Ok(());
+        }
+
+        // Build the review prompt
+        let mut prompt = String::from("Please help me review the following code changes:\n\n");
+
+        // Group comments by file
+        let mut by_file: std::collections::HashMap<String, Vec<&LineCommentInfo>> =
+            std::collections::HashMap::new();
+        for comment in &self.line_comments {
+            by_file
+                .entry(comment.file_path.clone())
+                .or_default()
+                .push(comment);
+        }
+
+        for (file_path, comments) in by_file {
+            prompt.push_str(&format!("## File: {}\n\n", file_path));
+
+            for comment in comments {
+                let line_type_str = match comment.line_type {
+                    3 => "+", // Addition
+                    4 => "-", // Deletion
+                    _ => " ", // Context
+                };
+
+                prompt.push_str(&format!(
+                    "### Line {} ({})\n",
+                    comment.line_number, line_type_str
+                ));
+                prompt.push_str(&format!("Comment: {}\n\n", comment.comment));
+            }
+        }
+
+        prompt.push_str("---\nPlease provide your suggestions for the above comments.\n");
+
+        // Switch to terminal view and send to PTY
+        self.switch_to_terminal_view();
+
+        // Connect if needed and send
+        if self.terminal_stream.is_none() && self.active_session_id.is_some() {
+            self.enter_terminal().await?;
+        }
+
+        if self.terminal_stream.is_some() {
+            self.send_to_terminal(prompt.into_bytes()).await?;
+            self.status_message = Some("Review sent to Claude".to_string());
+        } else {
+            self.error_message = Some("No active session to send review".to_string());
+        }
+
+        Ok(())
     }
 }
 
