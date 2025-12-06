@@ -45,8 +45,10 @@ pub enum DeleteTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
     Normal,
-    NewBranch,   // Entering new branch name (deprecated, use AddWorktree)
-    AddWorktree, // Adding worktree (select branch or enter new name)
+    NewBranch, // Entering new branch name (deprecated, use AddWorktree)
+    AddWorktree {
+        base_branch: Option<String>, // Branch to create from (None = HEAD)
+    }, // Adding worktree (select branch or enter new name)
     RenameSession {
         session_id: String,
     }, // Renaming a session
@@ -698,7 +700,13 @@ impl App {
 
     /// Start add worktree mode
     pub fn start_add_worktree(&mut self) {
-        self.input_mode = InputMode::AddWorktree;
+        // Get current selected branch as base (None = use HEAD)
+        let base_branch = self
+            .worktrees
+            .get(self.branch_idx)
+            .map(|w| w.branch.clone());
+
+        self.input_mode = InputMode::AddWorktree { base_branch };
         self.input_buffer.clear();
         self.add_worktree_idx = 0;
     }
@@ -747,11 +755,20 @@ impl App {
 
     /// Submit add worktree (create worktree for selected or new branch)
     pub async fn submit_add_worktree(&mut self) -> Result<()> {
+        // Get base_branch from input mode before clearing
+        let base_branch = match &self.input_mode {
+            InputMode::AddWorktree { base_branch } => base_branch.clone(),
+            _ => None,
+        };
+
         // Determine branch name: typed input or selected from list
-        let branch_name = if !self.input_buffer.is_empty() {
-            self.input_buffer.trim().to_string()
+        // Only use base_branch when creating a NEW branch (typing in input)
+        let (branch_name, use_base) = if !self.input_buffer.is_empty() {
+            // Creating new branch - use base_branch
+            (self.input_buffer.trim().to_string(), true)
         } else if let Some(branch) = self.available_branches.get(self.add_worktree_idx) {
-            branch.branch.clone()
+            // Selecting existing branch - no need for base
+            (branch.branch.clone(), false)
         } else {
             self.cancel_input();
             return Ok(());
@@ -768,8 +785,17 @@ impl App {
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
 
-        // Create worktree
-        match self.client.create_worktree(&repo_id, &branch_name).await {
+        // Create worktree (pass base_branch only when creating new branch)
+        let base = if use_base {
+            base_branch.as_deref()
+        } else {
+            None
+        };
+        match self
+            .client
+            .create_worktree(&repo_id, &branch_name, base)
+            .await
+        {
             Ok(_) => {
                 self.status_message = Some(format!("Created worktree for: {}", branch_name));
                 self.refresh_branches().await?;

@@ -102,10 +102,14 @@ impl GitOps {
     }
 
     /// Create a new worktree for a branch
+    ///
+    /// If `base_branch` is provided and `branch` doesn't exist, the new branch
+    /// will be created from `base_branch`. Otherwise falls back to HEAD.
     pub fn create_worktree(
         repo: &Repository,
         branch: &str,
         base_path: &Path,
+        base_branch: Option<&str>,
     ) -> Result<PathBuf, GitError> {
         // Worktree path: {base_path}--{branch}
         let wt_name = branch.replace('/', "-");
@@ -139,9 +143,16 @@ impl GitOps {
         let reference = if let Ok(branch_ref) = repo.find_branch(branch, git2::BranchType::Local) {
             branch_ref.into_reference()
         } else {
-            // Create branch from HEAD if it doesn't exist
-            let head = repo.head()?;
-            let commit = head.peel_to_commit()?;
+            // Create branch from base_branch if provided, otherwise from HEAD
+            let commit = if let Some(base) = base_branch {
+                let base_ref = repo
+                    .find_branch(base, git2::BranchType::Local)
+                    .map_err(|_| GitError::BranchNotFound(base.to_string()))?;
+                base_ref.get().peel_to_commit()?
+            } else {
+                let head = repo.head()?;
+                head.peel_to_commit()?
+            };
             repo.branch(branch, &commit, false)?.into_reference()
         };
 

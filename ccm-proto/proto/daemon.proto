@@ -63,6 +63,7 @@ message ListWorktreesResponse {
 message CreateWorktreeRequest {
     string repo_id = 1;
     string branch = 2;
+    optional string base_branch = 3;  // Branch to create from (if branch doesn't exist)
 }
 
 message RemoveWorktreeRequest {

@@ -27,7 +27,7 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     }
 
     // Handle add worktree mode
-    if app.input_mode == InputMode::AddWorktree {
+    if matches!(app.input_mode, InputMode::AddWorktree { .. }) {
         return handle_add_worktree_mode_sync(app, key);
     }
 
@@ -78,7 +78,7 @@ fn is_prefix_key(key: &KeyEvent) -> bool {
 fn is_text_input_mode(app: &App) -> bool {
     matches!(
         app.input_mode,
-        InputMode::NewBranch | InputMode::AddWorktree | InputMode::RenameSession { .. }
+        InputMode::NewBranch | InputMode::AddWorktree { .. } | InputMode::RenameSession { .. }
     )
 }
 

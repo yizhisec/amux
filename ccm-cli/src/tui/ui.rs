@@ -69,8 +69,8 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // Check for add worktree overlay
-    if app.input_mode == InputMode::AddWorktree {
-        draw_add_worktree_overlay(f, area, app);
+    if let InputMode::AddWorktree { ref base_branch } = app.input_mode {
+        draw_add_worktree_overlay(f, area, app, base_branch.as_deref());
         return;
     }
 
@@ -439,10 +439,10 @@ fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget)
 }
 
 /// Draw add worktree overlay (select branch or type new name)
-fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App) {
+fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: Option<&str>) {
     // Calculate popup size based on content
     let branch_count = app.available_branches.len();
-    let popup_height = (branch_count + 6).min(20) as u16; // +6 for borders, title, input, instructions
+    let popup_height = (branch_count + 7).min(20) as u16; // +7 for borders, title, input, instructions, base info
     let popup_width = 60.min(area.width.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
@@ -458,7 +458,7 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // Instructions
-            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Base branch info
             Constraint::Min(1),    // Branch list
             Constraint::Length(1), // Spacer
             Constraint::Length(1), // Input field
@@ -476,6 +476,19 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App) {
     let instructions = Paragraph::new("Select existing branch or type new name:")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(instructions, chunks[0]);
+
+    // Base branch info (only shown when typing new branch name)
+    let base_info = match base_branch {
+        Some(branch) => format!("Base: {} (new branch will be created from here)", branch),
+        None => "Base: HEAD (new branch will be created from HEAD)".to_string(),
+    };
+    let base_style = if !app.input_buffer.is_empty() {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let base_paragraph = Paragraph::new(base_info).style(base_style);
+    f.render_widget(base_paragraph, chunks[1]);
 
     // Branch list
     if !app.available_branches.is_empty() {

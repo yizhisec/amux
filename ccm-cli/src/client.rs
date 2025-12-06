@@ -139,12 +139,18 @@ impl Client {
         Ok(response.into_inner().worktrees)
     }
 
-    pub async fn create_worktree(&mut self, repo_id: &str, branch: &str) -> Result<WorktreeInfo> {
+    pub async fn create_worktree(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+        base_branch: Option<&str>,
+    ) -> Result<WorktreeInfo> {
         let response = self
             .inner
             .create_worktree(CreateWorktreeRequest {
                 repo_id: repo_id.to_string(),
                 branch: branch.to_string(),
+                base_branch: base_branch.map(|s| s.to_string()),
             })
             .await?;
         Ok(response.into_inner())

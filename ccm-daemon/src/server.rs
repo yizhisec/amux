@@ -183,8 +183,13 @@ impl CcmDaemon for CcmDaemonService {
 
         let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
-        let wt_path = GitOps::create_worktree(&git_repo, &req.branch, &repo.path)
-            .map_err(|e| Status::from(DaemonError::from(e)))?;
+        let wt_path = GitOps::create_worktree(
+            &git_repo,
+            &req.branch,
+            &repo.path,
+            req.base_branch.as_deref(),
+        )
+        .map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(WorktreeInfo {
             repo_id: req.repo_id,
@@ -312,8 +317,8 @@ impl CcmDaemon for CcmDaemonService {
         let worktree_path = match GitOps::find_worktree_path(&git_repo, &req.branch) {
             Some(path) => path,
             None => {
-                // Auto-create worktree
-                GitOps::create_worktree(&git_repo, &req.branch, &repo.path)
+                // Auto-create worktree (uses HEAD as base for new branch)
+                GitOps::create_worktree(&git_repo, &req.branch, &repo.path, None)
                     .map_err(|e| Status::from(DaemonError::from(e)))?
             }
         };
