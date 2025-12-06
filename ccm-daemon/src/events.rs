@@ -2,7 +2,7 @@
 
 use ccm_proto::daemon::{
     Event, SessionCreatedEvent, SessionDestroyedEvent, SessionNameUpdatedEvent,
-    SessionStatusChangedEvent,
+    SessionStatusChangedEvent, WorktreeAddedEvent, WorktreeInfo, WorktreeRemovedEvent,
 };
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -91,6 +91,26 @@ impl EventBroadcaster {
                     old_status,
                     new_status,
                 },
+            )),
+        });
+    }
+
+    /// Emit a worktree added event
+    pub fn emit_worktree_added(&self, worktree: WorktreeInfo) {
+        self.broadcast(Event {
+            event: Some(ccm_proto::daemon::event::Event::WorktreeAdded(
+                WorktreeAddedEvent {
+                    worktree: Some(worktree),
+                },
+            )),
+        });
+    }
+
+    /// Emit a worktree removed event
+    pub fn emit_worktree_removed(&self, repo_id: String, branch: String) {
+        self.broadcast(Event {
+            event: Some(ccm_proto::daemon::event::Event::WorktreeRemoved(
+                WorktreeRemovedEvent { repo_id, branch },
             )),
         });
     }

@@ -24,16 +24,25 @@ use tracing::{debug, warn};
 
 type Result<T> = std::result::Result<T, TuiError>;
 
-use super::input::handle_input_sync;
+use super::input::{handle_input_sync, handle_mouse_sync};
 use super::ui::draw;
 
 /// Focus position in the TUI
 #[derive(Debug, Clone, PartialEq)]
 pub enum Focus {
-    Branches,  // Branch list in sidebar
-    Sessions,  // Session list in sidebar
+    Branches,  // Branch list in sidebar (legacy, used when tree view disabled)
+    Sessions,  // Session list in sidebar (legacy, used when tree view disabled)
+    Sidebar,   // Tree view: worktrees with nested sessions
     Terminal,  // Terminal interaction area
     DiffFiles, // Diff file list (with inline expansion)
+}
+
+/// Sidebar item in tree view
+#[derive(Debug, Clone, PartialEq)]
+pub enum SidebarItem {
+    Worktree(usize),       // Worktree at index
+    Session(usize, usize), // (worktree_idx, session_idx within worktree)
+    None,
 }
 
 /// Right panel view mode
@@ -166,6 +175,10 @@ pub enum AsyncAction {
     LoadComments,
     SubmitLineComment,
     SubmitReviewToClaude,
+    // Tree view actions
+    LoadWorktreeSessions {
+        wt_idx: usize,
+    },
 }
 
 /// Terminal stream state for a session
@@ -230,6 +243,12 @@ pub struct App {
     // Comment state
     pub line_comments: Vec<LineCommentInfo>, // All comments for current branch
 
+    // Tree view state (for sidebar)
+    pub tree_view_enabled: bool, // Enable tree view mode
+    pub expanded_worktrees: std::collections::HashSet<usize>, // Which worktrees are expanded
+    pub sidebar_cursor: usize,   // Cursor position in virtual list
+    pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>, // Sessions grouped by worktree index
+
     // UI state
     pub should_quit: bool,
     pub error_message: Option<String>,
@@ -254,7 +273,7 @@ impl App {
             repo_idx: 0,
             branch_idx: 0,
             session_idx: 0,
-            focus: Focus::Branches,
+            focus: Focus::Sidebar,
             repos: Vec::new(),
             worktrees: Vec::new(),
             available_branches: Vec::new(),
@@ -276,6 +295,10 @@ impl App {
             diff_scroll_offset: 0,
             diff_fullscreen: false,
             line_comments: Vec::new(),
+            tree_view_enabled: true, // Enable tree view by default
+            expanded_worktrees: std::collections::HashSet::new(),
+            sidebar_cursor: 0,
+            sessions_by_worktree: HashMap::new(),
             should_quit: false,
             error_message: None,
             status_message: None,
@@ -447,6 +470,7 @@ impl App {
     #[allow(dead_code)]
     pub fn current_list_len(&self) -> usize {
         match self.focus {
+            Focus::Sidebar => self.sidebar_virtual_len(),
             Focus::Branches => self.worktrees.len(),
             Focus::Sessions => self.sessions.len(),
             Focus::Terminal => 0,
@@ -458,10 +482,164 @@ impl App {
     #[allow(dead_code)]
     pub fn current_idx(&self) -> usize {
         match self.focus {
+            Focus::Sidebar => self.sidebar_cursor,
             Focus::Branches => self.branch_idx,
             Focus::Sessions => self.session_idx,
             Focus::Terminal => 0,
             Focus::DiffFiles => self.diff_cursor,
+        }
+    }
+
+    // ========== Tree view helpers ==========
+
+    /// Calculate the virtual list length for tree view
+    pub fn sidebar_virtual_len(&self) -> usize {
+        let mut len = 0;
+        for (i, _wt) in self.worktrees.iter().enumerate() {
+            len += 1; // worktree itself
+            if self.expanded_worktrees.contains(&i) {
+                if let Some(sessions) = self.sessions_by_worktree.get(&i) {
+                    len += sessions.len();
+                }
+            }
+        }
+        len
+    }
+
+    /// Get the current sidebar item at cursor position
+    pub fn current_sidebar_item(&self) -> SidebarItem {
+        let mut pos = 0;
+        for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
+            if pos == self.sidebar_cursor {
+                return SidebarItem::Worktree(wt_idx);
+            }
+            pos += 1;
+            if self.expanded_worktrees.contains(&wt_idx) {
+                if let Some(sessions) = self.sessions_by_worktree.get(&wt_idx) {
+                    for (s_idx, _session) in sessions.iter().enumerate() {
+                        if pos == self.sidebar_cursor {
+                            return SidebarItem::Session(wt_idx, s_idx);
+                        }
+                        pos += 1;
+                    }
+                }
+            }
+        }
+        SidebarItem::None
+    }
+
+    /// Toggle expansion of current worktree
+    pub fn toggle_sidebar_expand(&mut self) -> Option<AsyncAction> {
+        if let SidebarItem::Worktree(wt_idx) = self.current_sidebar_item() {
+            if self.expanded_worktrees.contains(&wt_idx) {
+                self.expanded_worktrees.remove(&wt_idx);
+            } else {
+                self.expanded_worktrees.insert(wt_idx);
+                // Load sessions for this worktree if not loaded
+                if !self.sessions_by_worktree.contains_key(&wt_idx) {
+                    return Some(AsyncAction::LoadWorktreeSessions { wt_idx });
+                }
+            }
+            self.dirty.sidebar = true;
+        }
+        None
+    }
+
+    /// Move cursor up in sidebar tree view
+    pub fn sidebar_move_up(&mut self) -> Option<AsyncAction> {
+        if self.sidebar_cursor > 0 {
+            self.sidebar_cursor -= 1;
+            self.dirty.sidebar = true;
+            self.update_selection_from_sidebar();
+        }
+        None
+    }
+
+    /// Move cursor down in sidebar tree view
+    pub fn sidebar_move_down(&mut self) -> Option<AsyncAction> {
+        let max_cursor = self.sidebar_virtual_len().saturating_sub(1);
+        if self.sidebar_cursor < max_cursor {
+            self.sidebar_cursor += 1;
+            self.dirty.sidebar = true;
+            self.update_selection_from_sidebar();
+        }
+        None
+    }
+
+    /// Toggle between tree view and legacy split view
+    pub fn toggle_tree_view(&mut self) {
+        self.tree_view_enabled = !self.tree_view_enabled;
+        self.dirty.sidebar = true;
+
+        // Update focus based on mode
+        if self.tree_view_enabled {
+            // Switch to tree view: change Focus::Branches/Sessions to Focus::Sidebar
+            if self.focus == Focus::Branches || self.focus == Focus::Sessions {
+                self.focus = Focus::Sidebar;
+            }
+        } else {
+            // Switch to legacy view: change Focus::Sidebar to Focus::Branches
+            if self.focus == Focus::Sidebar {
+                self.focus = Focus::Branches;
+            }
+        }
+
+        self.status_message = Some(if self.tree_view_enabled {
+            "Tree view enabled (T to toggle)".to_string()
+        } else {
+            "Legacy view enabled (T to toggle)".to_string()
+        });
+    }
+
+    /// Update branch_idx and session_idx based on sidebar cursor
+    fn update_selection_from_sidebar(&mut self) {
+        match self.current_sidebar_item() {
+            SidebarItem::Worktree(wt_idx) => {
+                self.branch_idx = wt_idx;
+                self.session_idx = 0;
+                // Clear active session when on worktree
+                if self.active_session_id.is_some() {
+                    self.disconnect_stream();
+                    self.active_session_id = None;
+                    self.dirty.terminal = true;
+                }
+            }
+            SidebarItem::Session(wt_idx, s_idx) => {
+                self.branch_idx = wt_idx;
+                self.session_idx = s_idx;
+                // Get session id first to avoid borrow issues
+                let session_id = self
+                    .sessions_by_worktree
+                    .get(&wt_idx)
+                    .and_then(|sessions| sessions.get(s_idx))
+                    .map(|s| s.id.clone());
+
+                if let Some(new_id) = session_id {
+                    if self.active_session_id.as_ref() != Some(&new_id) {
+                        self.disconnect_stream();
+
+                        // Save current parser if there was an active session
+                        if let Some(old_id) = &self.active_session_id {
+                            self.session_parsers
+                                .insert(old_id.clone(), self.terminal_parser.clone());
+                        }
+
+                        // Get or create parser for new session
+                        self.terminal_parser = self
+                            .session_parsers
+                            .entry(new_id.clone())
+                            .or_insert_with(|| {
+                                Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)))
+                            })
+                            .clone();
+
+                        self.active_session_id = Some(new_id);
+                        self.scroll_offset = 0;
+                        self.dirty.terminal = true;
+                    }
+                }
+            }
+            SidebarItem::None => {}
         }
     }
 
@@ -470,6 +648,9 @@ impl App {
     /// Move selection up (sync version - returns async action if needed)
     pub fn select_prev_sync(&mut self) -> Option<AsyncAction> {
         match self.focus {
+            Focus::Sidebar => {
+                return self.sidebar_move_up();
+            }
             Focus::Branches => {
                 if self.branch_idx > 0 {
                     self.branch_idx -= 1;
@@ -496,6 +677,9 @@ impl App {
     /// Move selection down (sync version - returns async action if needed)
     pub fn select_next_sync(&mut self) -> Option<AsyncAction> {
         match self.focus {
+            Focus::Sidebar => {
+                return self.sidebar_move_down();
+            }
             Focus::Branches => {
                 if !self.worktrees.is_empty() && self.branch_idx < self.worktrees.len() - 1 {
                     self.branch_idx += 1;
@@ -566,6 +750,7 @@ impl App {
     #[allow(dead_code)]
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
+            Focus::Sidebar => Focus::Sidebar, // Stay in sidebar
             Focus::Branches => Focus::Sessions,
             Focus::Sessions => Focus::Branches,
             Focus::Terminal => Focus::Sessions,
@@ -600,12 +785,17 @@ impl App {
         deactivate_ime();
     }
 
-    /// Exit terminal mode (back to Sessions)
+    /// Exit terminal mode (back to sidebar)
     pub fn exit_terminal(&mut self) {
         if self.terminal_fullscreen {
             self.terminal_fullscreen = false;
         } else {
-            self.focus = Focus::Sessions;
+            // Return to appropriate sidebar focus based on tree view mode
+            self.focus = if self.tree_view_enabled {
+                Focus::Sidebar
+            } else {
+                Focus::Sessions
+            };
             self.terminal_mode = TerminalMode::Normal;
             self.is_interactive = false;
         }
@@ -662,12 +852,42 @@ impl App {
     #[allow(dead_code)]
     pub fn exit_interactive(&mut self) {
         self.is_interactive = false;
-        self.focus = Focus::Sessions;
+        self.focus = if self.tree_view_enabled {
+            Focus::Sidebar
+        } else {
+            Focus::Sessions
+        };
     }
 
     /// Create new session and enter interactive mode
     pub async fn create_new(&mut self) -> Result<()> {
         match self.focus {
+            Focus::Sidebar => {
+                // In tree view: create session for currently selected worktree
+                if let (Some(repo), Some(branch)) = (
+                    self.repos.get(self.repo_idx).cloned(),
+                    self.worktrees.get(self.branch_idx).cloned(),
+                ) {
+                    match self
+                        .client
+                        .create_session(&repo.id, &branch.branch, None)
+                        .await
+                    {
+                        Ok(session) => {
+                            // Refresh sessions for this worktree
+                            self.load_worktree_sessions(self.branch_idx).await?;
+                            // Expand and select new session
+                            self.expanded_worktrees.insert(self.branch_idx);
+                            self.enter_terminal().await?;
+                            // Update active session
+                            self.active_session_id = Some(session.id);
+                        }
+                        Err(e) => {
+                            self.error_message = Some(e.to_string());
+                        }
+                    }
+                }
+            }
             Focus::Branches => {
                 // Enter input mode for new branch name
                 self.input_mode = InputMode::NewBranch;
@@ -740,8 +960,16 @@ impl App {
                             self.session_idx = s_idx;
                             self.update_active_session().await;
                         }
+                        // Also load sessions for tree view
+                        self.load_worktree_sessions(b_idx).await?;
+                        self.expanded_worktrees.insert(b_idx);
                     }
-                    self.focus = Focus::Sessions;
+                    // Return to appropriate focus before entering terminal
+                    self.focus = if self.tree_view_enabled {
+                        Focus::Sidebar
+                    } else {
+                        Focus::Sessions
+                    };
                     self.enter_terminal().await?;
                 }
                 Err(e) => {
@@ -939,6 +1167,47 @@ impl App {
     /// Request deletion (enters confirm mode)
     pub fn request_delete(&mut self) {
         match self.focus {
+            Focus::Sidebar => {
+                // In tree view: delete based on current selection
+                match self.current_sidebar_item() {
+                    SidebarItem::Worktree(wt_idx) => {
+                        if let (Some(repo), Some(wt)) = (
+                            self.repos.get(self.repo_idx).cloned(),
+                            self.worktrees.get(wt_idx).cloned(),
+                        ) {
+                            if wt.is_main {
+                                self.error_message =
+                                    Some("Cannot remove main worktree".to_string());
+                            } else if wt.path.is_empty() {
+                                self.error_message = Some("No worktree to remove".to_string());
+                            } else if wt.session_count > 0 {
+                                self.input_mode = InputMode::ConfirmDeleteWorktreeSessions {
+                                    repo_id: repo.id,
+                                    branch: wt.branch,
+                                    session_count: wt.session_count,
+                                };
+                            } else {
+                                self.input_mode =
+                                    InputMode::ConfirmDelete(DeleteTarget::Worktree {
+                                        repo_id: repo.id,
+                                        branch: wt.branch,
+                                    });
+                            }
+                        }
+                    }
+                    SidebarItem::Session(wt_idx, s_idx) => {
+                        if let Some(sessions) = self.sessions_by_worktree.get(&wt_idx) {
+                            if let Some(session) = sessions.get(s_idx) {
+                                self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
+                                    session_id: session.id.clone(),
+                                    name: session.name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    SidebarItem::None => {}
+                }
+            }
             Focus::Branches => {
                 if let (Some(repo), Some(wt)) = (
                     self.repos.get(self.repo_idx).cloned(),
@@ -1200,6 +1469,35 @@ impl App {
                     session.status = e.new_status;
                 }
             }
+            Some(daemon_event::Event::WorktreeAdded(e)) => {
+                debug!(
+                    "Event: WorktreeAdded {:?}",
+                    e.worktree.as_ref().map(|w| &w.branch)
+                );
+                if let Some(worktree) = e.worktree {
+                    // Only add if it matches current repo
+                    if let Some(repo) = self.repos.get(self.repo_idx) {
+                        if worktree.repo_id == repo.id {
+                            self.worktrees.push(worktree);
+                            self.dirty.sidebar = true;
+                        }
+                    }
+                }
+            }
+            Some(daemon_event::Event::WorktreeRemoved(e)) => {
+                debug!("Event: WorktreeRemoved {} {}", e.repo_id, e.branch);
+                // Remove worktree from list if it matches current repo
+                if let Some(repo) = self.repos.get(self.repo_idx) {
+                    if e.repo_id == repo.id {
+                        self.worktrees.retain(|w| w.branch != e.branch);
+                        // Clamp branch index
+                        if !self.worktrees.is_empty() && self.branch_idx >= self.worktrees.len() {
+                            self.branch_idx = self.worktrees.len() - 1;
+                        }
+                        self.dirty.sidebar = true;
+                    }
+                }
+            }
             None => {}
         }
     }
@@ -1274,6 +1572,24 @@ impl App {
             AsyncAction::SubmitReviewToClaude => {
                 self.submit_review_to_claude().await?;
             }
+            AsyncAction::LoadWorktreeSessions { wt_idx } => {
+                self.load_worktree_sessions(wt_idx).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Load sessions for a specific worktree (for tree view)
+    pub async fn load_worktree_sessions(&mut self, wt_idx: usize) -> Result<()> {
+        if let (Some(repo), Some(worktree)) =
+            (self.repos.get(self.repo_idx), self.worktrees.get(wt_idx))
+        {
+            let sessions = self
+                .client
+                .list_sessions(Some(&repo.id), Some(&worktree.branch))
+                .await?;
+            self.sessions_by_worktree.insert(wt_idx, sessions);
+            self.dirty.sidebar = true;
         }
         Ok(())
     }
@@ -1404,7 +1720,12 @@ impl App {
     /// Switch back to terminal view
     pub fn switch_to_terminal_view(&mut self) {
         self.right_panel_view = RightPanelView::Terminal;
-        self.focus = Focus::Sessions;
+        // Return to appropriate sidebar focus
+        self.focus = if self.tree_view_enabled {
+            Focus::Sidebar
+        } else {
+            Focus::Sessions
+        };
         self.diff_files.clear();
         self.diff_expanded.clear();
         self.diff_file_lines.clear();
@@ -1860,6 +2181,10 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     }
                     Event::Resize(cols, rows) => {
                         let _ = app.resize_terminal(rows, cols).await;
+                        dirty = true;
+                    }
+                    Event::Mouse(mouse) => {
+                        handle_mouse_sync(&mut app, mouse);
                         dirty = true;
                     }
                     _ => {}

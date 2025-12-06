@@ -193,13 +193,18 @@ impl CcmDaemon for CcmDaemonService {
         )
         .map_err(|e| Status::from(DaemonError::from(e)))?;
 
-        Ok(Response::new(WorktreeInfo {
+        let info = WorktreeInfo {
             repo_id: req.repo_id,
             branch: req.branch,
             path: wt_path.to_string_lossy().to_string(),
             is_main: false,
             session_count: 0,
-        }))
+        };
+
+        // Emit worktree added event for multi-instance sync
+        self.events.emit_worktree_added(info.clone());
+
+        Ok(Response::new(info))
     }
 
     async fn remove_worktree(
@@ -229,6 +234,10 @@ impl CcmDaemon for CcmDaemonService {
 
         GitOps::remove_worktree(&git_repo, &req.branch)
             .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        // Emit worktree removed event for multi-instance sync
+        self.events
+            .emit_worktree_removed(req.repo_id.clone(), req.branch.clone());
 
         Ok(Response::new(Empty {}))
     }
@@ -492,6 +501,15 @@ impl CcmDaemon for CcmDaemonService {
                             // TUI can filter client-side if needed
                             (Some(_), Some(event::Event::SessionNameUpdated(_))) => true,
                             (Some(_), Some(event::Event::SessionStatusChanged(_))) => true,
+                            // Worktree events
+                            (Some(filter_repo_id), Some(event::Event::WorktreeAdded(e))) => e
+                                .worktree
+                                .as_ref()
+                                .map(|w| &w.repo_id == filter_repo_id)
+                                .unwrap_or(false),
+                            (Some(filter_repo_id), Some(event::Event::WorktreeRemoved(e))) => {
+                                &e.repo_id == filter_repo_id
+                            }
                             (_, None) => false,
                         };
 

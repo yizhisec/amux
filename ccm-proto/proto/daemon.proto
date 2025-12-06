@@ -163,6 +163,8 @@ message Event {
         SessionDestroyedEvent session_destroyed = 2;
         SessionNameUpdatedEvent session_name_updated = 3;
         SessionStatusChangedEvent session_status_changed = 4;
+        WorktreeAddedEvent worktree_added = 5;
+        WorktreeRemovedEvent worktree_removed = 6;
     }
 }
 
@@ -186,6 +188,15 @@ message SessionStatusChangedEvent {
     string session_id = 1;
     SessionStatus old_status = 2;
     SessionStatus new_status = 3;
+}
+
+message WorktreeAddedEvent {
+    WorktreeInfo worktree = 1;
+}
+
+message WorktreeRemovedEvent {
+    string repo_id = 1;
+    string branch = 2;
 }
 
 // ============ Diff ============

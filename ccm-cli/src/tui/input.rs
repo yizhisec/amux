@@ -6,7 +6,7 @@
 //! All input handlers are synchronous and return Option<AsyncAction> for deferred execution.
 
 use super::app::{App, AsyncAction, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 /// Handle keyboard input (sync version - returns async action if needed)
 pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
@@ -117,7 +117,12 @@ fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.focus = Focus::Sessions;
+            // Go to sidebar (tree view) or sessions (legacy view)
+            app.focus = if app.tree_view_enabled {
+                Focus::Sidebar
+            } else {
+                Focus::Sessions
+            };
             None
         }
 
@@ -169,6 +174,15 @@ fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
+        // Actions: [ = exit to terminal Normal mode (from Insert)
+        KeyCode::Char('[') => {
+            if app.focus == Focus::Terminal && app.terminal_mode == TerminalMode::Insert {
+                app.terminal_mode = TerminalMode::Normal;
+                app.dirty.terminal = true;
+            }
+            None
+        }
+
         // Repo switching: 1-9
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             let idx = (c as usize) - ('1' as usize);
@@ -187,7 +201,7 @@ fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
         // Unknown command - show hint
         _ => {
             app.status_message = Some(
-                "Prefix: b=branches s=sessions t=terminal n=new d=delete r=refresh q=quit"
+                "Prefix: b=branches s=sessions t=terminal [=normal n=new d=delete r=refresh q=quit"
                     .to_string(),
             );
             None
@@ -246,6 +260,12 @@ fn handle_confirm_delete_worktree_sessions_sync(
 
 /// Handle input when in add worktree mode
 fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // Shift+Enter: insert newline (when typing new branch name)
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
+        app.input_buffer.push('\n');
+        return None;
+    }
+
     match key.code {
         // Cancel
         KeyCode::Esc => {
@@ -284,17 +304,22 @@ fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAc
 
 /// Handle input when in rename session mode
 fn handle_rename_session_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Enter => Some(AsyncAction::SubmitRenameSession),
-        KeyCode::Esc => {
+    match (key.code, key.modifiers) {
+        // Shift+Enter: insert newline
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+            app.input_buffer.push('\n');
+            None
+        }
+        (KeyCode::Enter, _) => Some(AsyncAction::SubmitRenameSession),
+        (KeyCode::Esc, _) => {
             app.cancel_input();
             None
         }
-        KeyCode::Backspace => {
+        (KeyCode::Backspace, _) => {
             app.input_buffer.pop();
             None
         }
-        KeyCode::Char(c) => {
+        (KeyCode::Char(c), _) => {
             app.input_buffer.push(c);
             None
         }
@@ -304,17 +329,22 @@ fn handle_rename_session_mode_sync(app: &mut App, key: KeyEvent) -> Option<Async
 
 /// Handle input when adding a line comment
 fn handle_add_line_comment_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Enter => Some(AsyncAction::SubmitLineComment),
-        KeyCode::Esc => {
+    match (key.code, key.modifiers) {
+        // Shift+Enter: insert newline
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+            app.input_buffer.push('\n');
+            None
+        }
+        (KeyCode::Enter, _) => Some(AsyncAction::SubmitLineComment),
+        (KeyCode::Esc, _) => {
             app.cancel_input();
             None
         }
-        KeyCode::Backspace => {
+        (KeyCode::Backspace, _) => {
             app.input_buffer.pop();
             None
         }
-        KeyCode::Char(c) => {
+        (KeyCode::Char(c), _) => {
             app.input_buffer.push(c);
             None
         }
@@ -324,17 +354,22 @@ fn handle_add_line_comment_mode_sync(app: &mut App, key: KeyEvent) -> Option<Asy
 
 /// Handle input when in text entry mode (new branch name)
 fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Enter => Some(AsyncAction::SubmitInput),
-        KeyCode::Esc => {
+    match (key.code, key.modifiers) {
+        // Shift+Enter: insert newline
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+            app.input_buffer.push('\n');
+            None
+        }
+        (KeyCode::Enter, _) => Some(AsyncAction::SubmitInput),
+        (KeyCode::Esc, _) => {
             app.cancel_input();
             None
         }
-        KeyCode::Backspace => {
+        (KeyCode::Backspace, _) => {
             app.input_buffer.pop();
             None
         }
-        KeyCode::Char(c) => {
+        (KeyCode::Char(c), _) => {
             app.input_buffer.push(c);
             None
         }
@@ -413,6 +448,8 @@ fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
 
 /// Handle input in navigation mode (sidebar)
 fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    use super::app::SidebarItem;
+
     // Clear status messages on any key press
     app.status_message = None;
 
@@ -423,9 +460,17 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
             app.switch_repo_sync(idx)
         }
 
-        // Tab: forward navigation (Branches -> Sessions -> Terminal Normal)
+        // Tab: forward navigation (Sidebar/Branches -> Sessions -> Terminal Normal)
         KeyCode::Tab => {
             match app.focus {
+                Focus::Sidebar => {
+                    // In tree view: Enter terminal if on a session, else do nothing
+                    if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
+                        if app.active_session_id.is_some() {
+                            return Some(AsyncAction::ConnectStream);
+                        }
+                    }
+                }
                 Focus::Branches => {
                     app.focus = Focus::Sessions;
                 }
@@ -445,6 +490,9 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
         // Esc/Shift+Tab: backward navigation
         KeyCode::Esc | KeyCode::BackTab => {
             match app.focus {
+                Focus::Sidebar => {
+                    // Already at the beginning in tree view
+                }
                 Focus::Branches => {
                     // Already at the beginning
                 }
@@ -462,8 +510,25 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
         KeyCode::Up | KeyCode::Char('k') => app.select_prev_sync(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next_sync(),
 
-        // Enter: forward navigation
+        // Enter: forward navigation or toggle expand
         KeyCode::Enter => match app.focus {
+            Focus::Sidebar => {
+                match app.current_sidebar_item() {
+                    SidebarItem::Worktree(_) => {
+                        // Toggle expand when on worktree
+                        app.toggle_sidebar_expand()
+                    }
+                    SidebarItem::Session(_, _) => {
+                        // Enter terminal when on session
+                        if app.active_session_id.is_some() {
+                            Some(AsyncAction::ConnectStream)
+                        } else {
+                            None
+                        }
+                    }
+                    SidebarItem::None => None,
+                }
+            }
             Focus::Branches => {
                 app.focus = Focus::Sessions;
                 None
@@ -478,11 +543,20 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
             Focus::Terminal | Focus::DiffFiles => None,
         },
 
+        // Toggle expand in tree view (o key)
+        KeyCode::Char('o') if app.focus == Focus::Sidebar => app.toggle_sidebar_expand(),
+
+        // Toggle tree view mode (T key)
+        KeyCode::Char('T') => {
+            app.toggle_tree_view();
+            None
+        }
+
         // Create new (n for sessions, a for worktrees)
         KeyCode::Char('n') => Some(AsyncAction::CreateSession),
 
-        // Add worktree (when in Branches focus)
-        KeyCode::Char('a') if app.focus == Focus::Branches => {
+        // Add worktree (when in Branches or Sidebar focus)
+        KeyCode::Char('a') if app.focus == Focus::Branches || app.focus == Focus::Sidebar => {
             app.start_add_worktree();
             None
         }
@@ -505,9 +579,15 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
             None
         }
 
-        // Rename session (R when in Sessions focus)
+        // Rename session (R when in Sessions or Sidebar focus with session selected)
         KeyCode::Char('R') if app.focus == Focus::Sessions => {
             app.start_rename_session();
+            None
+        }
+        KeyCode::Char('R') if app.focus == Focus::Sidebar => {
+            if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
+                app.start_rename_session();
+            }
             None
         }
 
@@ -594,6 +674,11 @@ fn key_to_bytes(key: &KeyEvent) -> Vec<u8> {
         }
     }
 
+    // Shift+Enter sends newline (for multi-line input in Claude Code)
+    if key.code == Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
+        return vec![b'\n'];
+    }
+
     match key.code {
         Char(c) => c.to_string().into_bytes(),
         Enter => vec![b'\r'],
@@ -627,5 +712,68 @@ fn key_to_bytes(key: &KeyEvent) -> Vec<u8> {
             _ => vec![],
         },
         _ => vec![],
+    }
+}
+
+/// Handle mouse events (sync version)
+pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => {
+            match app.focus {
+                Focus::Terminal if app.terminal_mode == TerminalMode::Normal => {
+                    app.scroll_up(3);
+                }
+                Focus::DiffFiles => {
+                    // Scroll up 3 lines in diff view
+                    for _ in 0..3 {
+                        app.diff_move_up();
+                    }
+                }
+                Focus::Sidebar => {
+                    // Scroll up in tree view
+                    for _ in 0..3 {
+                        let _ = app.sidebar_move_up();
+                    }
+                }
+                Focus::Branches | Focus::Sessions => {
+                    // Scroll up in legacy sidebar lists
+                    for _ in 0..3 {
+                        let _ = app.select_prev_sync();
+                    }
+                }
+                _ => {}
+            }
+            app.dirty.sidebar = true;
+            app.dirty.terminal = true;
+        }
+        MouseEventKind::ScrollDown => {
+            match app.focus {
+                Focus::Terminal if app.terminal_mode == TerminalMode::Normal => {
+                    app.scroll_down(3);
+                }
+                Focus::DiffFiles => {
+                    // Scroll down 3 lines in diff view
+                    for _ in 0..3 {
+                        app.diff_move_down();
+                    }
+                }
+                Focus::Sidebar => {
+                    // Scroll down in tree view
+                    for _ in 0..3 {
+                        let _ = app.sidebar_move_down();
+                    }
+                }
+                Focus::Branches | Focus::Sessions => {
+                    // Scroll down in legacy sidebar lists
+                    for _ in 0..3 {
+                        let _ = app.select_next_sync();
+                    }
+                }
+                _ => {}
+            }
+            app.dirty.sidebar = true;
+            app.dirty.terminal = true;
+        }
+        _ => {}
     }
 }

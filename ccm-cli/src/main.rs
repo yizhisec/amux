@@ -10,7 +10,38 @@ mod tui;
 
 use client::Client;
 use error::CliError;
+use std::path::{Path, PathBuf};
 use tracing::debug;
+
+/// Find the main repository path for a git directory.
+/// If the path is a worktree, returns the main repository path.
+/// Otherwise returns the path as-is.
+fn find_main_repo_path(path: &Path) -> Option<PathBuf> {
+    let git_path = path.join(".git");
+
+    if git_path.is_dir() {
+        // Regular repository - .git is a directory
+        Some(path.to_path_buf())
+    } else if git_path.is_file() {
+        // Worktree - .git is a file containing: "gitdir: /path/to/.git/worktrees/name"
+        if let Ok(content) = std::fs::read_to_string(&git_path) {
+            if let Some(gitdir) = content.strip_prefix("gitdir: ") {
+                let gitdir_path = PathBuf::from(gitdir.trim());
+                // Navigate from .git/worktrees/name to .git to repo_root
+                // gitdir_path is like /path/to/main/repo/.git/worktrees/branch-name
+                if let Some(git_dir) = gitdir_path
+                    .ancestors()
+                    .find(|p| p.file_name().map(|n| n == ".git").unwrap_or(false))
+                {
+                    return git_dir.parent().map(|p| p.to_path_buf());
+                }
+            }
+        }
+        None
+    } else {
+        None
+    }
+}
 
 fn init_logging() {
     // TUI takes over stdout/stderr, so log to file if CCM_LOG is set
@@ -59,10 +90,13 @@ async fn main() -> Result<(), CliError> {
     let mut app = tui::App::new(client).await?;
     if let Ok(cwd) = std::env::current_dir() {
         if cwd.join(".git").exists() {
-            // Try to add, ignore errors (might already be added)
-            let _ = app.client.add_repo(cwd.to_str().unwrap()).await;
-            // Refresh to pick up the newly added repo
-            let _ = app.refresh_all().await;
+            // Find the main repository path (handles worktrees)
+            if let Some(repo_path) = find_main_repo_path(&cwd) {
+                // Try to add, ignore errors (might already be added)
+                let _ = app.client.add_repo(repo_path.to_str().unwrap()).await;
+                // Refresh to pick up the newly added repo
+                let _ = app.refresh_all().await;
+            }
         }
     }
 

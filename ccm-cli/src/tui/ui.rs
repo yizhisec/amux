@@ -363,17 +363,143 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw sidebar with worktrees and sessions
 fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    // Split sidebar into worktrees and sessions
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50), // Worktrees
-            Constraint::Percentage(50), // Sessions
-        ])
-        .split(area);
+    if app.tree_view_enabled {
+        // Tree view: single list with worktrees and nested sessions
+        draw_sidebar_tree(f, area, app);
+    } else {
+        // Legacy view: split sidebar into worktrees and sessions
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50), // Worktrees
+                Constraint::Percentage(50), // Sessions
+            ])
+            .split(area);
 
-    draw_worktrees(f, chunks[0], app);
-    draw_sessions(f, chunks[1], app);
+        draw_worktrees(f, chunks[0], app);
+        draw_sessions(f, chunks[1], app);
+    }
+}
+
+/// Draw tree view sidebar (worktrees with nested sessions)
+fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
+    let is_focused = app.focus == Focus::Sidebar;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut cursor_pos = 0;
+
+    for (wt_idx, wt) in app.worktrees.iter().enumerate() {
+        let is_expanded = app.expanded_worktrees.contains(&wt_idx);
+        let is_cursor = cursor_pos == app.sidebar_cursor;
+
+        // Worktree row style
+        let wt_style = if is_cursor && is_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if is_cursor {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Expand indicator
+        let expand_char = if is_expanded { "▼" } else { "▶" };
+
+        // Worktree indicator: ◆ for main, ● for others
+        let wt_indicator = if wt.is_main { "◆" } else { "●" };
+
+        // Session count indicator
+        let session_count = app
+            .sessions_by_worktree
+            .get(&wt_idx)
+            .map(|s| s.len())
+            .unwrap_or(wt.session_count as usize);
+        let session_indicator = if session_count > 0 {
+            format!(" ({})", session_count)
+        } else {
+            String::new()
+        };
+
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(if is_cursor { ">" } else { " " }, wt_style),
+            Span::styled(
+                format!(" {} ", expand_char),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{} ", wt_indicator),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(&wt.branch, wt_style),
+            Span::styled(session_indicator, Style::default().fg(Color::Green)),
+        ])));
+        cursor_pos += 1;
+
+        // Render sessions if expanded
+        if is_expanded {
+            if let Some(sessions) = app.sessions_by_worktree.get(&wt_idx) {
+                for session in sessions.iter() {
+                    let is_session_cursor = cursor_pos == app.sidebar_cursor;
+                    let is_active = app.active_session_id.as_ref() == Some(&session.id);
+
+                    let s_style = if is_session_cursor && is_focused {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else if is_session_cursor {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+
+                    let active_indicator = if is_active { "▶" } else { " " };
+                    let status_char = match session.status {
+                        1 => "●", // Running
+                        _ => "○", // Stopped
+                    };
+
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled(if is_session_cursor { ">" } else { " " }, s_style),
+                        Span::raw("     "), // Indent for nesting
+                        Span::styled(
+                            format!("{} ", active_indicator),
+                            Style::default().fg(Color::Green),
+                        ),
+                        Span::styled(
+                            format!("{} ", status_char),
+                            Style::default().fg(if session.status == 1 {
+                                Color::Green
+                            } else {
+                                Color::DarkGray
+                            }),
+                        ),
+                        Span::styled(&session.name, s_style),
+                    ])));
+                    cursor_pos += 1;
+                }
+            }
+        }
+    }
+
+    let title = if is_focused {
+        " Worktrees [*] "
+    } else {
+        " Worktrees "
+    };
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title),
+    );
+
+    f.render_widget(list, area);
 }
 
 /// Draw worktrees list (only branches with worktrees)
@@ -1132,9 +1258,13 @@ fn draw_add_line_comment_overlay(
     file_path: &str,
     line_number: i32,
 ) {
-    // Center the input box
+    // Calculate input lines for dynamic height
+    let input_lines: Vec<&str> = app.input_buffer.lines().collect();
+    let input_line_count = input_lines.len().max(1);
+
+    // Center the input box with dynamic height
     let popup_width = 70.min(area.width.saturating_sub(4));
-    let popup_height = 7;
+    let popup_height = (6 + input_line_count as u16).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -1151,7 +1281,8 @@ fn draw_add_line_comment_overlay(
         file_path.to_string()
     };
 
-    let text = vec![
+    // Build text with multiline input support
+    let mut text = vec![
         Line::from(vec![
             Span::styled("File: ", Style::default().fg(Color::DarkGray)),
             Span::styled(display_path, Style::default().fg(Color::White)),
@@ -1161,32 +1292,44 @@ fn draw_add_line_comment_overlay(
             Span::styled(format!("{}", line_number), Style::default().fg(Color::Cyan)),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Yellow)),
-            Span::styled(&app.input_buffer, Style::default().fg(Color::Yellow)),
-        ]),
     ];
+
+    // Add input lines
+    for (i, line) in input_lines.iter().enumerate() {
+        let prefix = if i == 0 { "> " } else { "  " };
+        text.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow)),
+            Span::styled(*line, Style::default().fg(Color::Yellow)),
+        ]));
+    }
+    // Handle empty input
+    if input_lines.is_empty() {
+        text.push(Line::from(vec![Span::styled(
+            "> ",
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
 
     let input = Paragraph::new(text).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
-            .title(" Add Comment (Enter=save, Esc=cancel) "),
+            .title(" Add Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
     );
     f.render_widget(input, popup_area);
 
-    // Show cursor
-    f.set_cursor_position((
-        popup_area.x + 3 + app.input_buffer.len() as u16, // 3 = "> " + border
-        popup_area.y + 4,                                 // Line with input
-    ));
+    // Calculate cursor position for multiline input
+    let last_line = input_lines.last().copied().unwrap_or("");
+    let cursor_x = popup_area.x + 3 + last_line.len() as u16; // 3 = "> " + border
+    let cursor_y = popup_area.y + 4 + (input_line_count.saturating_sub(1)) as u16;
+    f.set_cursor_position((cursor_x, cursor_y));
 }
 
 /// Draw status bar at the bottom
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Prefix mode takes priority - show available commands
     if app.prefix_mode == PrefixMode::WaitingForCommand {
-        let prefix_help = "Prefix: [b] Branches | [s] Sessions | [t] Terminal | [n] New | [a] Add | [d] Delete | [r] Refresh | [f] Fullscreen | [1-9] Repo | [q] Quit";
+        let prefix_help = "Prefix: [b] Branches | [s] Sessions | [t] Terminal | [[] Normal | [n] New | [a] Add | [d] Delete | [r] Refresh | [f] Fullscreen | [1-9] Repo | [q] Quit";
         let paragraph = Paragraph::new(prefix_help)
             .style(
                 Style::default()
@@ -1208,6 +1351,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
+            Focus::Sidebar => "[Ctrl+s] Prefix | [j/k] Move | [o/Enter] Expand | [Tab] Terminal | [n] New | [a] Add | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
             Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [x] Delete | [d] Diff | [q] Quit",
             Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
