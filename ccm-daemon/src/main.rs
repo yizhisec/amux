@@ -1,6 +1,7 @@
 //! CCM Daemon - Claude Code Manager Daemon
 
 mod claude_session;
+mod diff;
 pub mod error;
 mod events;
 mod git;

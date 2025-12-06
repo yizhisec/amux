@@ -255,4 +255,40 @@ impl Client {
             .await?;
         Ok(response.into_inner())
     }
+
+    // ============ Diff ============
+
+    /// Get list of changed files in a worktree
+    pub async fn get_diff_files(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+    ) -> Result<Vec<DiffFileInfo>> {
+        let response = self
+            .inner
+            .get_diff_files(GetDiffFilesRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner().files)
+    }
+
+    /// Get diff content for a specific file
+    pub async fn get_file_diff(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<GetFileDiffResponse> {
+        let response = self
+            .inner
+            .get_file_diff(GetFileDiffRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+                file_path: file_path.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
 }

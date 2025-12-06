@@ -5,7 +5,7 @@
 //!
 //! All input handlers are synchronous and return Option<AsyncAction> for deferred execution.
 
-use super::app::{App, AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
+use super::app::{App, AsyncAction, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handle keyboard input (sync version - returns async action if needed)
@@ -63,6 +63,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
                 None
             }
         };
+    }
+
+    // Handle diff view mode
+    if app.focus == Focus::DiffFiles {
+        return handle_diff_files_mode_sync(app, key);
     }
 
     // Handle sidebar navigation
@@ -405,7 +410,7 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
                         return Some(AsyncAction::ConnectStream);
                     }
                 }
-                Focus::Terminal => {
+                Focus::Terminal | Focus::DiffFiles => {
                     // Shouldn't happen here
                 }
             }
@@ -421,8 +426,8 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
                 Focus::Sessions => {
                     app.focus = Focus::Branches;
                 }
-                Focus::Terminal => {
-                    // Handled in terminal modes
+                Focus::Terminal | Focus::DiffFiles => {
+                    // Handled in their respective modes
                 }
             }
             None
@@ -445,7 +450,7 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
                     None
                 }
             }
-            Focus::Terminal => None,
+            Focus::Terminal | Focus::DiffFiles => None,
         },
 
         // Create new (n for sessions, a for worktrees)
@@ -457,8 +462,20 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
             None
         }
 
-        // Delete (with confirmation)
+        // Switch to diff view
         KeyCode::Char('d') => {
+            if app.right_panel_view == RightPanelView::Diff {
+                // Already in diff view, switch back to terminal
+                app.switch_to_terminal_view();
+                None
+            } else {
+                // Switch to diff view
+                Some(AsyncAction::SwitchToDiffView)
+            }
+        }
+
+        // Delete (with confirmation) - use 'x' key
+        KeyCode::Char('x') => {
             app.request_delete();
             None
         }
@@ -475,6 +492,37 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
         // Quit
         KeyCode::Char('q') => {
             app.should_quit = true;
+            None
+        }
+
+        _ => None,
+    }
+}
+
+/// Handle input in DiffFiles mode (file list navigation)
+fn handle_diff_files_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    match key.code {
+        // Navigate up
+        KeyCode::Up | KeyCode::Char('k') => app.diff_select_prev(),
+
+        // Navigate down
+        KeyCode::Down | KeyCode::Char('j') => app.diff_select_next(),
+
+        // Toggle expand/collapse file diff ('o' or Enter)
+        KeyCode::Enter | KeyCode::Char('o') => app.toggle_diff_expand(),
+
+        // Refresh diff
+        KeyCode::Char('r') => Some(AsyncAction::LoadDiffFiles),
+
+        // Toggle fullscreen
+        KeyCode::Char('f') | KeyCode::Char('z') => {
+            app.toggle_diff_fullscreen();
+            None
+        }
+
+        // Back to terminal view
+        KeyCode::Esc | KeyCode::Char('t') => {
+            app.switch_to_terminal_view();
             None
         }
 

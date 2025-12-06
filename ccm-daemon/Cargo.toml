@@ -28,3 +28,6 @@ async-stream = "0.3"
 uuid = { version = "1.0", features = ["v4"] }
 libc.workspace = true
 vt100 = "0.15"
+
+[dev-dependencies]
+tempfile = "3"

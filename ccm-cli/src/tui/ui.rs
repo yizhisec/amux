@@ -1,6 +1,7 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
-use super::app::{App, DeleteTarget, Focus, InputMode, PrefixMode, TerminalMode};
+use super::app::{App, DeleteTarget, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
+use ccm_proto::daemon::{FileStatus, LineType};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -109,17 +110,28 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Split into sidebar and terminal
+    // Fullscreen diff mode
+    if app.diff_fullscreen && app.focus == Focus::DiffFiles {
+        draw_diff_fullscreen(f, area, app);
+        return;
+    }
+
+    // Split into sidebar and main content
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(25), // Sidebar
-            Constraint::Percentage(75), // Terminal
+            Constraint::Percentage(75), // Main content (Terminal or Diff)
         ])
         .split(area);
 
     draw_sidebar(f, chunks[0], app);
-    draw_terminal(f, chunks[1], app);
+
+    // Draw right panel based on view mode
+    match app.right_panel_view {
+        RightPanelView::Terminal => draw_terminal(f, chunks[1], app),
+        RightPanelView::Diff => draw_diff_view(f, chunks[1], app),
+    }
 }
 
 /// Draw sidebar with worktrees and sessions
@@ -328,6 +340,183 @@ fn draw_terminal_fullscreen(f: &mut Frame, area: Rect, app: &App) {
     let lines = app.get_terminal_lines(inner.height, inner.width);
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, inner);
+}
+
+/// Draw diff view with inline expansion
+fn draw_diff_view(f: &mut Frame, area: Rect, app: &App) {
+    draw_diff_inline(f, area, app);
+}
+
+/// Draw fullscreen diff view
+fn draw_diff_fullscreen(f: &mut Frame, area: Rect, app: &App) {
+    draw_diff_inline(f, area, app);
+}
+
+/// Draw diff with inline file expansion (single unified view)
+fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
+    let is_focused = app.focus == Focus::DiffFiles;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let title = if is_focused {
+        format!(" Changes ({}) [*] ", app.diff_files.len())
+    } else {
+        format!(" Changes ({}) ", app.diff_files.len())
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(title);
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if app.diff_files.is_empty() {
+        let placeholder = Paragraph::new("No changes")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(placeholder, inner);
+        return;
+    }
+
+    // Build list of lines: files + expanded diff content
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, file) in app.diff_files.iter().enumerate() {
+        let is_selected = i == app.diff_file_idx;
+        let is_expanded = app.diff_expanded_idx == Some(i);
+
+        // File style
+        let file_style = if is_selected && is_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Status indicator
+        let (status_char, status_color) =
+            match FileStatus::try_from(file.status).unwrap_or(FileStatus::Modified) {
+                FileStatus::Modified => ("M", Color::Yellow),
+                FileStatus::Added => ("A", Color::Green),
+                FileStatus::Deleted => ("D", Color::Red),
+                FileStatus::Renamed => ("R", Color::Cyan),
+                FileStatus::Untracked => ("U", Color::Magenta),
+                FileStatus::Unspecified => ("?", Color::DarkGray),
+            };
+
+        // Expand/collapse indicator
+        let expand_indicator = if is_expanded { "▼" } else { "▶" };
+
+        // Stats
+        let stats = if file.additions > 0 || file.deletions > 0 {
+            format!(" +{} -{}", file.additions, file.deletions)
+        } else {
+            String::new()
+        };
+
+        // File line
+        lines.push(Line::from(vec![
+            Span::styled(if is_selected { ">" } else { " " }, file_style),
+            Span::styled(
+                format!(" {} ", expand_indicator),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{} ", status_char),
+                Style::default().fg(status_color),
+            ),
+            Span::styled(&file.path, file_style),
+            Span::styled(stats, Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // If this file is expanded, show diff lines
+        if is_expanded && !app.diff_lines.is_empty() {
+            for diff_line in &app.diff_lines {
+                let line_type =
+                    LineType::try_from(diff_line.line_type).unwrap_or(LineType::Context);
+                let (prefix, style) = match line_type {
+                    LineType::Header => (
+                        "@@",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    LineType::Addition => ("+", Style::default().fg(Color::Green)),
+                    LineType::Deletion => ("-", Style::default().fg(Color::Red)),
+                    LineType::Context | LineType::Unspecified => {
+                        (" ", Style::default().fg(Color::White))
+                    }
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled("    ", Style::default()), // Indent
+                    Span::styled(prefix, style),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(&diff_line.content, style),
+                ]));
+            }
+        }
+    }
+
+    // Calculate scroll - we need to ensure selected file is visible
+    let visible_height = inner.height as usize;
+    let total_lines = lines.len();
+
+    // Find the line index of the selected file
+    let mut selected_line_idx = 0;
+    let mut line_count = 0;
+    for (i, _) in app.diff_files.iter().enumerate() {
+        if i == app.diff_file_idx {
+            selected_line_idx = line_count;
+            break;
+        }
+        line_count += 1;
+        // Add expanded lines if this file is expanded
+        if app.diff_expanded_idx == Some(i) {
+            line_count += app.diff_lines.len();
+        }
+    }
+
+    // Calculate scroll offset to keep selected file visible
+    let scroll_offset = if selected_line_idx < app.diff_scroll_offset {
+        selected_line_idx
+    } else if selected_line_idx >= app.diff_scroll_offset + visible_height {
+        selected_line_idx.saturating_sub(visible_height / 2)
+    } else {
+        app.diff_scroll_offset
+    }
+    .min(total_lines.saturating_sub(visible_height));
+
+    // Render visible lines
+    let visible_lines: Vec<Line> = lines
+        .into_iter()
+        .skip(scroll_offset)
+        .take(visible_height)
+        .collect();
+
+    let paragraph = Paragraph::new(visible_lines);
+    f.render_widget(paragraph, inner);
+
+    // Show scroll indicator if needed
+    if total_lines > visible_height {
+        let scroll_info = format!(" {}/{} ", scroll_offset + 1, total_lines);
+        let scroll_len = scroll_info.len() as u16;
+        let scroll_span = Span::styled(scroll_info, Style::default().fg(Color::DarkGray));
+        let scroll_x = area.x + area.width.saturating_sub(scroll_len + 1);
+        let scroll_y = area.y;
+        f.render_widget(
+            Paragraph::new(scroll_span),
+            Rect::new(scroll_x, scroll_y, scroll_len, 1),
+        );
+    }
 }
 
 /// Draw input overlay for new branch
@@ -655,12 +844,13 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
-            Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [d] Delete | [q] Quit",
-            Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [R] Rename | [d] Delete | [q] Quit",
+            Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [x] Delete | [d] Diff | [q] Quit",
+            Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
-                TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [Esc] Exit",
+                TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [d] Diff | [Esc] Exit",
                 TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",
             },
+            Focus::DiffFiles => "[j/k] Move | [o/Enter] Expand | [r] Refresh | [f] Fullscreen | [Esc] Terminal",
         };
         (help.to_string(), Color::DarkGray)
     };

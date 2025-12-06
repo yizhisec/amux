@@ -25,6 +25,10 @@ service CcmDaemon {
 
     // Event subscription (real-time updates)
     rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+
+    // Diff operations
+    rpc GetDiffFiles(GetDiffFilesRequest) returns (GetDiffFilesResponse);
+    rpc GetFileDiff(GetFileDiffRequest) returns (GetFileDiffResponse);
 }
 
 message Empty {}
@@ -176,4 +180,57 @@ message SessionStatusChangedEvent {
     string session_id = 1;
     SessionStatus old_status = 2;
     SessionStatus new_status = 3;
+}
+
+// ============ Diff ============
+
+message GetDiffFilesRequest {
+    string repo_id = 1;
+    string branch = 2;  // worktree branch
+}
+
+message GetDiffFilesResponse {
+    repeated DiffFileInfo files = 1;
+}
+
+message DiffFileInfo {
+    string path = 1;
+    FileStatus status = 2;
+    int32 additions = 3;
+    int32 deletions = 4;
+}
+
+enum FileStatus {
+    FILE_STATUS_UNSPECIFIED = 0;
+    FILE_STATUS_MODIFIED = 1;
+    FILE_STATUS_ADDED = 2;
+    FILE_STATUS_DELETED = 3;
+    FILE_STATUS_RENAMED = 4;
+    FILE_STATUS_UNTRACKED = 5;
+}
+
+message GetFileDiffRequest {
+    string repo_id = 1;
+    string branch = 2;
+    string file_path = 3;
+}
+
+message GetFileDiffResponse {
+    string file_path = 1;
+    repeated DiffLine lines = 2;
+}
+
+message DiffLine {
+    LineType line_type = 1;
+    string content = 2;
+    optional int32 old_lineno = 3;  // Line number in old file
+    optional int32 new_lineno = 4;  // Line number in new file
+}
+
+enum LineType {
+    LINE_TYPE_UNSPECIFIED = 0;
+    LINE_TYPE_HEADER = 1;     // @@ ... @@
+    LINE_TYPE_CONTEXT = 2;    // unchanged
+    LINE_TYPE_ADDITION = 3;   // +
+    LINE_TYPE_DELETION = 4;   // -
 }

@@ -3,7 +3,8 @@
 use crate::client::Client;
 use crate::error::TuiError;
 use ccm_proto::daemon::{
-    event as daemon_event, AttachInput, Event as DaemonEvent, RepoInfo, SessionInfo, WorktreeInfo,
+    event as daemon_event, AttachInput, DiffFileInfo, DiffLine, Event as DaemonEvent, RepoInfo,
+    SessionInfo, WorktreeInfo,
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -29,9 +30,18 @@ use super::ui::draw;
 /// Focus position in the TUI
 #[derive(Debug, Clone, PartialEq)]
 pub enum Focus {
-    Branches, // Branch list in sidebar
-    Sessions, // Session list in sidebar
-    Terminal, // Terminal interaction area
+    Branches,  // Branch list in sidebar
+    Sessions,  // Session list in sidebar
+    Terminal,  // Terminal interaction area
+    DiffFiles, // Diff file list (with inline expansion)
+}
+
+/// Right panel view mode
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum RightPanelView {
+    #[default]
+    Terminal,
+    Diff,
 }
 
 /// Delete target for confirmation
@@ -134,6 +144,10 @@ pub enum AsyncAction {
     SendToTerminal {
         data: Vec<u8>,
     },
+    // Diff actions
+    SwitchToDiffView,
+    LoadDiffFiles,
+    LoadFileDiff,
 }
 
 /// Terminal stream state for a session
@@ -186,6 +200,15 @@ pub struct App {
     pub scroll_offset: usize,
     pub terminal_fullscreen: bool,
 
+    // Diff state
+    pub right_panel_view: RightPanelView,
+    pub diff_files: Vec<DiffFileInfo>,
+    pub diff_file_idx: usize,
+    pub diff_expanded_idx: Option<usize>, // Which file is expanded (None = all collapsed)
+    pub diff_lines: Vec<DiffLine>,        // Lines for expanded file
+    pub diff_scroll_offset: usize,        // Scroll offset within expanded content
+    pub diff_fullscreen: bool,
+
     // UI state
     pub should_quit: bool,
     pub error_message: Option<String>,
@@ -224,6 +247,13 @@ impl App {
             terminal_mode: TerminalMode::Normal,
             scroll_offset: 0,
             terminal_fullscreen: false,
+            right_panel_view: RightPanelView::Terminal,
+            diff_files: Vec::new(),
+            diff_file_idx: 0,
+            diff_expanded_idx: None,
+            diff_lines: Vec::new(),
+            diff_scroll_offset: 0,
+            diff_fullscreen: false,
             should_quit: false,
             error_message: None,
             status_message: None,
@@ -398,6 +428,7 @@ impl App {
             Focus::Branches => self.worktrees.len(),
             Focus::Sessions => self.sessions.len(),
             Focus::Terminal => 0,
+            Focus::DiffFiles => self.diff_files.len(),
         }
     }
 
@@ -408,6 +439,7 @@ impl App {
             Focus::Branches => self.branch_idx,
             Focus::Sessions => self.session_idx,
             Focus::Terminal => 0,
+            Focus::DiffFiles => self.diff_file_idx,
         }
     }
 
@@ -432,6 +464,9 @@ impl App {
                 }
             }
             Focus::Terminal => {}
+            Focus::DiffFiles => {
+                self.diff_select_prev();
+            }
         }
         None
     }
@@ -455,6 +490,9 @@ impl App {
                 }
             }
             Focus::Terminal => {}
+            Focus::DiffFiles => {
+                self.diff_select_next();
+            }
         }
         None
     }
@@ -509,6 +547,7 @@ impl App {
             Focus::Branches => Focus::Sessions,
             Focus::Sessions => Focus::Branches,
             Focus::Terminal => Focus::Sessions,
+            Focus::DiffFiles => Focus::Branches,
         };
     }
 
@@ -640,7 +679,7 @@ impl App {
                     }
                 }
             }
-            Focus::Terminal => {}
+            Focus::Terminal | Focus::DiffFiles => {}
         }
         Ok(())
     }
@@ -910,7 +949,7 @@ impl App {
                     });
                 }
             }
-            Focus::Terminal => {}
+            Focus::Terminal | Focus::DiffFiles => {}
         }
     }
 
@@ -1195,6 +1234,15 @@ impl App {
             AsyncAction::SendToTerminal { data } => {
                 self.send_to_terminal(data).await?;
             }
+            AsyncAction::SwitchToDiffView => {
+                self.switch_to_diff_view().await?;
+            }
+            AsyncAction::LoadDiffFiles => {
+                self.load_diff_files().await?;
+            }
+            AsyncAction::LoadFileDiff => {
+                self.load_file_diff().await?;
+            }
         }
         Ok(())
     }
@@ -1309,6 +1357,121 @@ impl App {
         }
 
         lines
+    }
+
+    // ========== Diff View ==========
+
+    /// Switch to diff view
+    pub async fn switch_to_diff_view(&mut self) -> Result<()> {
+        self.right_panel_view = RightPanelView::Diff;
+        self.focus = Focus::DiffFiles;
+        self.load_diff_files().await?;
+        Ok(())
+    }
+
+    /// Switch back to terminal view
+    pub fn switch_to_terminal_view(&mut self) {
+        self.right_panel_view = RightPanelView::Terminal;
+        self.focus = Focus::Sessions;
+        self.diff_files.clear();
+        self.diff_lines.clear();
+        self.diff_file_idx = 0;
+        self.diff_scroll_offset = 0;
+    }
+
+    /// Load diff files for current worktree
+    pub async fn load_diff_files(&mut self) -> Result<()> {
+        if let (Some(repo), Some(branch)) = (
+            self.repos.get(self.repo_idx).cloned(),
+            self.worktrees.get(self.branch_idx).cloned(),
+        ) {
+            match self.client.get_diff_files(&repo.id, &branch.branch).await {
+                Ok(files) => {
+                    self.diff_files = files;
+                    self.diff_file_idx = 0;
+                    self.diff_lines.clear();
+                    self.diff_scroll_offset = 0;
+
+                    // Auto-load first file if available
+                    if !self.diff_files.is_empty() {
+                        self.load_file_diff().await?;
+                    }
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to load diff: {}", e));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Load diff content for selected file
+    pub async fn load_file_diff(&mut self) -> Result<()> {
+        if let (Some(repo), Some(branch), Some(file)) = (
+            self.repos.get(self.repo_idx).cloned(),
+            self.worktrees.get(self.branch_idx).cloned(),
+            self.diff_files.get(self.diff_file_idx).cloned(),
+        ) {
+            match self
+                .client
+                .get_file_diff(&repo.id, &branch.branch, &file.path)
+                .await
+            {
+                Ok(response) => {
+                    self.diff_lines = response.lines;
+                    self.diff_scroll_offset = 0;
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to load file diff: {}", e));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Select previous diff file
+    pub fn diff_select_prev(&mut self) -> Option<AsyncAction> {
+        if self.diff_file_idx > 0 {
+            self.diff_file_idx -= 1;
+            self.diff_scroll_offset = 0; // Reset scroll when changing files
+            self.dirty.sidebar = true;
+        }
+        None
+    }
+
+    /// Select next diff file
+    pub fn diff_select_next(&mut self) -> Option<AsyncAction> {
+        if !self.diff_files.is_empty() && self.diff_file_idx < self.diff_files.len() - 1 {
+            self.diff_file_idx += 1;
+            self.diff_scroll_offset = 0; // Reset scroll when changing files
+            self.dirty.sidebar = true;
+        }
+        None
+    }
+
+    /// Toggle expansion of current diff file
+    pub fn toggle_diff_expand(&mut self) -> Option<AsyncAction> {
+        if self.diff_files.is_empty() {
+            return None;
+        }
+
+        if self.diff_expanded_idx == Some(self.diff_file_idx) {
+            // Collapse
+            self.diff_expanded_idx = None;
+            self.diff_lines.clear();
+            self.diff_scroll_offset = 0;
+            None
+        } else {
+            // Expand - need to load diff content
+            self.diff_expanded_idx = Some(self.diff_file_idx);
+            self.diff_scroll_offset = 0;
+            Some(AsyncAction::LoadFileDiff)
+        }
+    }
+
+    /// Toggle diff fullscreen mode
+    pub fn toggle_diff_fullscreen(&mut self) {
+        self.diff_fullscreen = !self.diff_fullscreen;
     }
 }
 
