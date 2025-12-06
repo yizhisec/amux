@@ -1,7 +1,7 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
 use super::app::{App, DeleteTarget, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
-use ccm_proto::daemon::{FileStatus, LineType};
+use ccm_proto::daemon::{DiffLine, FileStatus, LineType};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -9,6 +9,222 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
     Frame,
 };
+
+// ========== Word-level diff highlighting ==========
+
+/// Token for word diff
+#[derive(Debug, Clone, PartialEq)]
+enum DiffToken {
+    Same(String),
+    Changed(String),
+}
+
+/// Compute word-level diff between two strings
+/// Returns tokens for the "new" side (addition line)
+fn compute_word_diff(old_line: &str, new_line: &str) -> Vec<DiffToken> {
+    let old_words: Vec<&str> = old_line.split_whitespace().collect();
+    let new_words: Vec<&str> = new_line.split_whitespace().collect();
+
+    if old_words.is_empty() || new_words.is_empty() {
+        // If either is empty, everything is changed
+        return vec![DiffToken::Changed(new_line.to_string())];
+    }
+
+    // Simple LCS-based word diff
+    let mut result = Vec::new();
+    let lcs = compute_lcs(&old_words, &new_words);
+
+    let mut old_idx = 0;
+    let mut new_idx = 0;
+    let mut lcs_idx = 0;
+
+    while new_idx < new_words.len() {
+        if lcs_idx < lcs.len() && new_idx < new_words.len() && new_words[new_idx] == lcs[lcs_idx] {
+            // This word is in LCS - it's the same
+            // Skip any old words that aren't in the match
+            while old_idx < old_words.len() && old_words[old_idx] != lcs[lcs_idx] {
+                old_idx += 1;
+            }
+            result.push(DiffToken::Same(new_words[new_idx].to_string()));
+            new_idx += 1;
+            old_idx += 1;
+            lcs_idx += 1;
+        } else {
+            // This word is not in LCS - it's changed/added
+            result.push(DiffToken::Changed(new_words[new_idx].to_string()));
+            new_idx += 1;
+        }
+    }
+
+    result
+}
+
+/// Compute Longest Common Subsequence of word slices
+fn compute_lcs<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<&'a str> {
+    let m = a.len();
+    let n = b.len();
+
+    if m == 0 || n == 0 {
+        return Vec::new();
+    }
+
+    // DP table
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+
+    for i in 1..=m {
+        for j in 1..=n {
+            if a[i - 1] == b[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to find LCS
+    let mut lcs = Vec::new();
+    let mut i = m;
+    let mut j = n;
+
+    while i > 0 && j > 0 {
+        if a[i - 1] == b[j - 1] {
+            lcs.push(a[i - 1]);
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] > dp[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+
+    lcs.reverse();
+    lcs
+}
+
+/// Find paired deletion line for an addition line
+/// Returns the index of the most recent deletion line before this addition
+fn find_paired_deletion(lines: &[DiffLine], addition_idx: usize) -> Option<usize> {
+    // Look backwards for a deletion line
+    for i in (0..addition_idx).rev() {
+        let line_type = LineType::try_from(lines[i].line_type).unwrap_or(LineType::Context);
+        match line_type {
+            LineType::Deletion => return Some(i),
+            LineType::Addition => continue, // Skip other additions
+            LineType::Context | LineType::Header | LineType::Unspecified => {
+                // Hit a context line, stop looking
+                return None;
+            }
+        }
+    }
+    None
+}
+
+/// Find paired addition line for a deletion line
+/// Returns the index of the next addition line after this deletion
+fn find_paired_addition(lines: &[DiffLine], deletion_idx: usize) -> Option<usize> {
+    // Look forwards for an addition line
+    for (i, line) in lines.iter().enumerate().skip(deletion_idx + 1) {
+        let line_type = LineType::try_from(line.line_type).unwrap_or(LineType::Context);
+        match line_type {
+            LineType::Addition => return Some(i),
+            LineType::Deletion => continue, // Skip other deletions
+            LineType::Context | LineType::Header | LineType::Unspecified => {
+                // Hit a context line, stop looking
+                return None;
+            }
+        }
+    }
+    None
+}
+
+/// Render a diff line with word-level highlighting
+fn render_word_diff_line<'a>(
+    content: &str,
+    paired_content: Option<&str>,
+    is_addition: bool,
+    is_selected: bool,
+    is_focused: bool,
+) -> Vec<Span<'a>> {
+    let base_color = if is_addition {
+        Color::Green
+    } else {
+        Color::Red
+    };
+
+    let highlight_color = if is_addition {
+        Color::LightGreen
+    } else {
+        Color::LightRed
+    };
+
+    match paired_content {
+        Some(paired) => {
+            // We have a paired line, compute word diff
+            let tokens = if is_addition {
+                compute_word_diff(paired, content)
+            } else {
+                // For deletion, compute against the addition
+                compute_word_diff(content, paired)
+                    .into_iter()
+                    .map(|t| match t {
+                        DiffToken::Same(s) => DiffToken::Same(s),
+                        DiffToken::Changed(s) => DiffToken::Changed(s),
+                    })
+                    .collect()
+            };
+
+            // Build spans with highlighting
+            let mut spans = Vec::new();
+            let mut first = true;
+
+            for token in tokens {
+                if !first {
+                    spans.push(Span::raw(" "));
+                }
+                first = false;
+
+                match token {
+                    DiffToken::Same(word) => {
+                        let style = if is_selected && is_focused {
+                            Style::default()
+                                .fg(base_color)
+                                .add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default().fg(base_color)
+                        };
+                        spans.push(Span::styled(word, style));
+                    }
+                    DiffToken::Changed(word) => {
+                        let style = if is_selected && is_focused {
+                            Style::default()
+                                .fg(highlight_color)
+                                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                                .fg(highlight_color)
+                                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                        };
+                        spans.push(Span::styled(word, style));
+                    }
+                }
+            }
+
+            spans
+        }
+        None => {
+            // No paired line, render normally
+            let style = if is_selected && is_focused {
+                Style::default()
+                    .fg(base_color)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(base_color)
+            };
+            vec![Span::styled(content.to_string(), style)]
+        }
+    }
+}
 
 /// Draw the TUI
 pub fn draw(f: &mut Frame, app: &App) {
@@ -461,28 +677,6 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
                     let line_type =
                         LineType::try_from(diff_line.line_type).unwrap_or(LineType::Context);
-                    let (prefix, base_style) = match line_type {
-                        LineType::Header => (
-                            "@@",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        LineType::Addition => ("+", Style::default().fg(Color::Green)),
-                        LineType::Deletion => ("-", Style::default().fg(Color::Red)),
-                        LineType::Context | LineType::Unspecified => {
-                            (" ", Style::default().fg(Color::White))
-                        }
-                    };
-
-                    // Apply selection highlight
-                    let style = if is_line_selected && is_focused {
-                        base_style.add_modifier(Modifier::REVERSED)
-                    } else {
-                        base_style
-                    };
-
-                    let cursor_indicator = if is_line_selected { ">" } else { " " };
 
                     // Check if line has a comment
                     let line_number = diff_line
@@ -495,14 +689,98 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                         Span::raw("")
                     };
 
-                    lines.push(Line::from(vec![
-                        Span::styled(cursor_indicator, style),
+                    let cursor_indicator = if is_line_selected { ">" } else { " " };
+
+                    // Build the line based on type
+                    let mut line_spans = vec![
+                        Span::styled(
+                            cursor_indicator,
+                            if is_line_selected && is_focused {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            },
+                        ),
                         Span::styled("   ", Style::default()), // Indent
-                        Span::styled(prefix, style),
-                        Span::styled(" ", Style::default()),
-                        Span::styled(&diff_line.content, style),
-                        comment_marker,
-                    ]));
+                    ];
+
+                    match line_type {
+                        LineType::Header => {
+                            let style = if is_line_selected && is_focused {
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            };
+                            line_spans.push(Span::styled("@@ ", style));
+                            line_spans.push(Span::styled(&diff_line.content, style));
+                        }
+                        LineType::Addition => {
+                            // Find paired deletion for word-level diff
+                            let paired_content = find_paired_deletion(file_lines, line_idx)
+                                .map(|del_idx| file_lines[del_idx].content.as_str());
+
+                            let prefix_style = if is_line_selected && is_focused {
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default().fg(Color::Green)
+                            };
+                            line_spans.push(Span::styled("+ ", prefix_style));
+
+                            // Add word-diff highlighted content
+                            let content_spans = render_word_diff_line(
+                                &diff_line.content,
+                                paired_content,
+                                true,
+                                is_line_selected,
+                                is_focused,
+                            );
+                            line_spans.extend(content_spans);
+                        }
+                        LineType::Deletion => {
+                            // Find paired addition for word-level diff
+                            let paired_content = find_paired_addition(file_lines, line_idx)
+                                .map(|add_idx| file_lines[add_idx].content.as_str());
+
+                            let prefix_style = if is_line_selected && is_focused {
+                                Style::default()
+                                    .fg(Color::Red)
+                                    .add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default().fg(Color::Red)
+                            };
+                            line_spans.push(Span::styled("- ", prefix_style));
+
+                            // Add word-diff highlighted content
+                            let content_spans = render_word_diff_line(
+                                &diff_line.content,
+                                paired_content,
+                                false,
+                                is_line_selected,
+                                is_focused,
+                            );
+                            line_spans.extend(content_spans);
+                        }
+                        LineType::Context | LineType::Unspecified => {
+                            let style = if is_line_selected && is_focused {
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default().fg(Color::White)
+                            };
+                            line_spans.push(Span::styled("  ", style));
+                            line_spans.push(Span::styled(&diff_line.content, style));
+                        }
+                    }
+
+                    line_spans.push(comment_marker);
+                    lines.push(Line::from(line_spans));
                 }
             }
         }
