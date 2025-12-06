@@ -59,6 +59,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         return handle_add_line_comment_mode_sync(app, key);
     }
 
+    // Handle edit line comment mode
+    if matches!(app.input_mode, InputMode::EditLineComment { .. }) {
+        return handle_edit_line_comment_mode_sync(app, key);
+    }
+
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
         return match app.terminal_mode {
@@ -351,6 +356,31 @@ fn handle_add_line_comment_mode_sync(app: &mut App, key: KeyEvent) -> Option<Asy
             None
         }
         (KeyCode::Enter, _) => Some(AsyncAction::SubmitLineComment),
+        (KeyCode::Esc, _) => {
+            app.cancel_input();
+            None
+        }
+        (KeyCode::Backspace, _) => {
+            app.input_buffer.pop();
+            None
+        }
+        (KeyCode::Char(c), _) => {
+            app.input_buffer.push(c);
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Handle input when editing a line comment
+fn handle_edit_line_comment_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    match (key.code, key.modifiers) {
+        // Shift+Enter: insert newline
+        (KeyCode::Enter, m) if m.contains(KeyModifiers::SHIFT) => {
+            app.input_buffer.push('\n');
+            None
+        }
+        (KeyCode::Enter, _) => Some(AsyncAction::UpdateLineComment),
         (KeyCode::Esc, _) => {
             app.cancel_input();
             None
@@ -670,6 +700,27 @@ fn handle_diff_files_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActi
         // Add comment on current line
         KeyCode::Char('c') => {
             app.start_add_line_comment();
+            None
+        }
+
+        // Edit comment on current line
+        KeyCode::Char('C') => {
+            app.start_edit_line_comment();
+            None
+        }
+
+        // Delete comment on current line
+        KeyCode::Char('x') => Some(AsyncAction::DeleteLineComment),
+
+        // Jump to next comment
+        KeyCode::Char('n') => {
+            app.jump_to_next_comment();
+            None
+        }
+
+        // Jump to previous comment
+        KeyCode::Char('N') => {
+            app.jump_to_prev_comment();
             None
         }
 

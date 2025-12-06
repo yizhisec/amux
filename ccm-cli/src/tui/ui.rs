@@ -3,6 +3,7 @@
 use super::app::{
     App, DeleteTarget, Focus, GitSection, InputMode, PrefixMode, RightPanelView, TerminalMode,
 };
+use super::highlight::Highlighter;
 use ccm_proto::daemon::{DiffLine, FileStatus, LineType};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -11,6 +12,13 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
     Frame,
 };
+use std::sync::OnceLock;
+
+/// Global highlighter instance (lazy initialized)
+fn get_highlighter() -> &'static Highlighter {
+    static HIGHLIGHTER: OnceLock<Highlighter> = OnceLock::new();
+    HIGHLIGHTER.get_or_init(Highlighter::new)
+}
 
 // ========== Word-level diff highlighting ==========
 
@@ -140,13 +148,14 @@ fn find_paired_addition(lines: &[DiffLine], deletion_idx: usize) -> Option<usize
     None
 }
 
-/// Render a diff line with word-level highlighting
+/// Render a diff line with word-level highlighting and syntax highlighting
 fn render_word_diff_line<'a>(
     content: &str,
     paired_content: Option<&str>,
     is_addition: bool,
     is_selected: bool,
     is_focused: bool,
+    file_path: &str,
 ) -> Vec<Span<'a>> {
     let base_color = if is_addition {
         Color::Green
@@ -159,6 +168,10 @@ fn render_word_diff_line<'a>(
     } else {
         Color::LightRed
     };
+
+    // Get syntax-highlighted spans first
+    let highlighter = get_highlighter();
+    let syntax_spans = highlighter.highlight_line(content, file_path);
 
     match paired_content {
         Some(paired) => {
@@ -176,29 +189,42 @@ fn render_word_diff_line<'a>(
                     .collect()
             };
 
-            // Build spans with highlighting
+            // Build spans with word diff + syntax highlighting
             let mut spans = Vec::new();
-            let mut first = true;
+            let mut content_pos = 0;
 
             for token in tokens {
-                if !first {
-                    spans.push(Span::raw(" "));
-                }
-                first = false;
+                let word = match &token {
+                    DiffToken::Same(w) | DiffToken::Changed(w) => w.as_str(),
+                };
 
-                match token {
-                    DiffToken::Same(word) => {
-                        let style = if is_selected && is_focused {
+                // Find word position in content
+                if let Some(word_start) = content[content_pos..].find(word) {
+                    let abs_start = content_pos + word_start;
+                    let abs_end = abs_start + word.len();
+
+                    // Add any whitespace/chars before this word
+                    if abs_start > content_pos {
+                        let prefix = &content[content_pos..abs_start];
+                        let prefix_style = if is_selected && is_focused {
                             Style::default()
                                 .fg(base_color)
                                 .add_modifier(Modifier::REVERSED)
                         } else {
                             Style::default().fg(base_color)
                         };
-                        spans.push(Span::styled(word, style));
+                        spans.push(Span::styled(prefix.to_string(), prefix_style));
                     }
-                    DiffToken::Changed(word) => {
-                        let style = if is_selected && is_focused {
+
+                    // Add the word with appropriate styling
+                    let is_changed = matches!(token, DiffToken::Changed(_));
+
+                    // Try to get syntax color for this word
+                    let syntax_style =
+                        find_syntax_style_for_range(&syntax_spans, abs_start, abs_end);
+
+                    let word_style = if is_changed {
+                        if is_selected && is_focused {
                             Style::default()
                                 .fg(highlight_color)
                                 .add_modifier(Modifier::BOLD | Modifier::REVERSED)
@@ -206,24 +232,121 @@ fn render_word_diff_line<'a>(
                             Style::default()
                                 .fg(highlight_color)
                                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                        };
-                        spans.push(Span::styled(word, style));
-                    }
+                        }
+                    } else {
+                        // Use syntax highlighting color with diff tint
+                        let fg_color = syntax_style.and_then(|s| s.fg).unwrap_or(base_color);
+                        let tinted_color = tint_color(fg_color, is_addition);
+                        if is_selected && is_focused {
+                            Style::default()
+                                .fg(tinted_color)
+                                .add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default().fg(tinted_color)
+                        }
+                    };
+
+                    spans.push(Span::styled(word.to_string(), word_style));
+                    content_pos = abs_end;
                 }
+            }
+
+            // Add any remaining content
+            if content_pos < content.len() {
+                let suffix = &content[content_pos..];
+                let suffix_style = if is_selected && is_focused {
+                    Style::default()
+                        .fg(base_color)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default().fg(base_color)
+                };
+                spans.push(Span::styled(suffix.to_string(), suffix_style));
+            }
+
+            if spans.is_empty() {
+                spans.push(Span::styled(
+                    content.to_string(),
+                    Style::default().fg(base_color),
+                ));
             }
 
             spans
         }
         None => {
-            // No paired line, render normally
-            let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(base_color)
-                    .add_modifier(Modifier::REVERSED)
+            // No paired line, apply syntax highlighting with diff tint
+            let mut spans = Vec::new();
+            for (style, text) in syntax_spans {
+                let fg_color = style.fg.unwrap_or(base_color);
+                let tinted_color = tint_color(fg_color, is_addition);
+                let final_style = if is_selected && is_focused {
+                    Style::default()
+                        .fg(tinted_color)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default().fg(tinted_color)
+                };
+                spans.push(Span::styled(text.to_string(), final_style));
+            }
+            if spans.is_empty() {
+                let style = if is_selected && is_focused {
+                    Style::default()
+                        .fg(base_color)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default().fg(base_color)
+                };
+                spans.push(Span::styled(content.to_string(), style));
+            }
+            spans
+        }
+    }
+}
+
+/// Find syntax style for a character range
+fn find_syntax_style_for_range(
+    spans: &[(Style, &str)],
+    start: usize,
+    _end: usize,
+) -> Option<Style> {
+    let mut pos = 0;
+    for (style, text) in spans {
+        let span_end = pos + text.len();
+        if start >= pos && start < span_end {
+            return Some(*style);
+        }
+        pos = span_end;
+    }
+    None
+}
+
+/// Apply a green/red tint to a color for diff highlighting
+fn tint_color(color: Color, is_addition: bool) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => {
+            if is_addition {
+                // Green tint
+                Color::Rgb(
+                    r.saturating_sub(20),
+                    (g as u16 + 30).min(255) as u8,
+                    b.saturating_sub(20),
+                )
             } else {
-                Style::default().fg(base_color)
-            };
-            vec![Span::styled(content.to_string(), style)]
+                // Red tint
+                Color::Rgb(
+                    (r as u16 + 30).min(255) as u8,
+                    g.saturating_sub(20),
+                    b.saturating_sub(20),
+                )
+            }
+        }
+        _ => {
+            // For non-RGB colors, use standard diff colors
+            if is_addition {
+                Color::Green
+            } else {
+                Color::Red
+            }
         }
     }
 }
@@ -330,6 +453,17 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
     } = app.input_mode
     {
         draw_add_line_comment_overlay(f, area, app, file_path, line_number);
+        return;
+    }
+
+    // Check for edit line comment overlay
+    if let InputMode::EditLineComment {
+        ref file_path,
+        line_number,
+        ..
+    } = app.input_mode
+    {
+        draw_edit_line_comment_overlay(f, area, app, file_path, line_number);
         return;
     }
 
@@ -723,6 +857,19 @@ fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
                         FileStatus::Unspecified => ("?", Color::DarkGray),
                     };
 
+                // Comment count badge
+                let comment_count = app.count_file_comments(&file.path);
+                let comment_badge = if comment_count > 0 {
+                    Span::styled(
+                        format!(" 💬{}", comment_count),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::raw("")
+                };
+
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled(if is_file_cursor { ">" } else { " " }, file_style),
                     Span::raw("   "), // Indent
@@ -731,6 +878,7 @@ fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
                         Style::default().fg(status_color),
                     ),
                     Span::styled(&file.path, file_style),
+                    comment_badge,
                 ])));
                 cursor_pos += 1;
             }
@@ -918,6 +1066,19 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
             String::new()
         };
 
+        // Comment count badge
+        let comment_count = app.count_file_comments(&file.path);
+        let comment_badge = if comment_count > 0 {
+            Span::styled(
+                format!(" 💬{}", comment_count),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        };
+
         // File line
         lines.push(Line::from(vec![
             Span::styled(if is_file_selected { ">" } else { " " }, file_style),
@@ -931,6 +1092,7 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(&file.path, file_style),
             Span::styled(stats, Style::default().fg(Color::DarkGray)),
+            comment_badge,
         ]));
 
         // If this file is expanded, show diff lines
@@ -946,9 +1108,14 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                     let line_number = diff_line
                         .new_lineno
                         .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
-                    let has_comment = app.has_line_comment(&file.path, line_number);
-                    let comment_marker = if has_comment {
-                        Span::styled(" [C]", Style::default().fg(Color::Yellow))
+                    let line_comment = app.get_line_comment(&file.path, line_number);
+                    let comment_marker = if line_comment.is_some() {
+                        Span::styled(
+                            " [*]",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
                         Span::raw("")
                     };
@@ -1003,6 +1170,7 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                                 true,
                                 is_line_selected,
                                 is_focused,
+                                &file.path,
                             );
                             line_spans.extend(content_spans);
                         }
@@ -1027,24 +1195,77 @@ fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                                 false,
                                 is_line_selected,
                                 is_focused,
+                                &file.path,
                             );
                             line_spans.extend(content_spans);
                         }
                         LineType::Context | LineType::Unspecified => {
-                            let style = if is_line_selected && is_focused {
-                                Style::default()
-                                    .fg(Color::White)
-                                    .add_modifier(Modifier::REVERSED)
-                            } else {
-                                Style::default().fg(Color::White)
-                            };
-                            line_spans.push(Span::styled("  ", style));
-                            line_spans.push(Span::styled(&diff_line.content, style));
+                            line_spans.push(Span::styled("  ", Style::default()));
+                            // Apply syntax highlighting to context lines too
+                            let highlighter = get_highlighter();
+                            let syntax_spans =
+                                highlighter.highlight_line(&diff_line.content, &file.path);
+                            for (style, text) in syntax_spans {
+                                let final_style = if is_line_selected && is_focused {
+                                    style.add_modifier(Modifier::REVERSED)
+                                } else {
+                                    style
+                                };
+                                line_spans.push(Span::styled(text.to_string(), final_style));
+                            }
                         }
                     }
 
                     line_spans.push(comment_marker);
                     lines.push(Line::from(line_spans));
+
+                    // If line has a comment, show comment box below
+                    if let Some(comment) = line_comment {
+                        // Truncate file path for display
+                        let display_path = if file.path.len() > 30 {
+                            format!("...{}", &file.path[file.path.len() - 27..])
+                        } else {
+                            file.path.clone()
+                        };
+
+                        // Comment box top border with file info
+                        lines.push(Line::from(vec![
+                            Span::raw("     "),
+                            Span::styled("┌─[", Style::default().fg(Color::DarkGray)),
+                            Span::styled(display_path, Style::default().fg(Color::Cyan)),
+                            Span::styled(":", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("{}", line_number),
+                                Style::default().fg(Color::Yellow),
+                            ),
+                            Span::styled("]─", Style::default().fg(Color::DarkGray)),
+                        ]));
+
+                        // Comment content (wrap if needed)
+                        let comment_text = &comment.comment;
+                        let max_width = 50;
+                        for chunk in comment_text
+                            .chars()
+                            .collect::<Vec<_>>()
+                            .chunks(max_width)
+                            .map(|c| c.iter().collect::<String>())
+                        {
+                            lines.push(Line::from(vec![
+                                Span::raw("     "),
+                                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(chunk, Style::default().fg(Color::White)),
+                            ]));
+                        }
+
+                        // Comment box bottom border
+                        lines.push(Line::from(vec![
+                            Span::raw("     "),
+                            Span::styled(
+                                "└".to_string() + &"─".repeat(46),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]));
+                    }
                 }
             }
         }
@@ -1463,6 +1684,81 @@ fn draw_add_line_comment_overlay(
     f.set_cursor_position((cursor_x, cursor_y));
 }
 
+/// Draw edit line comment overlay
+fn draw_edit_line_comment_overlay(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    file_path: &str,
+    line_number: i32,
+) {
+    // Calculate input lines for dynamic height
+    let input_lines: Vec<&str> = app.input_buffer.lines().collect();
+    let input_line_count = input_lines.len().max(1);
+
+    // Center the input box with dynamic height
+    let popup_width = 70.min(area.width.saturating_sub(4));
+    let popup_height = (6 + input_line_count as u16).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(clear, area);
+
+    // Truncate file path if too long
+    let max_path_len = (popup_width as usize).saturating_sub(20);
+    let display_path = if file_path.len() > max_path_len {
+        format!("...{}", &file_path[file_path.len() - max_path_len + 3..])
+    } else {
+        file_path.to_string()
+    };
+
+    // Build text with multiline input support
+    let mut text = vec![
+        Line::from(vec![
+            Span::styled("File: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(display_path, Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Line: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}", line_number), Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+    ];
+
+    // Add input lines
+    for (i, line) in input_lines.iter().enumerate() {
+        let prefix = if i == 0 { "> " } else { "  " };
+        text.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow)),
+            Span::styled(*line, Style::default().fg(Color::Yellow)),
+        ]));
+    }
+    // Handle empty input
+    if input_lines.is_empty() {
+        text.push(Line::from(vec![Span::styled(
+            "> ",
+            Style::default().fg(Color::Yellow),
+        )]));
+    }
+
+    let input = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green))
+            .title(" Edit Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
+    );
+    f.render_widget(input, popup_area);
+
+    // Calculate cursor position for multiline input
+    let last_line = input_lines.last().copied().unwrap_or("");
+    let cursor_x = popup_area.x + 3 + last_line.len() as u16; // 3 = "> " + border
+    let cursor_y = popup_area.y + 4 + (input_line_count.saturating_sub(1)) as u16;
+    f.set_cursor_position((cursor_x, cursor_y));
+}
+
 /// Draw status bar at the bottom
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Prefix mode takes priority - show available commands
@@ -1497,7 +1793,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [d] Diff | [Esc] Exit",
                 TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",
             },
-            Focus::DiffFiles => "[j/k] Nav | [o] Expand | [{/}] Files | [c] Comment | [S] Send | [r] Refresh | [Esc] Back",
+            Focus::DiffFiles => "[j/k] Nav | [o] Expand | [c] Add | [C] Edit | [x] Del | [n/N] Jump | [S] Send | [Esc] Back",
         };
         (help.to_string(), Color::DarkGray)
     };

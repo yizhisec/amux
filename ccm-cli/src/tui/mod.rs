@@ -1,6 +1,7 @@
 //! TUI module
 
 mod app;
+pub mod highlight;
 mod input;
 mod ui;
 
