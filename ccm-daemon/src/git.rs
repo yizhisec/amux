@@ -283,3 +283,180 @@ pub struct WorktreeInfo {
     pub branch: String,
     pub is_main: bool,
 }
+
+/// File status in git
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitFileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+}
+
+/// A file with its git status
+#[derive(Debug, Clone)]
+pub struct GitStatusFile {
+    pub path: String,
+    pub status: GitFileStatus,
+}
+
+/// Git status result with categorized files
+#[derive(Debug, Clone, Default)]
+pub struct GitStatusResult {
+    pub staged: Vec<GitStatusFile>,
+    pub unstaged: Vec<GitStatusFile>,
+    pub untracked: Vec<GitStatusFile>,
+}
+
+impl GitOps {
+    /// Get the git status for a repository (worktree)
+    pub fn get_status(repo: &Repository) -> Result<GitStatusResult, GitError> {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
+
+        let statuses = repo.statuses(Some(&mut opts))?;
+        let mut result = GitStatusResult::default();
+
+        for entry in statuses.iter() {
+            let path = entry.path().unwrap_or("").to_string();
+            let status = entry.status();
+
+            // Check INDEX status (staged)
+            if status.is_index_new() {
+                result.staged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Added,
+                });
+            } else if status.is_index_modified() {
+                result.staged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Modified,
+                });
+            } else if status.is_index_deleted() {
+                result.staged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Deleted,
+                });
+            } else if status.is_index_renamed() {
+                result.staged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Renamed,
+                });
+            }
+
+            // Check WT status (unstaged/untracked)
+            if status.is_wt_new() {
+                result.untracked.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Untracked,
+                });
+            } else if status.is_wt_modified() {
+                result.unstaged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Modified,
+                });
+            } else if status.is_wt_deleted() {
+                result.unstaged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Deleted,
+                });
+            } else if status.is_wt_renamed() {
+                result.unstaged.push(GitStatusFile {
+                    path: path.clone(),
+                    status: GitFileStatus::Renamed,
+                });
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Stage a file (add to index)
+    pub fn stage_file(repo: &Repository, path: &str) -> Result<(), GitError> {
+        let mut index = repo.index()?;
+        let file_path = Path::new(path);
+
+        // Check if file exists - if deleted, remove from index
+        let workdir = repo.workdir().ok_or(GitError::NoWorkdir)?;
+        let full_path = workdir.join(file_path);
+
+        if full_path.exists() {
+            index.add_path(file_path)?;
+        } else {
+            // File was deleted, remove from index
+            index.remove_path(file_path)?;
+        }
+
+        index.write()?;
+        Ok(())
+    }
+
+    /// Unstage a file (reset to HEAD)
+    pub fn unstage_file(repo: &Repository, path: &str) -> Result<(), GitError> {
+        let head = repo.head()?;
+        let head_commit = head.peel_to_commit()?;
+        let file_path = Path::new(path);
+
+        repo.reset_default(Some(&head_commit.into_object()), [file_path])?;
+        Ok(())
+    }
+
+    /// Stage all files
+    pub fn stage_all(repo: &Repository) -> Result<(), GitError> {
+        let mut index = repo.index()?;
+
+        // Add all tracked files
+        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
+
+        // Handle deleted files
+        let statuses = repo.statuses(None)?;
+        for entry in statuses.iter() {
+            if entry.status().is_wt_deleted() {
+                if let Some(path) = entry.path() {
+                    index.remove_path(Path::new(path))?;
+                }
+            }
+        }
+
+        index.write()?;
+        Ok(())
+    }
+
+    /// Unstage all files
+    pub fn unstage_all(repo: &Repository) -> Result<(), GitError> {
+        let head = repo.head()?;
+        let head_commit = head.peel_to_commit()?;
+
+        // Get all staged files
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(false);
+        let statuses = repo.statuses(Some(&mut opts))?;
+
+        // Collect paths as owned PathBufs to avoid lifetime issues
+        let paths: Vec<PathBuf> = statuses
+            .iter()
+            .filter_map(|e| {
+                let status = e.status();
+                if status.is_index_new()
+                    || status.is_index_modified()
+                    || status.is_index_deleted()
+                    || status.is_index_renamed()
+                {
+                    e.path().map(PathBuf::from)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !paths.is_empty() {
+            let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+            repo.reset_default(Some(&head_commit.into_object()), &path_refs)?;
+        }
+
+        Ok(())
+    }
+}

@@ -35,6 +35,13 @@ service CcmDaemon {
     rpc UpdateLineComment(UpdateLineCommentRequest) returns (LineCommentInfo);
     rpc DeleteLineComment(DeleteLineCommentRequest) returns (Empty);
     rpc ListLineComments(ListLineCommentsRequest) returns (ListLineCommentsResponse);
+
+    // Git Status operations
+    rpc GetGitStatus(GetGitStatusRequest) returns (GetGitStatusResponse);
+    rpc StageFile(StageFileRequest) returns (Empty);
+    rpc UnstageFile(UnstageFileRequest) returns (Empty);
+    rpc StageAll(StageAllRequest) returns (Empty);
+    rpc UnstageAll(UnstageAllRequest) returns (Empty);
 }
 
 message Empty {}
@@ -291,4 +298,44 @@ message LineCommentInfo {
     LineType line_type = 6;
     string comment = 7;
     int64 created_at = 8;        // Unix timestamp
+}
+
+// ============ Git Status ============
+
+message GetGitStatusRequest {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message GetGitStatusResponse {
+    repeated GitStatusFile staged = 1;
+    repeated GitStatusFile unstaged = 2;
+    repeated GitStatusFile untracked = 3;
+}
+
+message GitStatusFile {
+    string path = 1;
+    FileStatus status = 2;
+}
+
+message StageFileRequest {
+    string repo_id = 1;
+    string branch = 2;
+    string file_path = 3;
+}
+
+message UnstageFileRequest {
+    string repo_id = 1;
+    string branch = 2;
+    string file_path = 3;
+}
+
+message StageAllRequest {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message UnstageAllRequest {
+    string repo_id = 1;
+    string branch = 2;
 }

@@ -363,4 +363,73 @@ impl Client {
             .await?;
         Ok(response.into_inner().comments)
     }
+
+    // ============ Git Status ============
+
+    /// Get git status for a worktree (staged/unstaged/untracked files)
+    pub async fn get_git_status(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+    ) -> Result<GetGitStatusResponse> {
+        let response = self
+            .inner
+            .get_git_status(GetGitStatusRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Stage a file
+    pub async fn stage_file(&mut self, repo_id: &str, branch: &str, file_path: &str) -> Result<()> {
+        self.inner
+            .stage_file(StageFileRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+                file_path: file_path.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Unstage a file
+    pub async fn unstage_file(
+        &mut self,
+        repo_id: &str,
+        branch: &str,
+        file_path: &str,
+    ) -> Result<()> {
+        self.inner
+            .unstage_file(UnstageFileRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+                file_path: file_path.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Stage all files
+    pub async fn stage_all(&mut self, repo_id: &str, branch: &str) -> Result<()> {
+        self.inner
+            .stage_all(StageAllRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Unstage all files
+    pub async fn unstage_all(&mut self, repo_id: &str, branch: &str) -> Result<()> {
+        self.inner
+            .unstage_all(UnstageAllRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
 }

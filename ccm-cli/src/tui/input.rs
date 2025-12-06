@@ -75,6 +75,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         return handle_diff_files_mode_sync(app, key);
     }
 
+    // Handle git status panel
+    if app.focus == Focus::GitStatus {
+        return handle_git_status_input_sync(app, key);
+    }
+
     // Handle sidebar navigation
     handle_navigation_input_sync(app, key)
 }
@@ -497,7 +502,7 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
                         return Some(AsyncAction::ConnectStream);
                     }
                 }
-                Focus::Terminal | Focus::DiffFiles => {
+                Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => {
                     // Shouldn't happen here
                 }
             }
@@ -509,6 +514,10 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
             match app.focus {
                 Focus::Sidebar => {
                     // Already at the beginning in tree view
+                }
+                Focus::GitStatus => {
+                    // Go back to sidebar
+                    app.focus = Focus::Sidebar;
                 }
                 Focus::Branches => {
                     // Already at the beginning
@@ -557,7 +566,7 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
                     None
                 }
             }
-            Focus::Terminal | Focus::DiffFiles => None,
+            Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => None,
         },
 
         // Toggle expand in tree view (o key)
@@ -567,6 +576,13 @@ fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAct
         KeyCode::Char('T') => {
             app.toggle_tree_view();
             None
+        }
+
+        // Switch to Git Status panel (g key)
+        KeyCode::Char('g') if app.focus == Focus::Sidebar && app.git_panel_enabled => {
+            app.focus = Focus::GitStatus;
+            app.status_message = Some("Switched to Git Status panel".to_string());
+            Some(AsyncAction::LoadGitStatus)
         }
 
         // Create new (n for sessions, a for worktrees)
@@ -672,6 +688,90 @@ fn handle_diff_files_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActi
         // Back to terminal view
         KeyCode::Esc | KeyCode::Char('t') => {
             app.switch_to_terminal_view();
+            None
+        }
+
+        _ => None,
+    }
+}
+
+/// Handle input in git status panel
+fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    match key.code {
+        // Navigate up
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.git_status_move_up();
+            None
+        }
+
+        // Navigate down
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.git_status_move_down();
+            None
+        }
+
+        // Toggle expand/collapse section OR open file diff
+        KeyCode::Enter | KeyCode::Char('o') => {
+            // If on a file, open diff for that file
+            if let Some(file_path) = app.current_git_file_path() {
+                app.status_message = Some(format!("Opening diff for: {}", file_path));
+                app.right_panel_view = RightPanelView::Diff;
+                app.focus = Focus::DiffFiles;
+                // Store the file path to expand after loading
+                app.pending_diff_file = Some(file_path);
+                return Some(AsyncAction::LoadDiffFiles);
+            }
+            // If on a section header, toggle expand/collapse
+            app.toggle_git_section_expand();
+            None
+        }
+
+        // Stage file (s key) - if on unstaged/untracked file
+        KeyCode::Char('s') => {
+            if let Some(file_path) = app.current_git_file_path() {
+                if !app.is_current_git_item_staged() {
+                    return Some(AsyncAction::StageFile { file_path });
+                }
+            }
+            None
+        }
+
+        // Unstage file (u key) - if on staged file
+        KeyCode::Char('u') => {
+            if let Some(file_path) = app.current_git_file_path() {
+                if app.is_current_git_item_staged() {
+                    return Some(AsyncAction::UnstageFile { file_path });
+                }
+            }
+            None
+        }
+
+        // Stage all (S key)
+        KeyCode::Char('S') => Some(AsyncAction::StageAll),
+
+        // Unstage all (U key)
+        KeyCode::Char('U') => Some(AsyncAction::UnstageAll),
+
+        // Refresh git status (r key)
+        KeyCode::Char('r') => Some(AsyncAction::LoadGitStatus),
+
+        // Tab: switch to diff view showing selected file
+        KeyCode::Tab => {
+            if let Some(file_path) = app.current_git_file_path() {
+                app.status_message = Some(format!("Opening diff for: {}", file_path));
+                // Store file path to auto-expand after loading
+                app.pending_diff_file = Some(file_path);
+            } else {
+                app.status_message = Some("Switching to Diff panel".to_string());
+            }
+            app.right_panel_view = RightPanelView::Diff;
+            app.focus = Focus::DiffFiles;
+            Some(AsyncAction::LoadDiffFiles)
+        }
+
+        // Back to sidebar
+        KeyCode::Esc => {
+            app.focus = Focus::Sidebar;
             None
         }
 

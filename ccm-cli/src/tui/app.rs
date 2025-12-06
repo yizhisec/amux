@@ -33,6 +33,7 @@ pub enum Focus {
     Branches,  // Branch list in sidebar (legacy, used when tree view disabled)
     Sessions,  // Session list in sidebar (legacy, used when tree view disabled)
     Sidebar,   // Tree view: worktrees with nested sessions
+    GitStatus, // Git status panel
     Terminal,  // Terminal interaction area
     DiffFiles, // Diff file list (with inline expansion)
 }
@@ -42,6 +43,30 @@ pub enum Focus {
 pub enum SidebarItem {
     Worktree(usize),       // Worktree at index
     Session(usize, usize), // (worktree_idx, session_idx within worktree)
+    None,
+}
+
+/// Git status section
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GitSection {
+    Staged,
+    Unstaged,
+    Untracked,
+}
+
+/// A file with its git status (client-side representation)
+#[derive(Debug, Clone)]
+pub struct GitStatusFile {
+    pub path: String,
+    pub status: i32, // FileStatus enum value
+    pub section: GitSection,
+}
+
+/// Item in the git status panel
+#[derive(Debug, Clone, PartialEq)]
+pub enum GitPanelItem {
+    Section(GitSection), // Section header
+    File(usize),         // File at index in git_status_files
     None,
 }
 
@@ -179,6 +204,16 @@ pub enum AsyncAction {
     LoadWorktreeSessions {
         wt_idx: usize,
     },
+    // Git status actions
+    LoadGitStatus,
+    StageFile {
+        file_path: String,
+    },
+    UnstageFile {
+        file_path: String,
+    },
+    StageAll,
+    UnstageAll,
 }
 
 /// Terminal stream state for a session
@@ -249,6 +284,15 @@ pub struct App {
     pub sidebar_cursor: usize,   // Cursor position in virtual list
     pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>, // Sessions grouped by worktree index
 
+    // Git status panel state
+    pub git_panel_enabled: bool,
+    pub git_status_files: Vec<GitStatusFile>, // All files (staged + unstaged + untracked)
+    pub git_status_cursor: usize,             // Cursor in virtual list
+    pub expanded_git_sections: std::collections::HashSet<GitSection>, // Expanded sections
+    #[allow(dead_code)]
+    pub git_panel_scroll_offset: usize, // Scroll offset for rendering
+    pub pending_diff_file: Option<String>,    // File to auto-expand in diff view
+
     // Terminal size tracking (for mouse position calculations)
     pub terminal_cols: Option<u16>,
     pub terminal_rows: Option<u16>,
@@ -303,6 +347,18 @@ impl App {
             expanded_worktrees: std::collections::HashSet::new(),
             sidebar_cursor: 0,
             sessions_by_worktree: HashMap::new(),
+            git_panel_enabled: true, // Enable git status panel by default
+            git_status_files: Vec::new(),
+            git_status_cursor: 0,
+            expanded_git_sections: [
+                GitSection::Staged,
+                GitSection::Unstaged,
+                GitSection::Untracked,
+            ]
+            .into_iter()
+            .collect(), // All sections expanded by default
+            git_panel_scroll_offset: 0,
+            pending_diff_file: None,
             terminal_cols: None,
             terminal_rows: None,
             should_quit: false,
@@ -317,6 +373,9 @@ impl App {
 
         // Load initial data
         app.refresh_all().await?;
+
+        // Load git status for current worktree
+        let _ = app.load_git_status().await;
 
         // Subscribe to events (don't fail if subscription fails)
         app.subscribe_events().await;
@@ -408,6 +467,9 @@ impl App {
         // Load sessions for current branch
         self.refresh_sessions().await?;
 
+        // Load git status for current worktree
+        let _ = self.load_git_status().await;
+
         Ok(())
     }
 
@@ -477,6 +539,7 @@ impl App {
     pub fn current_list_len(&self) -> usize {
         match self.focus {
             Focus::Sidebar => self.sidebar_virtual_len(),
+            Focus::GitStatus => self.git_status_virtual_len(),
             Focus::Branches => self.worktrees.len(),
             Focus::Sessions => self.sessions.len(),
             Focus::Terminal => 0,
@@ -489,6 +552,7 @@ impl App {
     pub fn current_idx(&self) -> usize {
         match self.focus {
             Focus::Sidebar => self.sidebar_cursor,
+            Focus::GitStatus => self.git_status_cursor,
             Focus::Branches => self.branch_idx,
             Focus::Sessions => self.session_idx,
             Focus::Terminal => 0,
@@ -556,7 +620,10 @@ impl App {
         if self.sidebar_cursor > 0 {
             self.sidebar_cursor -= 1;
             self.dirty.sidebar = true;
-            self.update_selection_from_sidebar();
+            if self.update_selection_from_sidebar() {
+                // Worktree changed, refresh git status
+                return Some(AsyncAction::LoadGitStatus);
+            }
         }
         None
     }
@@ -567,7 +634,10 @@ impl App {
         if self.sidebar_cursor < max_cursor {
             self.sidebar_cursor += 1;
             self.dirty.sidebar = true;
-            self.update_selection_from_sidebar();
+            if self.update_selection_from_sidebar() {
+                // Worktree changed, refresh git status
+                return Some(AsyncAction::LoadGitStatus);
+            }
         }
         None
     }
@@ -598,7 +668,10 @@ impl App {
     }
 
     /// Update branch_idx and session_idx based on sidebar cursor
-    fn update_selection_from_sidebar(&mut self) {
+    /// Returns true if the worktree changed (needs git status refresh)
+    fn update_selection_from_sidebar(&mut self) -> bool {
+        let old_branch_idx = self.branch_idx;
+
         match self.current_sidebar_item() {
             SidebarItem::Worktree(wt_idx) => {
                 self.branch_idx = wt_idx;
@@ -643,6 +716,9 @@ impl App {
             }
             SidebarItem::None => {}
         }
+
+        // Return true if worktree changed
+        self.branch_idx != old_branch_idx
     }
 
     // ========== Sync versions for responsive input handling ==========
@@ -652,6 +728,9 @@ impl App {
         match self.focus {
             Focus::Sidebar => {
                 return self.sidebar_move_up();
+            }
+            Focus::GitStatus => {
+                self.git_status_move_up();
             }
             Focus::Branches => {
                 if self.branch_idx > 0 {
@@ -681,6 +760,9 @@ impl App {
         match self.focus {
             Focus::Sidebar => {
                 return self.sidebar_move_down();
+            }
+            Focus::GitStatus => {
+                self.git_status_move_down();
             }
             Focus::Branches => {
                 if !self.worktrees.is_empty() && self.branch_idx < self.worktrees.len() - 1 {
@@ -752,7 +834,8 @@ impl App {
     #[allow(dead_code)]
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Sidebar => Focus::Sidebar, // Stay in sidebar
+            Focus::Sidebar => Focus::Sidebar,   // Stay in sidebar
+            Focus::GitStatus => Focus::Sidebar, // Go back to sidebar
             Focus::Branches => Focus::Sessions,
             Focus::Sessions => Focus::Branches,
             Focus::Terminal => Focus::Sessions,
@@ -924,7 +1007,7 @@ impl App {
                     }
                 }
             }
-            Focus::Terminal | Focus::DiffFiles => {}
+            Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => {}
         }
         Ok(())
     }
@@ -1243,7 +1326,7 @@ impl App {
                     });
                 }
             }
-            Focus::Terminal | Focus::DiffFiles => {}
+            Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => {}
         }
     }
 
@@ -1578,6 +1661,21 @@ impl App {
             AsyncAction::LoadWorktreeSessions { wt_idx } => {
                 self.load_worktree_sessions(wt_idx).await?;
             }
+            AsyncAction::LoadGitStatus => {
+                self.load_git_status().await?;
+            }
+            AsyncAction::StageFile { file_path } => {
+                self.stage_file(&file_path).await?;
+            }
+            AsyncAction::UnstageFile { file_path } => {
+                self.unstage_file(&file_path).await?;
+            }
+            AsyncAction::StageAll => {
+                self.stage_all().await?;
+            }
+            AsyncAction::UnstageAll => {
+                self.unstage_all().await?;
+            }
         }
         Ok(())
     }
@@ -1595,6 +1693,243 @@ impl App {
             self.dirty.sidebar = true;
         }
         Ok(())
+    }
+
+    // ========== Git Status Methods ==========
+
+    /// Load git status for current worktree
+    pub async fn load_git_status(&mut self) -> Result<()> {
+        if let (Some(repo), Some(worktree)) = (
+            self.repos.get(self.repo_idx),
+            self.worktrees.get(self.branch_idx),
+        ) {
+            let response = self
+                .client
+                .get_git_status(&repo.id, &worktree.branch)
+                .await?;
+
+            // Convert proto files to local representation
+            self.git_status_files.clear();
+
+            for f in response.staged {
+                self.git_status_files.push(GitStatusFile {
+                    path: f.path,
+                    status: f.status,
+                    section: GitSection::Staged,
+                });
+            }
+            for f in response.unstaged {
+                self.git_status_files.push(GitStatusFile {
+                    path: f.path,
+                    status: f.status,
+                    section: GitSection::Unstaged,
+                });
+            }
+            for f in response.untracked {
+                self.git_status_files.push(GitStatusFile {
+                    path: f.path,
+                    status: f.status,
+                    section: GitSection::Untracked,
+                });
+            }
+
+            self.git_status_cursor = 0;
+            self.dirty.sidebar = true;
+        }
+        Ok(())
+    }
+
+    /// Stage a single file
+    pub async fn stage_file(&mut self, file_path: &str) -> Result<()> {
+        if let (Some(repo), Some(worktree)) = (
+            self.repos.get(self.repo_idx),
+            self.worktrees.get(self.branch_idx),
+        ) {
+            self.client
+                .stage_file(&repo.id, &worktree.branch, file_path)
+                .await?;
+            // Reload git status after staging
+            self.load_git_status().await?;
+        }
+        Ok(())
+    }
+
+    /// Unstage a single file
+    pub async fn unstage_file(&mut self, file_path: &str) -> Result<()> {
+        if let (Some(repo), Some(worktree)) = (
+            self.repos.get(self.repo_idx),
+            self.worktrees.get(self.branch_idx),
+        ) {
+            self.client
+                .unstage_file(&repo.id, &worktree.branch, file_path)
+                .await?;
+            // Reload git status after unstaging
+            self.load_git_status().await?;
+        }
+        Ok(())
+    }
+
+    /// Stage all files
+    pub async fn stage_all(&mut self) -> Result<()> {
+        if let (Some(repo), Some(worktree)) = (
+            self.repos.get(self.repo_idx),
+            self.worktrees.get(self.branch_idx),
+        ) {
+            self.client.stage_all(&repo.id, &worktree.branch).await?;
+            self.load_git_status().await?;
+        }
+        Ok(())
+    }
+
+    /// Unstage all files
+    pub async fn unstage_all(&mut self) -> Result<()> {
+        if let (Some(repo), Some(worktree)) = (
+            self.repos.get(self.repo_idx),
+            self.worktrees.get(self.branch_idx),
+        ) {
+            self.client.unstage_all(&repo.id, &worktree.branch).await?;
+            self.load_git_status().await?;
+        }
+        Ok(())
+    }
+
+    /// Calculate virtual list length for git status panel
+    pub fn git_status_virtual_len(&self) -> usize {
+        let mut len = 0;
+
+        // Count staged section
+        let staged_count = self
+            .git_status_files
+            .iter()
+            .filter(|f| f.section == GitSection::Staged)
+            .count();
+        if staged_count > 0 {
+            len += 1; // Section header
+            if self.expanded_git_sections.contains(&GitSection::Staged) {
+                len += staged_count;
+            }
+        }
+
+        // Count unstaged section
+        let unstaged_count = self
+            .git_status_files
+            .iter()
+            .filter(|f| f.section == GitSection::Unstaged)
+            .count();
+        if unstaged_count > 0 {
+            len += 1; // Section header
+            if self.expanded_git_sections.contains(&GitSection::Unstaged) {
+                len += unstaged_count;
+            }
+        }
+
+        // Count untracked section
+        let untracked_count = self
+            .git_status_files
+            .iter()
+            .filter(|f| f.section == GitSection::Untracked)
+            .count();
+        if untracked_count > 0 {
+            len += 1; // Section header
+            if self.expanded_git_sections.contains(&GitSection::Untracked) {
+                len += untracked_count;
+            }
+        }
+
+        len
+    }
+
+    /// Get current git panel item at cursor position
+    pub fn current_git_panel_item(&self) -> GitPanelItem {
+        let mut pos = 0;
+        let sections = [
+            GitSection::Staged,
+            GitSection::Unstaged,
+            GitSection::Untracked,
+        ];
+
+        for section in sections {
+            let files: Vec<_> = self
+                .git_status_files
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.section == section)
+                .collect();
+
+            if files.is_empty() {
+                continue;
+            }
+
+            // Section header
+            if pos == self.git_status_cursor {
+                return GitPanelItem::Section(section);
+            }
+            pos += 1;
+
+            // Files in section (if expanded)
+            if self.expanded_git_sections.contains(&section) {
+                for (file_idx, _) in files {
+                    if pos == self.git_status_cursor {
+                        return GitPanelItem::File(file_idx);
+                    }
+                    pos += 1;
+                }
+            }
+        }
+
+        GitPanelItem::None
+    }
+
+    /// Toggle git section expansion
+    pub fn toggle_git_section_expand(&mut self) {
+        if let GitPanelItem::Section(section) = self.current_git_panel_item() {
+            if self.expanded_git_sections.contains(&section) {
+                self.expanded_git_sections.remove(&section);
+            } else {
+                self.expanded_git_sections.insert(section);
+            }
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Move cursor up in git status panel
+    pub fn git_status_move_up(&mut self) {
+        if self.git_status_cursor > 0 {
+            self.git_status_cursor -= 1;
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Move cursor down in git status panel
+    pub fn git_status_move_down(&mut self) {
+        let max_cursor = self.git_status_virtual_len().saturating_sub(1);
+        if self.git_status_cursor < max_cursor {
+            self.git_status_cursor += 1;
+            self.dirty.sidebar = true;
+        }
+    }
+
+    /// Get file path of currently selected git status file
+    pub fn current_git_file_path(&self) -> Option<String> {
+        if let GitPanelItem::File(idx) = self.current_git_panel_item() {
+            self.git_status_files.get(idx).map(|f| f.path.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Check if current git item is staged
+    pub fn is_current_git_item_staged(&self) -> bool {
+        if let GitPanelItem::File(idx) = self.current_git_panel_item() {
+            self.git_status_files
+                .get(idx)
+                .map(|f| f.section == GitSection::Staged)
+                .unwrap_or(false)
+        } else if let GitPanelItem::Section(section) = self.current_git_panel_item() {
+            section == GitSection::Staged
+        } else {
+            false
+        }
     }
 
     /// Send data to terminal
@@ -1753,6 +2088,18 @@ impl App {
                     self.diff_file_lines.clear();
                     self.diff_cursor = 0;
                     self.diff_scroll_offset = 0;
+
+                    // If there's a pending file to expand, find and expand it
+                    if let Some(pending_file) = self.pending_diff_file.take() {
+                        if let Some(idx) =
+                            self.diff_files.iter().position(|f| f.path == pending_file)
+                        {
+                            self.diff_cursor = idx;
+                            self.diff_expanded.insert(idx);
+                            // Load the file's diff content
+                            self.load_file_diff().await?;
+                        }
+                    }
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Failed to load diff: {}", e));

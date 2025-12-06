@@ -1,6 +1,8 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
-use super::app::{App, DeleteTarget, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
+use super::app::{
+    App, DeleteTarget, Focus, GitSection, InputMode, PrefixMode, RightPanelView, TerminalMode,
+};
 use ccm_proto::daemon::{DiffLine, FileStatus, LineType};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -364,8 +366,22 @@ fn draw_main_content(f: &mut Frame, area: Rect, app: &App) {
 /// Draw sidebar with worktrees and sessions
 fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.tree_view_enabled {
-        // Tree view: single list with worktrees and nested sessions
-        draw_sidebar_tree(f, area, app);
+        // Tree view with git status panel
+        if app.git_panel_enabled {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(60), // Worktrees
+                    Constraint::Percentage(40), // Git Status
+                ])
+                .split(area);
+
+            draw_sidebar_tree(f, chunks[0], app);
+            draw_git_status_panel(f, chunks[1], app);
+        } else {
+            // Tree view: single list with worktrees and nested sessions
+            draw_sidebar_tree(f, area, app);
+        }
     } else {
         // Legacy view: split sidebar into worktrees and sessions
         let chunks = Layout::default()
@@ -612,6 +628,128 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         format!(" Sessions ({}) [*] ", current_branch)
     } else {
         format!(" Sessions ({}) ", current_branch)
+    };
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title),
+    );
+
+    f.render_widget(list, area);
+}
+
+/// Draw git status panel
+fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
+    let is_focused = app.focus == Focus::GitStatus;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let _current_item = app.current_git_panel_item();
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut cursor_pos = 0;
+
+    let sections = [
+        (GitSection::Staged, "◆ Staged", Color::Green),
+        (GitSection::Unstaged, "◇ Unstaged", Color::Yellow),
+        (GitSection::Untracked, "? Untracked", Color::Magenta),
+    ];
+
+    for (section, section_name, section_color) in sections {
+        let files: Vec<_> = app
+            .git_status_files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.section == section)
+            .collect();
+
+        if files.is_empty() {
+            continue;
+        }
+
+        let is_expanded = app.expanded_git_sections.contains(&section);
+        let is_cursor = cursor_pos == app.git_status_cursor;
+
+        // Section header style
+        let section_style = if is_cursor && is_focused {
+            Style::default()
+                .fg(section_color)
+                .add_modifier(Modifier::BOLD)
+        } else if is_cursor {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let expand_char = if is_expanded { "▼" } else { "▶" };
+
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(if is_cursor { ">" } else { " " }, section_style),
+            Span::styled(
+                format!(" {} ", expand_char),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(format!("{} ({})", section_name, files.len()), section_style),
+        ])));
+        cursor_pos += 1;
+
+        // Files in section (if expanded)
+        if is_expanded {
+            for (_file_idx, file) in files {
+                let is_file_cursor = cursor_pos == app.git_status_cursor;
+
+                let file_style = if is_file_cursor && is_focused {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_file_cursor {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+
+                // Status indicator
+                let (status_char, status_color) =
+                    match FileStatus::try_from(file.status).unwrap_or(FileStatus::Modified) {
+                        FileStatus::Modified => ("M", Color::Yellow),
+                        FileStatus::Added => ("A", Color::Green),
+                        FileStatus::Deleted => ("D", Color::Red),
+                        FileStatus::Renamed => ("R", Color::Cyan),
+                        FileStatus::Untracked => ("?", Color::Magenta),
+                        FileStatus::Unspecified => ("?", Color::DarkGray),
+                    };
+
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(if is_file_cursor { ">" } else { " " }, file_style),
+                    Span::raw("   "), // Indent
+                    Span::styled(
+                        format!("{} ", status_char),
+                        Style::default().fg(status_color),
+                    ),
+                    Span::styled(&file.path, file_style),
+                ])));
+                cursor_pos += 1;
+            }
+        }
+    }
+
+    // Show empty message if no files
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "  No changes",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    }
+
+    let total_files = app.git_status_files.len();
+    let title = if is_focused {
+        format!(" Git Status ({}) [*] ", total_files)
+    } else {
+        format!(" Git Status ({}) ", total_files)
     };
 
     let list = List::new(items).block(
@@ -1351,7 +1489,8 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
-            Focus::Sidebar => "[Ctrl+s] Prefix | [j/k] Move | [o/Enter] Expand | [Tab] Terminal | [n] New | [a] Add | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
+            Focus::Sidebar => "[Ctrl+s] Prefix | [j/k] Move | [o/Enter] Expand | [g] Git | [Tab] Terminal | [n] New | [a] Add | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
+            Focus::GitStatus => "[j/k] Move | [o] Expand | [s] Stage | [u] Unstage | [S] Stage All | [U] Unstage All | [r] Refresh | [Tab] Diff | [Esc] Back",
             Focus::Branches => "[Ctrl+s] Prefix | [1-9] Repo | [Tab] Sessions | [j/k] Move | [a] Add | [x] Delete | [d] Diff | [q] Quit",
             Focus::Sessions => "[Ctrl+s] Prefix | [Tab] Terminal | [j/k] Move | [Enter] Terminal | [n] New | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
             Focus::Terminal => match app.terminal_mode {
