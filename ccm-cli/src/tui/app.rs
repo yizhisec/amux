@@ -603,12 +603,8 @@ impl App {
             SidebarItem::Worktree(wt_idx) => {
                 self.branch_idx = wt_idx;
                 self.session_idx = 0;
-                // Clear active session when on worktree
-                if self.active_session_id.is_some() {
-                    self.disconnect_stream();
-                    self.active_session_id = None;
-                    self.dirty.terminal = true;
-                }
+                // Don't clear active session when navigating to worktree
+                // Keep showing the current terminal content
             }
             SidebarItem::Session(wt_idx, s_idx) => {
                 self.branch_idx = wt_idx;
