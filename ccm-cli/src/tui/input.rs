@@ -388,12 +388,9 @@ fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
 }
 
 /// Handle input in terminal Insert mode (send to PTY)
-fn handle_insert_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    // Esc exits to Normal mode
-    if key.code == KeyCode::Esc {
-        app.exit_to_normal_mode();
-        return None;
-    }
+fn handle_insert_mode_sync(_app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // ESC is sent to PTY (like Claude Code behavior)
+    // Use Prefix+[ to exit to Normal mode
 
     // Convert key to bytes and send to terminal
     let data = key_to_bytes(&key);

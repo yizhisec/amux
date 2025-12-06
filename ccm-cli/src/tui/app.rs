@@ -782,6 +782,7 @@ impl App {
     }
 
     /// Exit to Normal mode (from Insert mode)
+    #[allow(dead_code)]
     pub fn exit_to_normal_mode(&mut self) {
         self.terminal_mode = TerminalMode::Normal;
         deactivate_ime();
