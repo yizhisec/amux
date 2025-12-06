@@ -57,6 +57,9 @@ async fn main() -> Result<()> {
         let mut state_guard = state.write().await;
         let original_count = repos.len();
         let mut valid_repos = Vec::new();
+        let mut seen_canonical_paths: std::collections::HashMap<std::path::PathBuf, String> =
+            std::collections::HashMap::new();
+
         for r in repos {
             // Check if repo path still exists
             if !r.path.exists() {
@@ -66,6 +69,19 @@ async fn main() -> Result<()> {
                 );
                 continue;
             }
+
+            // Check for duplicate canonical paths
+            if let Ok(canonical_path) = r.path.canonicalize() {
+                if let Some(existing_id) = seen_canonical_paths.get(&canonical_path) {
+                    info!(
+                        "Removing duplicate repo {} (same path as repo {})",
+                        r.id, existing_id
+                    );
+                    continue;
+                }
+                seen_canonical_paths.insert(canonical_path, r.id.clone());
+            }
+
             valid_repos.push(r.clone());
             state_guard.repos.insert(r.id.clone(), r);
         }

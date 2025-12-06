@@ -25,12 +25,14 @@ impl GitOps {
     /// If the path is a worktree, returns the main repository path.
     /// If it's already the main repository, returns it as-is.
     /// Returns None if not a git repository.
+    /// Note: Returns canonicalized path to ensure consistent repo IDs.
     pub fn find_main_repo_path(path: &Path) -> Option<PathBuf> {
         let git_path = path.join(".git");
 
         if git_path.is_dir() {
             // Regular repository - .git is a directory
-            Some(path.to_path_buf())
+            // Canonicalize to ensure consistent path representation
+            path.canonicalize().ok()
         } else if git_path.is_file() {
             // Worktree - .git is a file containing: "gitdir: /path/to/.git/worktrees/name"
             if let Ok(content) = std::fs::read_to_string(&git_path) {
@@ -42,7 +44,8 @@ impl GitOps {
                         .ancestors()
                         .find(|p| p.file_name().map(|n| n == ".git").unwrap_or(false))
                     {
-                        return git_dir.parent().map(|p| p.to_path_buf());
+                        // Canonicalize to ensure consistent path representation
+                        return git_dir.parent().and_then(|p| p.canonicalize().ok());
                     }
                 }
             }
