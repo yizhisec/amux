@@ -434,4 +434,103 @@ impl Client {
             .await?;
         Ok(())
     }
+
+    // ============ TODO Operations ============
+
+    /// Create a new TODO item
+    pub async fn create_todo(
+        &mut self,
+        repo_id: &str,
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+    ) -> Result<TodoItem> {
+        let response = self
+            .inner
+            .create_todo(CreateTodoRequest {
+                repo_id: repo_id.to_string(),
+                title,
+                description,
+                parent_id,
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Update a TODO item
+    pub async fn update_todo(
+        &mut self,
+        todo_id: &str,
+        title: Option<String>,
+        description: Option<String>,
+        completed: Option<bool>,
+        order: Option<i32>,
+    ) -> Result<TodoItem> {
+        let response = self
+            .inner
+            .update_todo(UpdateTodoRequest {
+                todo_id: todo_id.to_string(),
+                title,
+                description,
+                completed,
+                order,
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Delete a TODO item
+    pub async fn delete_todo(&mut self, todo_id: &str) -> Result<()> {
+        self.inner
+            .delete_todo(DeleteTodoRequest {
+                todo_id: todo_id.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// List TODO items for a repository
+    pub async fn list_todos(
+        &mut self,
+        repo_id: &str,
+        include_completed: bool,
+    ) -> Result<Vec<TodoItem>> {
+        let response = self
+            .inner
+            .list_todos(ListTodosRequest {
+                repo_id: repo_id.to_string(),
+                include_completed: Some(include_completed),
+            })
+            .await?;
+        Ok(response.into_inner().items)
+    }
+
+    /// Toggle TODO completion status
+    pub async fn toggle_todo(&mut self, todo_id: &str) -> Result<TodoItem> {
+        let response = self
+            .inner
+            .toggle_todo(ToggleTodoRequest {
+                todo_id: todo_id.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Reorder a TODO item
+    pub async fn reorder_todo(
+        &mut self,
+        todo_id: &str,
+        new_order: i32,
+        new_parent_id: Option<String>,
+    ) -> Result<TodoItem> {
+        let response = self
+            .inner
+            .reorder_todo(ReorderTodoRequest {
+                todo_id: todo_id.to_string(),
+                new_order,
+                new_parent_id,
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
 }

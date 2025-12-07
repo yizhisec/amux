@@ -12,6 +12,7 @@ mod review;
 mod server;
 mod session;
 mod state;
+mod todo;
 
 use crate::events::EventBroadcaster;
 use crate::server::CcmDaemonService;

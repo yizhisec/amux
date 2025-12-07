@@ -9,6 +9,7 @@ use crate::repo::{self, Repo};
 use crate::review::{CommentLineType, ReviewOps};
 use crate::session::{self, Session, SessionStatus};
 use crate::state::SharedState;
+use crate::todo::TodoOps;
 use ccm_proto::daemon::ccm_daemon_server::CcmDaemon;
 use ccm_proto::daemon::*;
 use std::pin::Pin;
@@ -1109,6 +1110,195 @@ impl CcmDaemon for CcmDaemonService {
         GitOps::unstage_all(&wt_repo).map_err(|e| Status::from(DaemonError::from(e)))?;
 
         Ok(Response::new(Empty {}))
+    }
+
+    // ============ TODO Operations ============
+
+    async fn create_todo(
+        &self,
+        request: Request<CreateTodoRequest>,
+    ) -> Result<Response<TodoItem>, Status> {
+        let req = request.into_inner();
+
+        let todo = TodoOps::create_todo(&req.repo_id, req.title, req.description, req.parent_id)
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        Ok(Response::new(TodoItem {
+            id: todo.id,
+            repo_id: todo.repo_id,
+            title: todo.title,
+            description: todo.description,
+            completed: todo.completed,
+            parent_id: todo.parent_id,
+            order: todo.order,
+            created_at: todo.created_at.timestamp(),
+            updated_at: todo.updated_at.timestamp(),
+        }))
+    }
+
+    async fn update_todo(
+        &self,
+        request: Request<UpdateTodoRequest>,
+    ) -> Result<Response<TodoItem>, Status> {
+        let req = request.into_inner();
+
+        // First find the repo_id for this todo
+        let state = self.state.read().await;
+        let mut repo_id = None;
+        for repo in state.repos.keys() {
+            if let Ok(Some(item)) = TodoOps::find_todo(repo, &req.todo_id) {
+                repo_id = Some(item.repo_id);
+                break;
+            }
+        }
+        drop(state);
+
+        let repo_id = repo_id.ok_or_else(|| Status::not_found("TODO item not found"))?;
+
+        let todo = TodoOps::update_todo(
+            &repo_id,
+            &req.todo_id,
+            req.title,
+            req.description.map(Some),
+            req.completed,
+            req.order,
+        )
+        .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        Ok(Response::new(TodoItem {
+            id: todo.id,
+            repo_id: todo.repo_id,
+            title: todo.title,
+            description: todo.description,
+            completed: todo.completed,
+            parent_id: todo.parent_id,
+            order: todo.order,
+            created_at: todo.created_at.timestamp(),
+            updated_at: todo.updated_at.timestamp(),
+        }))
+    }
+
+    async fn delete_todo(
+        &self,
+        request: Request<DeleteTodoRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+
+        // First find the repo_id for this todo
+        let state = self.state.read().await;
+        let mut repo_id = None;
+        for repo in state.repos.keys() {
+            if let Ok(Some(item)) = TodoOps::find_todo(repo, &req.todo_id) {
+                repo_id = Some(item.repo_id);
+                break;
+            }
+        }
+        drop(state);
+
+        let repo_id = repo_id.ok_or_else(|| Status::not_found("TODO item not found"))?;
+
+        TodoOps::delete_todo(&repo_id, &req.todo_id)
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn list_todos(
+        &self,
+        request: Request<ListTodosRequest>,
+    ) -> Result<Response<ListTodosResponse>, Status> {
+        let req = request.into_inner();
+
+        let include_completed = req.include_completed.unwrap_or(true);
+        let items = TodoOps::list_todos(&req.repo_id, include_completed)
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        let proto_items: Vec<TodoItem> = items
+            .into_iter()
+            .map(|todo| TodoItem {
+                id: todo.id,
+                repo_id: todo.repo_id,
+                title: todo.title,
+                description: todo.description,
+                completed: todo.completed,
+                parent_id: todo.parent_id,
+                order: todo.order,
+                created_at: todo.created_at.timestamp(),
+                updated_at: todo.updated_at.timestamp(),
+            })
+            .collect();
+
+        Ok(Response::new(ListTodosResponse { items: proto_items }))
+    }
+
+    async fn toggle_todo(
+        &self,
+        request: Request<ToggleTodoRequest>,
+    ) -> Result<Response<TodoItem>, Status> {
+        let req = request.into_inner();
+
+        // First find the repo_id for this todo
+        let state = self.state.read().await;
+        let mut repo_id = None;
+        for repo in state.repos.keys() {
+            if let Ok(Some(item)) = TodoOps::find_todo(repo, &req.todo_id) {
+                repo_id = Some(item.repo_id);
+                break;
+            }
+        }
+        drop(state);
+
+        let repo_id = repo_id.ok_or_else(|| Status::not_found("TODO item not found"))?;
+
+        let todo = TodoOps::toggle_todo(&repo_id, &req.todo_id)
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        Ok(Response::new(TodoItem {
+            id: todo.id,
+            repo_id: todo.repo_id,
+            title: todo.title,
+            description: todo.description,
+            completed: todo.completed,
+            parent_id: todo.parent_id,
+            order: todo.order,
+            created_at: todo.created_at.timestamp(),
+            updated_at: todo.updated_at.timestamp(),
+        }))
+    }
+
+    async fn reorder_todo(
+        &self,
+        request: Request<ReorderTodoRequest>,
+    ) -> Result<Response<TodoItem>, Status> {
+        let req = request.into_inner();
+
+        // First find the repo_id for this todo
+        let state = self.state.read().await;
+        let mut repo_id = None;
+        for repo in state.repos.keys() {
+            if let Ok(Some(item)) = TodoOps::find_todo(repo, &req.todo_id) {
+                repo_id = Some(item.repo_id);
+                break;
+            }
+        }
+        drop(state);
+
+        let repo_id = repo_id.ok_or_else(|| Status::not_found("TODO item not found"))?;
+
+        let todo = TodoOps::reorder_todo(&repo_id, &req.todo_id, req.new_order, req.new_parent_id)
+            .map_err(|e| Status::from(DaemonError::from(e)))?;
+
+        Ok(Response::new(TodoItem {
+            id: todo.id,
+            repo_id: todo.repo_id,
+            title: todo.title,
+            description: todo.description,
+            completed: todo.completed,
+            parent_id: todo.parent_id,
+            order: todo.order,
+            created_at: todo.created_at.timestamp(),
+            updated_at: todo.updated_at.timestamp(),
+        }))
     }
 }
 

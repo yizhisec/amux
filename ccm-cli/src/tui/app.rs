@@ -4,7 +4,7 @@ use crate::client::Client;
 use crate::error::TuiError;
 use ccm_proto::daemon::{
     event as daemon_event, AttachInput, DiffFileInfo, DiffLine, Event as DaemonEvent,
-    LineCommentInfo, RepoInfo, SessionInfo, WorktreeInfo,
+    LineCommentInfo, RepoInfo, SessionInfo, TodoItem, WorktreeInfo,
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -126,6 +126,21 @@ pub enum InputMode {
         file_path: String,
         line_number: i32,
     },
+    // TODO modes
+    TodoPopup,
+    AddTodo {
+        parent_id: Option<String>,
+    },
+    EditTodo {
+        todo_id: String,
+    },
+    EditTodoDescription {
+        todo_id: String,
+    },
+    ConfirmDeleteTodo {
+        todo_id: String,
+        title: String,
+    },
 }
 
 /// Terminal mode (vim-style)
@@ -226,6 +241,29 @@ pub enum AsyncAction {
     UnstageAll,
     // Shell session action
     SwitchToShell,
+    // TODO actions
+    LoadTodos,
+    CreateTodo {
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+    },
+    ToggleTodo {
+        todo_id: String,
+    },
+    DeleteTodo {
+        todo_id: String,
+    },
+    UpdateTodo {
+        todo_id: String,
+        title: Option<String>,
+        description: Option<String>,
+    },
+    ReorderTodo {
+        todo_id: String,
+        new_order: i32,
+        new_parent_id: Option<String>,
+    },
 }
 
 /// Terminal stream state for a session
@@ -327,6 +365,14 @@ pub struct App {
 
     // Dirty flags for optimized rendering
     pub dirty: DirtyFlags,
+
+    // TODO state
+    pub todo_items: Vec<TodoItem>,
+    pub todo_cursor: usize,
+    pub expanded_todos: std::collections::HashSet<String>,
+    pub todo_scroll_offset: usize,
+    pub todo_show_completed: bool,
+    pub todo_display_order: Vec<usize>, // Indices in tree order for navigation
 }
 
 impl App {
@@ -387,6 +433,12 @@ impl App {
             event_rx: None,
             prefix_mode: PrefixMode::None,
             dirty: DirtyFlags::default(),
+            todo_items: Vec::new(),
+            todo_cursor: 0,
+            expanded_todos: std::collections::HashSet::new(),
+            todo_scroll_offset: 0,
+            todo_show_completed: true,
+            todo_display_order: Vec::new(),
         };
 
         // Load initial data
@@ -1832,6 +1884,37 @@ impl App {
             AsyncAction::SwitchToShell => {
                 self.switch_to_shell_session().await?;
             }
+            AsyncAction::LoadTodos => {
+                self.load_todos().await?;
+            }
+            AsyncAction::CreateTodo {
+                title,
+                description,
+                parent_id,
+            } => {
+                self.create_todo(title, description, parent_id).await?;
+            }
+            AsyncAction::ToggleTodo { todo_id } => {
+                self.toggle_todo(&todo_id).await?;
+            }
+            AsyncAction::DeleteTodo { todo_id } => {
+                self.delete_todo(&todo_id).await?;
+            }
+            AsyncAction::UpdateTodo {
+                todo_id,
+                title,
+                description,
+            } => {
+                self.update_todo(&todo_id, title, description).await?;
+            }
+            AsyncAction::ReorderTodo {
+                todo_id,
+                new_order,
+                new_parent_id,
+            } => {
+                self.reorder_todo(&todo_id, new_order, new_parent_id)
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -1960,6 +2043,119 @@ impl App {
             self.client.unstage_all(&repo.id, &worktree.branch).await?;
             self.load_git_status().await?;
         }
+        Ok(())
+    }
+
+    // ============ TODO Operations ============
+
+    /// Load TODO items for current repository
+    pub async fn load_todos(&mut self) -> Result<()> {
+        if let Some(repo) = self.repos.get(self.repo_idx) {
+            self.todo_items = self
+                .client
+                .list_todos(&repo.id, self.todo_show_completed)
+                .await?;
+            self.rebuild_todo_display_order();
+        }
+        Ok(())
+    }
+
+    /// Rebuild display order for TODO items (tree structure)
+    pub fn rebuild_todo_display_order(&mut self) {
+        use std::collections::HashMap;
+
+        // Build parent-to-children mapping
+        let mut items_by_parent: HashMap<Option<String>, Vec<usize>> = HashMap::new();
+        for (i, item) in self.todo_items.iter().enumerate() {
+            items_by_parent
+                .entry(item.parent_id.clone())
+                .or_default()
+                .push(i);
+        }
+
+        // Recursively build display order
+        fn build_order(
+            items: &[TodoItem],
+            items_by_parent: &HashMap<Option<String>, Vec<usize>>,
+            parent_id: Option<String>,
+            order: &mut Vec<usize>,
+        ) {
+            if let Some(children) = items_by_parent.get(&parent_id) {
+                let mut sorted_children = children.clone();
+                sorted_children.sort_by_key(|&idx| items[idx].order);
+
+                for &idx in &sorted_children {
+                    order.push(idx);
+                    let item = &items[idx];
+                    build_order(items, items_by_parent, Some(item.id.clone()), order);
+                }
+            }
+        }
+
+        self.todo_display_order.clear();
+        build_order(
+            &self.todo_items,
+            &items_by_parent,
+            None,
+            &mut self.todo_display_order,
+        );
+    }
+
+    /// Create a new TODO item
+    pub async fn create_todo(
+        &mut self,
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+    ) -> Result<()> {
+        if let Some(repo) = self.repos.get(self.repo_idx) {
+            self.client
+                .create_todo(&repo.id, title, description, parent_id)
+                .await?;
+            self.load_todos().await?;
+        }
+        Ok(())
+    }
+
+    /// Toggle TODO completion status
+    pub async fn toggle_todo(&mut self, todo_id: &str) -> Result<()> {
+        self.client.toggle_todo(todo_id).await?;
+        self.load_todos().await?;
+        Ok(())
+    }
+
+    /// Delete a TODO item
+    pub async fn delete_todo(&mut self, todo_id: &str) -> Result<()> {
+        self.client.delete_todo(todo_id).await?;
+        self.load_todos().await?;
+        Ok(())
+    }
+
+    /// Update a TODO item
+    pub async fn update_todo(
+        &mut self,
+        todo_id: &str,
+        title: Option<String>,
+        description: Option<String>,
+    ) -> Result<()> {
+        self.client
+            .update_todo(todo_id, title, description, None, None)
+            .await?;
+        self.load_todos().await?;
+        Ok(())
+    }
+
+    /// Reorder a TODO item
+    pub async fn reorder_todo(
+        &mut self,
+        todo_id: &str,
+        new_order: i32,
+        new_parent_id: Option<String>,
+    ) -> Result<()> {
+        self.client
+            .reorder_todo(todo_id, new_order, new_parent_id)
+            .await?;
+        self.load_todos().await?;
         Ok(())
     }
 

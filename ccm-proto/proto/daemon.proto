@@ -42,6 +42,14 @@ service CcmDaemon {
     rpc UnstageFile(UnstageFileRequest) returns (Empty);
     rpc StageAll(StageAllRequest) returns (Empty);
     rpc UnstageAll(UnstageAllRequest) returns (Empty);
+
+    // TODO operations
+    rpc CreateTodo(CreateTodoRequest) returns (TodoItem);
+    rpc UpdateTodo(UpdateTodoRequest) returns (TodoItem);
+    rpc DeleteTodo(DeleteTodoRequest) returns (Empty);
+    rpc ListTodos(ListTodosRequest) returns (ListTodosResponse);
+    rpc ToggleTodo(ToggleTodoRequest) returns (TodoItem);
+    rpc ReorderTodo(ReorderTodoRequest) returns (TodoItem);
 }
 
 message Empty {}
@@ -340,4 +348,56 @@ message StageAllRequest {
 message UnstageAllRequest {
     string repo_id = 1;
     string branch = 2;
+}
+
+// ============ TODO ============
+
+message TodoItem {
+    string id = 1;
+    string repo_id = 2;
+    string title = 3;
+    optional string description = 4;
+    bool completed = 5;
+    optional string parent_id = 6;
+    int32 order = 7;
+    int64 created_at = 8;  // Unix timestamp
+    int64 updated_at = 9;  // Unix timestamp
+}
+
+message CreateTodoRequest {
+    string repo_id = 1;
+    string title = 2;
+    optional string description = 3;
+    optional string parent_id = 4;
+}
+
+message UpdateTodoRequest {
+    string todo_id = 1;
+    optional string title = 2;
+    optional string description = 3;
+    optional bool completed = 4;
+    optional int32 order = 5;
+}
+
+message DeleteTodoRequest {
+    string todo_id = 1;
+}
+
+message ListTodosRequest {
+    string repo_id = 1;
+    optional bool include_completed = 2;
+}
+
+message ListTodosResponse {
+    repeated TodoItem items = 1;
+}
+
+message ToggleTodoRequest {
+    string todo_id = 1;
+}
+
+message ReorderTodoRequest {
+    string todo_id = 1;
+    int32 new_order = 2;
+    optional string new_parent_id = 3;
 }
