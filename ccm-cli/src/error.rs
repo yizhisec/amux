@@ -57,6 +57,9 @@ pub enum TuiError {
 
     #[error("channel send error")]
     ChannelSend,
+
+    #[error("config error: {0}")]
+    Config(String),
 }
 
 /// Top-level CLI error type

@@ -2,6 +2,8 @@
 
 use super::super::app::App;
 use super::super::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
+use super::resolver;
+use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Handle commands after prefix key (Ctrl+s + ?)
@@ -14,22 +16,33 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
         return None;
     }
 
-    match key.code {
-        // Navigation: b = go to Branches, s = go to Sessions
-        KeyCode::Char('b') => {
-            // Exit terminal if needed
+    // Get the pattern string for the key
+    let pattern_str = resolver::key_event_to_pattern_string(key)?;
+
+    // Resolve the action using the prefix context
+    let action = app
+        .keybinds
+        .resolve(&pattern_str, ccm_config::BindingContext::Prefix)?;
+
+    // Execute the action
+    execute_prefix_action(app, action)
+}
+
+/// Execute a prefix action
+fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
+    match action {
+        Action::FocusBranches => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
             app.focus = Focus::Branches;
             None
         }
-        KeyCode::Char('s') => {
-            // Exit terminal if needed
+
+        Action::FocusSessions => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            // Go to sidebar (tree view) or sessions (legacy view)
             app.focus = if app.sidebar.tree_view_enabled {
                 Focus::Sidebar
             } else {
@@ -38,8 +51,7 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             None
         }
 
-        // Terminal: t = go to Terminal (enter insert mode)
-        KeyCode::Char('t') => {
+        Action::FocusTerminal => {
             if app.terminal.active_session_id.is_some() {
                 Some(AsyncAction::ConnectStream)
             } else {
@@ -47,17 +59,14 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             }
         }
 
-        // Actions: n = new (session/worktree based on context)
-        KeyCode::Char('n') => {
-            // Exit terminal first if needed
+        Action::CreateSession => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
             Some(AsyncAction::CreateSession)
         }
 
-        // Actions: a = add worktree
-        KeyCode::Char('a') => {
+        Action::AddWorktree => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
@@ -66,8 +75,7 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             None
         }
 
-        // Actions: d = delete
-        KeyCode::Char('d') => {
+        Action::DeleteCurrent => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
@@ -75,19 +83,16 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             None
         }
 
-        // Actions: r = refresh
-        KeyCode::Char('r') => Some(AsyncAction::RefreshAll),
+        Action::RefreshAll => Some(AsyncAction::RefreshAll),
 
-        // Actions: f = toggle fullscreen (terminal)
-        KeyCode::Char('f') | KeyCode::Char('z') => {
+        Action::ToggleFullscreen => {
             if app.focus == Focus::Terminal || app.terminal.active_session_id.is_some() {
                 app.toggle_fullscreen();
             }
             None
         }
 
-        // Actions: [ = exit to terminal Normal mode (from Insert)
-        KeyCode::Char('[') => {
+        Action::NormalMode => {
             if app.focus == Focus::Terminal && app.terminal.mode == TerminalMode::Insert {
                 app.terminal.mode = TerminalMode::Normal;
                 app.dirty.terminal = true;
@@ -95,18 +100,15 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             None
         }
 
-        // Navigation: w = go to worktree/sidebar (tree view)
-        KeyCode::Char('w') => {
+        Action::FocusSidebar => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            // Go to sidebar in tree view mode
             app.focus = Focus::Sidebar;
             None
         }
 
-        // Actions: o = open TODO list
-        KeyCode::Char('o') => {
+        Action::OpenTodo => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
@@ -114,22 +116,19 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             Some(AsyncAction::LoadTodos)
         }
 
-        // Repo switching: 1-9
-        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let idx = (c as usize) - ('1' as usize);
+        Action::SwitchRepo(idx) => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
             app.switch_repo_sync(idx)
         }
 
-        // Quit: q
-        KeyCode::Char('q') => {
+        Action::Quit => {
             app.should_quit = true;
             None
         }
 
-        // Unknown command - show hint
+        // Unknown or unhandled action in prefix context
         _ => {
             app.status_message = Some(
                 "Prefix: w=worktree s=sessions t=terminal [=normal n=new d=delete r=refresh q=quit"

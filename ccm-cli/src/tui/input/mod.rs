@@ -22,6 +22,7 @@ mod git_status;
 mod mouse;
 mod navigation;
 mod prefix;
+mod resolver;
 mod terminal;
 mod todo;
 mod utils;
@@ -35,8 +36,9 @@ pub use mouse::handle_mouse_sync;
 
 /// Handle keyboard input (sync version - returns async action if needed)
 pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    // Check for prefix key (Ctrl+s) - works in any context except text input
-    if utils::is_prefix_key(&key) && !utils::is_text_input_mode(app) {
+    // Check for prefix key - works in any context except text input
+    // Use the configured prefix key from keybind map instead of hardcoded
+    if resolver::is_key_the_prefix(key, &app.keybinds) && !utils::is_text_input_mode(app) {
         app.prefix_mode = PrefixMode::WaitingForCommand;
         return None;
     }

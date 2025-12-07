@@ -2,6 +2,7 @@
 
 use crate::client::Client;
 use crate::error::TuiError;
+use ccm_config::{Config, KeybindMap};
 use ccm_proto::daemon::{
     event as daemon_event, AttachInput, Event as DaemonEvent, LineCommentInfo, RepoInfo,
     SessionInfo, TodoItem, WorktreeInfo,
@@ -100,12 +101,24 @@ pub struct App {
     // Prefix key mode
     pub prefix_mode: PrefixMode,
 
+    // Configuration system
+    #[allow(dead_code)]
+    pub config: Config,
+    pub keybinds: KeybindMap,
+
     // Dirty flags for optimized rendering
     pub dirty: DirtyFlags,
 }
 
 impl App {
     pub async fn new(client: Client) -> Result<Self> {
+        // Load configuration and build keybind map
+        let config = Config::load_or_default()
+            .map_err(|e| TuiError::Config(format!("Failed to load config: {}", e)))?;
+        let keybinds = config
+            .to_keybind_map()
+            .map_err(|e| TuiError::Config(format!("Failed to build keybind map: {}", e)))?;
+
         let mut app = Self {
             client,
             repo_idx: 0,
@@ -132,6 +145,8 @@ impl App {
             input_buffer: String::new(),
             event_rx: None,
             prefix_mode: PrefixMode::None,
+            config,
+            keybinds,
             dirty: DirtyFlags::default(),
         };
 

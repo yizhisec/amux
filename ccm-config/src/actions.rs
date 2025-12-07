@@ -46,6 +46,7 @@ pub enum Action {
     RenameSession,
     DeleteCurrent,
     SwitchToShell,
+    SwitchRepo(usize), // Switch to repo by index
 
     // Worktree
     AddWorktree,
@@ -151,6 +152,12 @@ impl Action {
             "delete-current" | "delete" => Some(Action::DeleteCurrent),
             "switch-to-shell" => Some(Action::SwitchToShell),
 
+            // Switch repo with dynamic index (switch-repo-0, switch-repo-1, etc.)
+            s if s.starts_with("switch-repo-") => s
+                .strip_prefix("switch-repo-")
+                .and_then(|idx_str| idx_str.parse::<usize>().ok())
+                .map(Action::SwitchRepo),
+
             // Worktree
             "add-worktree" => Some(Action::AddWorktree),
 
@@ -246,6 +253,7 @@ impl Action {
             Action::RenameSession => "Rename Session",
             Action::DeleteCurrent => "Delete Current",
             Action::SwitchToShell => "Switch to Shell",
+            Action::SwitchRepo(_) => "Switch Repository",
             Action::AddWorktree => "Add Worktree",
             Action::ToggleDiffView => "Toggle Diff View",
             Action::PrevFile => "Previous File",

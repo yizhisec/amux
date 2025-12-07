@@ -298,6 +298,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "cargo-husky",
+ "ccm-config",
  "ccm-proto",
  "clap",
  "crossterm 0.28.1",

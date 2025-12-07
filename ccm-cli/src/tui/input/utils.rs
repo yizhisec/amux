@@ -8,11 +8,6 @@ use super::super::app::App;
 use super::super::state::{AsyncAction, InputMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Check if key is the prefix key (Ctrl+s)
-pub fn is_prefix_key(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s')
-}
-
 /// Check if we're in a text input mode where prefix key shouldn't work
 pub fn is_text_input_mode(app: &App) -> bool {
     matches!(
