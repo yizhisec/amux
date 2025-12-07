@@ -134,16 +134,19 @@ impl KeyPattern {
         // Scan for modifiers at the beginning
         // Modifiers are only recognized in key positions before the actual key
         for (i, part) in parts.iter().enumerate() {
-            let upper = part.to_uppercase();
-            let is_modifier = matches!(
-                upper.as_str(),
-                "C" | "S" | "A" | "M" | "CTRL" | "SHIFT" | "ALT" | "META"
-            );
+            // Only recognize as modifier if there are more parts after it (i.e., followed by -key)
+            // Single uppercase letters are only modifiers if they're not the last part
+            // Examples: "C-s" (C is modifier), but "C" alone is a key
+            let has_following_parts = i + 1 < parts.len();
+
+            let is_modifier = has_following_parts
+                && matches!(
+                    *part,
+                    "C" | "S" | "A" | "M" | "CTRL" | "SHIFT" | "ALT" | "META"
+                );
 
             if is_modifier {
-                // Only treat single uppercase letters or full words as modifiers
-                // "s" (lowercase) is NOT a modifier, but "S" or "SHIFT" is
-                match upper.as_str() {
+                match *part {
                     "C" | "CTRL" => modifiers.push("Ctrl"),
                     "S" | "SHIFT" => modifiers.push("Shift"),
                     "A" | "ALT" => modifiers.push("Alt"),
@@ -187,12 +190,16 @@ impl KeyPattern {
             "Enter" | "Return" | "Esc" | "Escape" | "Tab" | "Space" | "Backspace" | "Back" => true,
             "Up" | "Down" | "Left" | "Right" => true,
             "Home" | "End" | "PageUp" | "PageDown" | "Page_Up" | "Page_Down" => true,
+            "Delete" | "Insert" => true,
             // Function keys
             k if k.starts_with('F') && k.len() <= 3 => {
                 k[1..].parse::<u8>().is_ok() && k[1..].parse::<u8>().unwrap() <= 24
             }
-            // Single character keys
-            k if k.len() == 1 => true,
+            // Single character keys (letters, numbers, symbols)
+            k if k.len() == 1 => {
+                let c = k.chars().next().unwrap();
+                c.is_ascii_alphanumeric() || c.is_ascii_punctuation()
+            }
             _ => false,
         }
     }
