@@ -133,6 +133,10 @@ async fn main() -> Result<()> {
             interval.tick().await;
             let mut state_guard = state_for_bg.write().await;
             for session in state_guard.sessions.values_mut() {
+                // Skip shell sessions - they don't have Claude names
+                if session.is_shell {
+                    continue;
+                }
                 if !session.name_updated_from_claude {
                     let old_name = session.name.clone();
                     session.update_name_from_claude();

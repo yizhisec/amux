@@ -21,6 +21,8 @@ pub struct SessionMeta {
     pub claude_session_id: Option<String>, // Associated Claude Code session ID
     #[serde(default)]
     pub name_updated_from_claude: bool, // Whether name was updated from Claude's first message
+    #[serde(default)]
+    pub is_shell: bool, // Whether this is a shell-only session
 }
 
 impl SessionMeta {
@@ -41,6 +43,7 @@ impl SessionMeta {
             updated_at: now,
             claude_session_id: session.claude_session_id.clone(),
             name_updated_from_claude: session.name_updated_from_claude,
+            is_shell: session.is_shell,
         }
     }
 }

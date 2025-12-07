@@ -14,6 +14,8 @@ use std::path::Path;
 /// Claude session mode
 #[derive(Debug, Clone)]
 pub enum ClaudeSessionMode {
+    /// Run plain shell (no Claude)
+    Shell,
     /// No specific session - just run claude
     None,
     /// New session with specific ID
@@ -97,20 +99,38 @@ impl PtyProcess {
                 // Change to working directory
                 std::env::set_current_dir(working_dir).ok();
 
-                // Build claude command with session args
-                let cmd = CString::new("claude").unwrap();
-                let args: Vec<CString> = match session_mode {
-                    ClaudeSessionMode::None => vec![cmd.clone()],
-                    ClaudeSessionMode::New(id) => vec![
-                        cmd.clone(),
-                        CString::new("--session-id").unwrap(),
-                        CString::new(id).unwrap(),
-                    ],
-                    ClaudeSessionMode::Resume(id) => vec![
-                        cmd.clone(),
-                        CString::new("--resume").unwrap(),
-                        CString::new(id).unwrap(),
-                    ],
+                // Build command with args based on session mode
+                let (cmd, args): (CString, Vec<CString>) = match session_mode {
+                    ClaudeSessionMode::Shell => {
+                        // Run user's default shell
+                        let shell =
+                            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                        let cmd = CString::new(shell.clone()).unwrap();
+                        let args = vec![CString::new(shell).unwrap()];
+                        (cmd, args)
+                    }
+                    ClaudeSessionMode::None => {
+                        let cmd = CString::new("claude").unwrap();
+                        (cmd.clone(), vec![cmd])
+                    }
+                    ClaudeSessionMode::New(id) => {
+                        let cmd = CString::new("claude").unwrap();
+                        let args = vec![
+                            cmd.clone(),
+                            CString::new("--session-id").unwrap(),
+                            CString::new(id).unwrap(),
+                        ];
+                        (cmd, args)
+                    }
+                    ClaudeSessionMode::Resume(id) => {
+                        let cmd = CString::new("claude").unwrap();
+                        let args = vec![
+                            cmd.clone(),
+                            CString::new("--resume").unwrap(),
+                            CString::new(id).unwrap(),
+                        ];
+                        (cmd, args)
+                    }
                 };
                 execvp(&cmd, &args).ok();
 

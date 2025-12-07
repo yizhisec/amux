@@ -198,6 +198,7 @@ impl Client {
         repo_id: &str,
         branch: &str,
         name: Option<&str>,
+        is_shell: Option<bool>,
     ) -> Result<SessionInfo> {
         let response = self
             .inner
@@ -205,6 +206,7 @@ impl Client {
                 repo_id: repo_id.to_string(),
                 branch: branch.to_string(),
                 name: name.map(String::from),
+                is_shell,
             })
             .await?;
         Ok(response.into_inner())

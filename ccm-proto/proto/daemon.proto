@@ -116,6 +116,7 @@ message CreateSessionRequest {
     string repo_id = 1;
     string branch = 2;
     optional string name = 3;  // Custom name (optional)
+    optional bool is_shell = 4;  // true to create shell-only session (no Claude)
 }
 
 message RenameSessionRequest {
@@ -135,6 +136,7 @@ message SessionInfo {
     string worktree_path = 5;
     SessionStatus status = 6;
     optional string claude_session_id = 7;  // Associated Claude Code session ID
+    optional bool is_shell = 8;  // true if this is a shell-only session
 }
 
 enum SessionStatus {

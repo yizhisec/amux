@@ -427,6 +427,33 @@ fn handle_insert_mode_sync(_app: &mut App, key: KeyEvent) -> Option<AsyncAction>
     // ESC is sent to PTY (like Claude Code behavior)
     // Use Prefix+[ to exit to Normal mode
 
+    // Debug: log all Ctrl key presses
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        tracing::debug!(
+            "Insert mode Ctrl key: {:?}, modifiers: {:?}",
+            key.code,
+            key.modifiers
+        );
+    }
+
+    // Intercept Ctrl+` to switch to shell session
+    // Note: Ctrl+` produces NUL character (ASCII 0) in most terminals,
+    // which crossterm reports as Char('\0') or Char(' ') depending on terminal.
+    // We also check for Char('@') as some terminals send Ctrl+@ for Ctrl+`.
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(
+            key.code,
+            KeyCode::Char('`')
+                | KeyCode::Char('\0')
+                | KeyCode::Char(' ')
+                | KeyCode::Char('@')
+                | KeyCode::Null
+        )
+    {
+        tracing::info!("SwitchToShell triggered by {:?}", key.code);
+        return Some(AsyncAction::SwitchToShell);
+    }
+
     // Convert key to bytes and send to terminal
     let data = key_to_bytes(&key);
     if !data.is_empty() {

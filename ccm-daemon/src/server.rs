@@ -304,6 +304,7 @@ impl CcmDaemon for CcmDaemonService {
                     SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
                 },
                 claude_session_id: s.claude_session_id.clone(),
+                is_shell: Some(s.is_shell),
             })
             .collect();
 
@@ -352,7 +353,15 @@ impl CcmDaemon for CcmDaemonService {
 
         // Create session with auto-generated Claude session ID
         let id = session::generate_session_id();
-        let claude_session_id = Some(uuid::Uuid::new_v4().to_string());
+        let is_shell = req.is_shell.unwrap_or(false);
+
+        // Shell sessions don't need Claude session ID
+        let claude_session_id = if is_shell {
+            None
+        } else {
+            Some(uuid::Uuid::new_v4().to_string())
+        };
+
         let mut session = Session::new(
             id.clone(),
             name.clone(),
@@ -360,6 +369,7 @@ impl CcmDaemon for CcmDaemonService {
             req.branch.clone(),
             worktree_path.clone(),
             claude_session_id.clone(),
+            is_shell,
         );
 
         // Start session
@@ -375,6 +385,7 @@ impl CcmDaemon for CcmDaemonService {
             worktree_path: session.worktree_path.to_string_lossy().to_string(),
             status: session_status::SessionStatus::Running as i32,
             claude_session_id,
+            is_shell: Some(session.is_shell),
         };
 
         // Save session metadata to disk
@@ -423,6 +434,7 @@ impl CcmDaemon for CcmDaemonService {
                 SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
             },
             claude_session_id: session.claude_session_id.clone(),
+            is_shell: Some(session.is_shell),
         };
 
         // Emit session name updated event

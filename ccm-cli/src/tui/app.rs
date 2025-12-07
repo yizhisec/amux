@@ -222,6 +222,8 @@ pub enum AsyncAction {
     },
     StageAll,
     UnstageAll,
+    // Shell session action
+    SwitchToShell,
 }
 
 /// Terminal stream state for a session
@@ -895,6 +897,116 @@ impl App {
         }
     }
 
+    /// Switch to or create shell session for current worktree (Ctrl+`)
+    pub async fn switch_to_shell_session(&mut self) -> Result<()> {
+        const SHELL_SESSION_NAME: &str = "__shell__";
+
+        // Get current worktree
+        let current_worktree = match self.worktrees.get(self.branch_idx) {
+            Some(wt) => wt.clone(),
+            None => {
+                self.status_message = Some("No worktree selected".to_string());
+                return Ok(());
+            }
+        };
+
+        // Find shell session in current worktree
+        let shell_session = self
+            .sessions
+            .iter()
+            .find(|s| {
+                s.name == SHELL_SESSION_NAME
+                    && s.branch == current_worktree.branch
+                    && s.is_shell == Some(true)
+            })
+            .cloned();
+
+        if let Some(session) = shell_session {
+            // Shell session exists, switch to it
+            let new_id = session.id.clone();
+
+            // Disconnect current stream
+            self.disconnect_stream();
+
+            // Save current parser if there's an active session
+            if let Some(old_id) = &self.active_session_id {
+                self.session_parsers
+                    .insert(old_id.clone(), self.terminal_parser.clone());
+            }
+
+            // Get or create parser for shell session
+            self.terminal_parser = self
+                .session_parsers
+                .entry(new_id.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                .clone();
+
+            self.scroll_offset = 0;
+            self.active_session_id = Some(new_id);
+            self.dirty.terminal = true;
+
+            self.enter_terminal().await?;
+            self.status_message = Some("Switched to shell session".to_string());
+        } else {
+            // Create new shell session
+            let repo = match self.repos.get(self.repo_idx) {
+                Some(r) => r.clone(),
+                None => {
+                    self.status_message = Some("No repository selected".to_string());
+                    return Ok(());
+                }
+            };
+
+            match self
+                .client
+                .create_session(
+                    &repo.id,
+                    &current_worktree.branch,
+                    Some(SHELL_SESSION_NAME),
+                    Some(true),
+                )
+                .await
+            {
+                Ok(session) => {
+                    // Refresh sessions list (both legacy and tree view)
+                    self.refresh_sessions().await?;
+                    // Also refresh tree view sessions for current worktree
+                    if self.tree_view_enabled {
+                        self.load_worktree_sessions(self.branch_idx).await?;
+                    }
+
+                    let new_id = session.id;
+
+                    // Disconnect current stream
+                    self.disconnect_stream();
+
+                    // Save current parser if there's an active session
+                    if let Some(old_id) = &self.active_session_id {
+                        self.session_parsers
+                            .insert(old_id.clone(), self.terminal_parser.clone());
+                    }
+
+                    // Create parser for new shell session
+                    self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                    self.session_parsers
+                        .insert(new_id.clone(), self.terminal_parser.clone());
+
+                    self.scroll_offset = 0;
+                    self.active_session_id = Some(new_id);
+                    self.dirty.terminal = true;
+
+                    self.enter_terminal().await?;
+                    self.status_message = Some("Created shell session".to_string());
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to create shell session: {}", e));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Toggle fullscreen mode
     pub fn toggle_fullscreen(&mut self) {
         self.terminal_fullscreen = !self.terminal_fullscreen;
@@ -964,7 +1076,7 @@ impl App {
                 ) {
                     match self
                         .client
-                        .create_session(&repo.id, &branch.branch, None)
+                        .create_session(&repo.id, &branch.branch, None, None)
                         .await
                     {
                         Ok(session) => {
@@ -996,7 +1108,7 @@ impl App {
                 ) {
                     match self
                         .client
-                        .create_session(&repo.id, &branch.branch, None)
+                        .create_session(&repo.id, &branch.branch, None, None)
                         .await
                     {
                         Ok(session) => {
@@ -1040,7 +1152,7 @@ impl App {
         if let Some(repo) = self.repos.get(self.repo_idx).cloned() {
             match self
                 .client
-                .create_session(&repo.id, &branch_name, None)
+                .create_session(&repo.id, &branch_name, None, None)
                 .await
             {
                 Ok(session) => {
@@ -1689,6 +1801,9 @@ impl App {
             }
             AsyncAction::UnstageAll => {
                 self.unstage_all().await?;
+            }
+            AsyncAction::SwitchToShell => {
+                self.switch_to_shell_session().await?;
             }
         }
         Ok(())

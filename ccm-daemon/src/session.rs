@@ -27,6 +27,7 @@ pub struct Session {
     pub claude_session_id: Option<String>, // Associated Claude Code session ID
     pub claude_session_started: bool,      // Whether Claude session has been started before
     pub name_updated_from_claude: bool,    // Whether name was updated from Claude's first message
+    pub is_shell: bool,                    // Whether this is a shell-only session (no Claude)
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
@@ -41,6 +42,7 @@ impl Session {
         branch: String,
         worktree_path: PathBuf,
         claude_session_id: Option<String>,
+        is_shell: bool,
     ) -> Self {
         Self {
             id,
@@ -51,6 +53,7 @@ impl Session {
             claude_session_id,
             claude_session_started: false, // New session, not started yet
             name_updated_from_claude: false, // Name not yet updated from Claude
+            is_shell,
             pty: None,
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -70,6 +73,7 @@ impl Session {
             claude_session_id: meta.claude_session_id,
             claude_session_started, // Restored session was likely started before
             name_updated_from_claude: meta.name_updated_from_claude,
+            is_shell: meta.is_shell,
             pty: None, // PTY will be started on demand
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -104,16 +108,22 @@ impl Session {
             return Ok(()); // Already running
         }
 
-        // Auto-generate claude_session_id if not set (for legacy sessions)
-        if self.claude_session_id.is_none() {
-            self.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
-        }
+        // Determine session mode
+        let session_mode = if self.is_shell {
+            // Shell session - run plain shell
+            ClaudeSessionMode::Shell
+        } else {
+            // Claude session - auto-generate claude_session_id if not set
+            if self.claude_session_id.is_none() {
+                self.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
+            }
 
-        // Determine session mode based on claude_session_id and started flag
-        let session_mode = match &self.claude_session_id {
-            Some(id) if self.claude_session_started => ClaudeSessionMode::Resume(id.clone()),
-            Some(id) => ClaudeSessionMode::New(id.clone()),
-            None => unreachable!(), // We just set it above
+            // Determine mode based on started flag
+            match &self.claude_session_id {
+                Some(id) if self.claude_session_started => ClaudeSessionMode::Resume(id.clone()),
+                Some(id) => ClaudeSessionMode::New(id.clone()),
+                None => unreachable!(), // We just set it above
+            }
         };
 
         let pty = PtyProcess::spawn_with_session(&self.worktree_path, session_mode)?;
