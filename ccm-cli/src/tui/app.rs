@@ -1406,6 +1406,8 @@ impl App {
 
         // Refresh sessions to update the UI
         self.refresh_sessions().await?;
+        // Also refresh worktree sessions for tree view
+        self.load_worktree_sessions(self.branch_idx).await?;
 
         Ok(())
     }
@@ -1551,6 +1553,8 @@ impl App {
                     Ok(_) => {
                         self.status_message = Some(format!("Destroyed session: {}", name));
                         self.refresh_sessions().await?;
+                        // Also refresh worktree sessions for tree view
+                        self.load_worktree_sessions(self.branch_idx).await?;
                     }
                     Err(e) => {
                         self.error_message = Some(e.to_string());
@@ -1832,6 +1836,8 @@ impl App {
             AsyncAction::DestroySession { session_id } => {
                 self.client.destroy_session(&session_id).await?;
                 let _ = self.refresh_sessions().await;
+                // Also refresh worktree sessions for tree view
+                let _ = self.load_worktree_sessions(self.branch_idx).await;
             }
             AsyncAction::RenameSession {
                 session_id,
