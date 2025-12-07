@@ -1306,6 +1306,8 @@ impl App {
                 self.status_message = Some(format!("Renamed session to: {}", new_name));
                 // Refresh sessions from server to ensure UI is updated
                 self.refresh_sessions().await?;
+                // Also refresh worktree sessions for tree view
+                self.load_worktree_sessions(self.branch_idx).await?;
             }
             Err(e) => {
                 self.error_message = Some(e.to_string());
