@@ -5,6 +5,7 @@ mod diff;
 pub mod error;
 mod events;
 mod git;
+mod handlers;
 mod persistence;
 mod pty;
 mod repo;
