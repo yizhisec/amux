@@ -1,7 +1,11 @@
 //! Utility functions for input handling
+//!
+//! Contains common input handling patterns to reduce code duplication:
+//! - Text input handling (Esc/Enter/Backspace/Char)
+//! - Confirmation dialog handling (y/n/Esc)
 
 use super::super::app::App;
-use super::super::state::InputMode;
+use super::super::state::{AsyncAction, InputMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Check if key is the prefix key (Ctrl+s)
@@ -72,5 +76,116 @@ pub fn key_to_bytes(key: &KeyEvent) -> Vec<u8> {
             _ => vec![],
         },
         _ => vec![],
+    }
+}
+
+// ============ Common Input Handling Patterns ============
+
+/// Result of text input handling
+pub enum TextInputResult {
+    /// User pressed Esc - cancel input
+    Cancel,
+    /// User pressed Enter - submit with current buffer content
+    Submit,
+    /// Input was handled (character added/removed), no action needed
+    Handled,
+    /// Key was not handled by text input logic
+    Unhandled,
+}
+
+/// Handle common text input keys (Esc, Enter, Backspace, Char)
+///
+/// Supports Shift+Enter for newline insertion.
+/// Returns TextInputResult to indicate what happened.
+pub fn handle_text_input(key: &KeyEvent, buffer: &mut String) -> TextInputResult {
+    // Shift+Enter: insert newline
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
+        buffer.push('\n');
+        return TextInputResult::Handled;
+    }
+
+    match key.code {
+        KeyCode::Esc => TextInputResult::Cancel,
+        KeyCode::Enter => TextInputResult::Submit,
+        KeyCode::Backspace => {
+            buffer.pop();
+            TextInputResult::Handled
+        }
+        KeyCode::Char(c) => {
+            buffer.push(c);
+            TextInputResult::Handled
+        }
+        _ => TextInputResult::Unhandled,
+    }
+}
+
+/// Handle text input and map results to AsyncAction
+///
+/// This is a convenience wrapper for simple text input dialogs.
+/// - on_cancel: called when Esc is pressed
+/// - on_submit: called when Enter is pressed, returns the AsyncAction to perform
+pub fn handle_text_input_with_actions<F, G>(
+    app: &mut App,
+    key: &KeyEvent,
+    on_cancel: F,
+    on_submit: G,
+) -> Option<AsyncAction>
+where
+    F: FnOnce(&mut App),
+    G: FnOnce(&mut App) -> Option<AsyncAction>,
+{
+    match handle_text_input(key, &mut app.input_buffer) {
+        TextInputResult::Cancel => {
+            on_cancel(app);
+            None
+        }
+        TextInputResult::Submit => on_submit(app),
+        TextInputResult::Handled | TextInputResult::Unhandled => None,
+    }
+}
+
+/// Handle confirmation dialog (y/n/Esc)
+///
+/// Returns Some(action) if confirmed, calls on_cancel if cancelled, None otherwise.
+pub fn handle_confirmation<F>(
+    app: &mut App,
+    key: &KeyEvent,
+    on_cancel: F,
+    on_confirm: AsyncAction,
+) -> Option<AsyncAction>
+where
+    F: FnOnce(&mut App),
+{
+    match key.code {
+        // Confirm with y or Y (some dialogs also accept Enter)
+        KeyCode::Char('y') | KeyCode::Char('Y') => Some(on_confirm),
+        // Cancel with n, N, or Esc
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            on_cancel(app);
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Handle confirmation dialog with Enter also confirming
+pub fn handle_confirmation_with_enter<F>(
+    app: &mut App,
+    key: &KeyEvent,
+    on_cancel: F,
+    on_confirm: AsyncAction,
+) -> Option<AsyncAction>
+where
+    F: FnOnce(&mut App),
+{
+    match key.code {
+        // Confirm with y, Y, or Enter
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => Some(on_confirm),
+        // Cancel with n, N, or Esc
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            on_cancel(app);
+            None
+        }
+        _ => None,
     }
 }

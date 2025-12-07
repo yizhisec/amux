@@ -1,7 +1,10 @@
 //! TODO popup and input handling
+//!
+//! Uses common input handling utilities from utils module to reduce duplication.
 
 use super::super::app::App;
 use super::super::state::{AsyncAction, InputMode};
+use super::utils::{handle_confirmation_with_enter, handle_text_input, TextInputResult};
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Handle TODO popup mode (main TODO list view)
@@ -145,14 +148,13 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
 /// Handle add TODO mode (entering new TODO title)
 pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Esc => {
+    match handle_text_input(&key, &mut app.input_buffer) {
+        TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
             None
         }
-
-        KeyCode::Enter => {
+        TextInputResult::Submit => {
             if app.input_buffer.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
                 return None;
@@ -173,31 +175,19 @@ pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAc
             }
             None
         }
-
-        KeyCode::Char(c) => {
-            app.input_buffer.push(c);
-            None
-        }
-
-        KeyCode::Backspace => {
-            app.input_buffer.pop();
-            None
-        }
-
-        _ => None,
+        TextInputResult::Handled | TextInputResult::Unhandled => None,
     }
 }
 
 /// Handle edit TODO mode (editing title)
 pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Esc => {
+    match handle_text_input(&key, &mut app.input_buffer) {
+        TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
             None
         }
-
-        KeyCode::Enter => {
+        TextInputResult::Submit => {
             if app.input_buffer.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
                 return None;
@@ -217,31 +207,19 @@ pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             }
             None
         }
-
-        KeyCode::Char(c) => {
-            app.input_buffer.push(c);
-            None
-        }
-
-        KeyCode::Backspace => {
-            app.input_buffer.pop();
-            None
-        }
-
-        _ => None,
+        TextInputResult::Handled | TextInputResult::Unhandled => None,
     }
 }
 
 /// Handle edit TODO description mode
 pub fn handle_edit_todo_description_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Esc => {
+    match handle_text_input(&key, &mut app.input_buffer) {
+        TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
             None
         }
-
-        KeyCode::Enter => {
+        TextInputResult::Submit => {
             let description = if app.input_buffer.is_empty() {
                 None
             } else {
@@ -260,38 +238,25 @@ pub fn handle_edit_todo_description_mode_sync(app: &mut App, key: KeyEvent) -> O
             }
             None
         }
-
-        KeyCode::Char(c) => {
-            app.input_buffer.push(c);
-            None
-        }
-
-        KeyCode::Backspace => {
-            app.input_buffer.pop();
-            None
-        }
-
-        _ => None,
+        TextInputResult::Handled | TextInputResult::Unhandled => None,
     }
 }
 
 /// Handle confirm delete TODO mode
 pub fn handle_confirm_delete_todo_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-            app.input_mode = InputMode::TodoPopup;
-            None
-        }
+    // Extract todo_id first to avoid borrow issues
+    let todo_id = if let InputMode::ConfirmDeleteTodo { ref todo_id, .. } = app.input_mode {
+        Some(todo_id.clone())
+    } else {
+        None
+    };
 
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            if let InputMode::ConfirmDeleteTodo { todo_id, .. } =
-                std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
-            {
-                return Some(AsyncAction::DeleteTodo { todo_id });
-            }
-            None
-        }
-
-        _ => None,
-    }
+    handle_confirmation_with_enter(
+        app,
+        &key,
+        |a| a.input_mode = InputMode::TodoPopup,
+        todo_id
+            .map(|id| AsyncAction::DeleteTodo { todo_id: id })
+            .unwrap_or(AsyncAction::RefreshAll), // Fallback (shouldn't happen)
+    )
 }
