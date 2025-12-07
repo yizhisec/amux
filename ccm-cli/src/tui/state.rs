@@ -446,6 +446,7 @@ pub struct TodoState {
     /// Cursor position
     pub cursor: usize,
     /// Expanded TODO items (by ID)
+    #[allow(dead_code)]
     pub expanded: HashSet<String>,
     /// Scroll offset
     pub scroll_offset: usize,

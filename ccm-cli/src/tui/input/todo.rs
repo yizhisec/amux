@@ -4,11 +4,24 @@
 
 use super::super::app::App;
 use super::super::state::{AsyncAction, InputMode};
+use super::resolver;
 use super::utils::{handle_confirmation_with_enter, handle_text_input, TextInputResult};
+use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Handle TODO popup mode (main TODO list view)
 pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // Try to resolve the key to an action using the todo context
+    if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        if let Some(action) = app
+            .keybinds
+            .resolve(&pattern_str, ccm_config::BindingContext::Todo)
+        {
+            return execute_todo_action(app, action);
+        }
+    }
+
+    // Fallback for keys not in keybinds
     match key.code {
         // Esc or q = close popup
         KeyCode::Esc | KeyCode::Char('q') => {
@@ -18,36 +31,38 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // j/Down = move down
-        KeyCode::Char('j') | KeyCode::Down => {
+        _ => None,
+    }
+}
+
+/// Execute a TODO popup action
+fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
+    match action {
+        Action::MoveDown => {
             if app.todo.cursor < app.todo.display_order.len().saturating_sub(1) {
                 app.todo.cursor += 1;
             }
             None
         }
 
-        // k/Up = move up
-        KeyCode::Char('k') | KeyCode::Up => {
+        Action::MoveUp => {
             if app.todo.cursor > 0 {
                 app.todo.cursor -= 1;
             }
             None
         }
 
-        // g = go to top
-        KeyCode::Char('g') => {
+        Action::GotoTop => {
             app.todo.cursor = 0;
             None
         }
 
-        // G = go to bottom
-        KeyCode::Char('G') => {
+        Action::GotoBottom => {
             app.todo.cursor = app.todo.display_order.len().saturating_sub(1);
             None
         }
 
-        // Space = toggle completion
-        KeyCode::Char(' ') => {
+        Action::ToggleTodoComplete => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
                 if let Some(item) = app.todo.items.get(item_idx) {
                     return Some(AsyncAction::ToggleTodo {
@@ -58,15 +73,13 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // a = add new TODO (top-level)
-        KeyCode::Char('a') => {
+        Action::AddTodo => {
             app.input_mode = InputMode::AddTodo { parent_id: None };
             app.input_buffer.clear();
             None
         }
 
-        // A = add child TODO
-        KeyCode::Char('A') => {
+        Action::AddChildTodo => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
                 if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::AddTodo {
@@ -78,8 +91,7 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // e = edit TODO title
-        KeyCode::Char('e') => {
+        Action::EditTodoTitle => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
                 if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::EditTodo {
@@ -91,8 +103,7 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // E = edit TODO description
-        KeyCode::Char('E') => {
+        Action::EditTodoDescription => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
                 if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::EditTodoDescription {
@@ -104,8 +115,7 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // d = delete TODO
-        KeyCode::Char('d') => {
+        Action::DeleteTodo => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
                 if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::ConfirmDeleteTodo {
@@ -117,31 +127,12 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             None
         }
 
-        // c = toggle show completed
-        KeyCode::Char('c') => {
+        Action::ToggleShowCompleted => {
             app.todo.show_completed = !app.todo.show_completed;
             Some(AsyncAction::LoadTodos)
         }
 
-        // h/l = expand/collapse (for future tree view)
-        KeyCode::Char('h') => {
-            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
-                    app.todo.expanded.remove(&item.id);
-                }
-            }
-            None
-        }
-
-        KeyCode::Char('l') => {
-            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
-                    app.todo.expanded.insert(item.id.clone());
-                }
-            }
-            None
-        }
-
+        // Unhandled or context-inappropriate actions
         _ => None,
     }
 }
