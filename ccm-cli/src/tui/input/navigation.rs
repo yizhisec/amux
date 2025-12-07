@@ -2,6 +2,8 @@
 
 use super::super::app::App;
 use super::super::state::{AsyncAction, Focus, RightPanelView, SidebarItem};
+use super::resolver;
+use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Handle input in navigation mode (sidebar)
@@ -9,13 +11,18 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
     // Clear status messages on any key press
     app.status_message = None;
 
-    match key.code {
-        // Repo switching (1-9)
-        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let idx = (c as usize) - ('1' as usize);
-            app.switch_repo_sync(idx)
+    // Try to resolve the key to an action using the sidebar context
+    if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        if let Some(action) = app
+            .keybinds
+            .resolve(&pattern_str, ccm_config::BindingContext::Sidebar)
+        {
+            return execute_sidebar_action(app, action);
         }
+    }
 
+    // Fallback to direct key code matching for complex contextual behavior
+    match key.code {
         // Tab: forward navigation (Sidebar/Branches -> Sessions -> Terminal Normal)
         KeyCode::Tab => {
             match app.focus {
@@ -66,10 +73,6 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             None
         }
 
-        // Navigation
-        KeyCode::Up | KeyCode::Char('k') => app.select_prev_sync(),
-        KeyCode::Down | KeyCode::Char('j') => app.select_next_sync(),
-
         // Enter: forward navigation or toggle expand
         KeyCode::Enter => match app.focus {
             Focus::Sidebar => {
@@ -103,33 +106,39 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => None,
         },
 
-        // Toggle expand in tree view (o key)
-        KeyCode::Char('o') if app.focus == Focus::Sidebar => app.toggle_sidebar_expand(),
+        _ => None,
+    }
+}
 
-        // Toggle tree view mode (T key)
-        KeyCode::Char('T') => {
+/// Execute a sidebar action
+fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> {
+    match action {
+        Action::MoveUp => app.select_prev_sync(),
+        Action::MoveDown => app.select_next_sync(),
+
+        Action::SwitchRepo(idx) => app.switch_repo_sync(idx),
+
+        Action::ToggleExpand => app.toggle_sidebar_expand(),
+
+        Action::ToggleTreeView => {
             app.toggle_tree_view();
             None
         }
 
-        // Switch to Git Status panel (g key)
-        KeyCode::Char('g') if app.focus == Focus::Sidebar && app.sidebar.git_panel_enabled => {
+        Action::FocusGitStatus if app.sidebar.git_panel_enabled => {
             app.focus = Focus::GitStatus;
             app.status_message = Some("Switched to Git Status panel".to_string());
             Some(AsyncAction::LoadGitStatus)
         }
 
-        // Create new (n for sessions, a for worktrees)
-        KeyCode::Char('n') => Some(AsyncAction::CreateSession),
+        Action::CreateSession => Some(AsyncAction::CreateSession),
 
-        // Add worktree (when in Branches or Sidebar focus)
-        KeyCode::Char('a') if app.focus == Focus::Branches || app.focus == Focus::Sidebar => {
+        Action::AddWorktree if app.focus == Focus::Branches || app.focus == Focus::Sidebar => {
             app.start_add_worktree();
             None
         }
 
-        // Switch to diff view
-        KeyCode::Char('d') => {
+        Action::ToggleDiffView => {
             if app.right_panel_view == RightPanelView::Diff {
                 // Already in diff view, switch back to terminal
                 app.switch_to_terminal_view();
@@ -140,33 +149,30 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             }
         }
 
-        // Delete (with confirmation) - use 'x' key
-        KeyCode::Char('x') => {
+        Action::DeleteCurrent => {
             app.request_delete();
             None
         }
 
-        // Rename session (R when in Sessions or Sidebar focus with session selected)
-        KeyCode::Char('R') if app.focus == Focus::Sessions => {
+        Action::RenameSession if app.focus == Focus::Sessions => {
             app.start_rename_session();
             None
         }
-        KeyCode::Char('R') if app.focus == Focus::Sidebar => {
+        Action::RenameSession if app.focus == Focus::Sidebar => {
             if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
                 app.start_rename_session();
             }
             None
         }
 
-        // Refresh (lowercase r)
-        KeyCode::Char('r') => Some(AsyncAction::RefreshAll),
+        Action::RefreshAll => Some(AsyncAction::RefreshAll),
 
-        // Quit
-        KeyCode::Char('q') => {
+        Action::Quit => {
             app.should_quit = true;
             None
         }
 
+        // Unhandled or context-inappropriate actions
         _ => None,
     }
 }
