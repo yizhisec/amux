@@ -487,6 +487,9 @@ impl App {
         // Load repos
         self.repos = self.client.list_repos().await?;
 
+        // Mark sidebar as dirty to trigger redraw
+        self.dirty.sidebar = true;
+
         // Clamp repo index
         if self.repos.is_empty() {
             self.repo_idx = 0;
@@ -523,6 +526,9 @@ impl App {
             self.worktrees.clear();
             self.available_branches.clear();
         }
+
+        // Mark sidebar as dirty to trigger redraw
+        self.dirty.sidebar = true;
 
         // Clamp branch index
         if self.worktrees.is_empty() {
@@ -561,6 +567,9 @@ impl App {
         if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
             self.session_idx = self.sessions.len() - 1;
         }
+
+        // Mark sidebar as dirty to trigger redraw
+        self.dirty.sidebar = true;
 
         // Update active session for preview
         self.update_active_session().await;
@@ -1142,11 +1151,11 @@ impl App {
                         Ok(session) => {
                             // Refresh sessions for this worktree
                             self.load_worktree_sessions(self.branch_idx).await?;
-                            // Expand and select new session
+                            // Expand worktree
                             self.expanded_worktrees.insert(self.branch_idx);
+                            // Set active session before entering terminal
+                            self.active_session_id = Some(session.id.clone());
                             self.enter_terminal().await?;
-                            // Update active session
-                            self.active_session_id = Some(session.id);
                         }
                         Err(e) => {
                             self.error_message = Some(e.to_string());
@@ -1178,8 +1187,8 @@ impl App {
                             {
                                 self.session_idx = idx;
                                 self.update_active_session().await;
+                                self.enter_terminal().await?;
                             }
-                            self.enter_terminal().await?;
                         }
                         Err(e) => {
                             self.error_message = Some(e.to_string());
@@ -1225,18 +1234,18 @@ impl App {
                         if let Some(s_idx) = self.sessions.iter().position(|s| s.id == session.id) {
                             self.session_idx = s_idx;
                             self.update_active_session().await;
+                            // Also load sessions for tree view
+                            self.load_worktree_sessions(b_idx).await?;
+                            self.expanded_worktrees.insert(b_idx);
+                            // Return to appropriate focus before entering terminal
+                            self.focus = if self.tree_view_enabled {
+                                Focus::Sidebar
+                            } else {
+                                Focus::Sessions
+                            };
+                            self.enter_terminal().await?;
                         }
-                        // Also load sessions for tree view
-                        self.load_worktree_sessions(b_idx).await?;
-                        self.expanded_worktrees.insert(b_idx);
                     }
-                    // Return to appropriate focus before entering terminal
-                    self.focus = if self.tree_view_enabled {
-                        Focus::Sidebar
-                    } else {
-                        Focus::Sessions
-                    };
-                    self.enter_terminal().await?;
                 }
                 Err(e) => {
                     self.error_message = Some(e.to_string());
@@ -1295,10 +1304,8 @@ impl App {
         match self.client.rename_session(&session_id, &new_name).await {
             Ok(_) => {
                 self.status_message = Some(format!("Renamed session to: {}", new_name));
-                // Update local session list
-                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) {
-                    session.name = new_name;
-                }
+                // Refresh sessions from server to ensure UI is updated
+                self.refresh_sessions().await?;
             }
             Err(e) => {
                 self.error_message = Some(e.to_string());
