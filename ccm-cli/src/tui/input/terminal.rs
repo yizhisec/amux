@@ -2,13 +2,27 @@
 
 use super::super::app::App;
 use super::super::state::AsyncAction;
+use super::resolver;
 use super::utils::key_to_bytes;
+use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handle input in terminal Insert mode (send to PTY)
-pub fn handle_insert_mode_sync(_app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    // ESC is sent to PTY (like Claude Code behavior)
-    // Use Prefix+[ to exit to Normal mode
+///
+/// Terminal insert mode uses a two-tier approach:
+/// 1. Check if the key is bound in terminal_insert context -> execute action
+/// 2. Check if it's the prefix key -> enter prefix mode
+/// 3. Otherwise -> forward to PTY
+pub fn handle_insert_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // Try to resolve the key to an action using the terminal_insert context
+    if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        if let Some(action) = app
+            .keybinds
+            .resolve(&pattern_str, ccm_config::BindingContext::TerminalInsert)
+        {
+            return execute_terminal_insert_action(app, action);
+        }
+    }
 
     // Debug: log all Ctrl key presses
     if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -19,7 +33,7 @@ pub fn handle_insert_mode_sync(_app: &mut App, key: KeyEvent) -> Option<AsyncAct
         );
     }
 
-    // Intercept Ctrl+` to switch to shell session
+    // Intercept Ctrl+` to switch to shell session (special case, not in keybinds)
     // Note: Ctrl+` produces NUL character (ASCII 0) in most terminals,
     // which crossterm reports as Char('\0') or Char(' ') depending on terminal.
     // We also check for Char('@') as some terminals send Ctrl+@ for Ctrl+`.
@@ -46,16 +60,39 @@ pub fn handle_insert_mode_sync(_app: &mut App, key: KeyEvent) -> Option<AsyncAct
     }
 }
 
-/// Handle input in terminal Normal mode (scroll/browse)
-pub fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
-    match key.code {
-        // Toggle fullscreen
-        KeyCode::Char('f') | KeyCode::Char('z') => {
-            app.toggle_fullscreen();
+/// Execute a terminal insert mode action
+fn execute_terminal_insert_action(app: &mut App, action: Action) -> Option<AsyncAction> {
+    match action {
+        Action::SwitchToShell => Some(AsyncAction::SwitchToShell),
+
+        // Exit insert mode
+        Action::NormalMode => {
+            app.terminal.mode = super::super::state::TerminalMode::Normal;
+            app.dirty.terminal = true;
+            None
         }
 
-        // Exit fullscreen or do nothing (Esc in Normal mode stays in Normal)
-        // Use Prefix+s or Prefix+w to go back to sidebar
+        // Unhandled actions in insert mode - shouldn't happen
+        _ => None,
+    }
+}
+
+/// Handle input in terminal Normal mode (scroll/browse)
+pub fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
+    // Try to resolve the key to an action using the terminal_normal context
+    if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        if let Some(action) = app
+            .keybinds
+            .resolve(&pattern_str, ccm_config::BindingContext::TerminalNormal)
+        {
+            execute_terminal_normal_action(app, action);
+            return;
+        }
+    }
+
+    // Fallback for keys not in keybinds (Esc, BackTab for special navigation)
+    match key.code {
+        // Exit fullscreen (Esc in Normal mode stays in Normal, but exits fullscreen if active)
         KeyCode::Esc => {
             if app.terminal.fullscreen {
                 app.terminal.fullscreen = false;
@@ -69,41 +106,27 @@ pub fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
             app.exit_terminal();
         }
 
-        // Enter Insert mode
-        KeyCode::Char('i') | KeyCode::Enter => {
-            app.enter_insert_mode();
-        }
+        _ => {}
+    }
+}
 
-        // Scroll up (show older content)
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.scroll_up(1);
-        }
+/// Execute a terminal normal mode action
+fn execute_terminal_normal_action(app: &mut App, action: Action) {
+    match action {
+        Action::ToggleFullscreen => app.toggle_fullscreen(),
 
-        // Scroll down (show newer content)
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.scroll_down(1);
-        }
+        Action::InsertMode => app.enter_insert_mode(),
 
-        // Half page up (Ctrl+u or u)
-        KeyCode::Char('u') => {
-            app.scroll_up(10);
-        }
+        Action::ScrollUp => app.scroll_up(1),
+        Action::ScrollDown => app.scroll_down(1),
 
-        // Half page down (Ctrl+d or d)
-        KeyCode::Char('d') => {
-            app.scroll_down(10);
-        }
+        Action::ScrollHalfPageUp => app.scroll_up(10),
+        Action::ScrollHalfPageDown => app.scroll_down(10),
 
-        // Go to bottom
-        KeyCode::Char('G') => {
-            app.scroll_to_bottom();
-        }
+        Action::ScrollTop => app.scroll_to_top(),
+        Action::ScrollBottom => app.scroll_to_bottom(),
 
-        // Go to top (gg - for simplicity, just 'g' works too)
-        KeyCode::Char('g') => {
-            app.scroll_to_top();
-        }
-
+        // Unhandled or context-inappropriate actions
         _ => {}
     }
 }

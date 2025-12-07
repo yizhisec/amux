@@ -2,68 +2,24 @@
 
 use super::super::app::App;
 use super::super::state::{AsyncAction, Focus, RightPanelView};
+use super::resolver;
+use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Handle input in git status panel
 pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // Try to resolve the key to an action using the git_status context
+    if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        if let Some(action) = app
+            .keybinds
+            .resolve(&pattern_str, ccm_config::BindingContext::GitStatus)
+        {
+            return execute_git_status_action(app, action);
+        }
+    }
+
+    // Fallback for keys not in keybinds
     match key.code {
-        // Navigate up
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.git_status_move_up();
-            None
-        }
-
-        // Navigate down
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.git_status_move_down();
-            None
-        }
-
-        // Toggle expand/collapse section OR open file diff
-        KeyCode::Enter | KeyCode::Char('o') => {
-            // If on a file, open diff for that file
-            if let Some(file_path) = app.current_git_file_path() {
-                app.status_message = Some(format!("Opening diff for: {}", file_path));
-                app.right_panel_view = RightPanelView::Diff;
-                app.focus = Focus::DiffFiles;
-                // Store the file path to expand after loading
-                app.git.pending_diff_file = Some(file_path);
-                return Some(AsyncAction::LoadDiffFiles);
-            }
-            // If on a section header, toggle expand/collapse
-            app.toggle_git_section_expand();
-            None
-        }
-
-        // Stage file (s key) - if on unstaged/untracked file
-        KeyCode::Char('s') => {
-            if let Some(file_path) = app.current_git_file_path() {
-                if !app.is_current_git_item_staged() {
-                    return Some(AsyncAction::StageFile { file_path });
-                }
-            }
-            None
-        }
-
-        // Unstage file (u key) - if on staged file
-        KeyCode::Char('u') => {
-            if let Some(file_path) = app.current_git_file_path() {
-                if app.is_current_git_item_staged() {
-                    return Some(AsyncAction::UnstageFile { file_path });
-                }
-            }
-            None
-        }
-
-        // Stage all (S key)
-        KeyCode::Char('S') => Some(AsyncAction::StageAll),
-
-        // Unstage all (U key)
-        KeyCode::Char('U') => Some(AsyncAction::UnstageAll),
-
-        // Refresh git status (r key)
-        KeyCode::Char('r') => Some(AsyncAction::LoadGitStatus),
-
         // Tab: switch to diff view showing selected file
         KeyCode::Tab => {
             if let Some(file_path) = app.current_git_file_path() {
@@ -84,6 +40,62 @@ pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             None
         }
 
+        _ => None,
+    }
+}
+
+/// Execute a git status action
+fn execute_git_status_action(app: &mut App, action: Action) -> Option<AsyncAction> {
+    match action {
+        Action::MoveUp => {
+            app.git_status_move_up();
+            None
+        }
+
+        Action::MoveDown => {
+            app.git_status_move_down();
+            None
+        }
+
+        Action::ToggleOrOpen => {
+            // If on a file, open diff for that file
+            if let Some(file_path) = app.current_git_file_path() {
+                app.status_message = Some(format!("Opening diff for: {}", file_path));
+                app.right_panel_view = RightPanelView::Diff;
+                app.focus = Focus::DiffFiles;
+                // Store the file path to expand after loading
+                app.git.pending_diff_file = Some(file_path);
+                return Some(AsyncAction::LoadDiffFiles);
+            }
+            // If on a section header, toggle expand/collapse
+            app.toggle_git_section_expand();
+            None
+        }
+
+        Action::StageFile => {
+            if let Some(file_path) = app.current_git_file_path() {
+                if !app.is_current_git_item_staged() {
+                    return Some(AsyncAction::StageFile { file_path });
+                }
+            }
+            None
+        }
+
+        Action::UnstageFile => {
+            if let Some(file_path) = app.current_git_file_path() {
+                if app.is_current_git_item_staged() {
+                    return Some(AsyncAction::UnstageFile { file_path });
+                }
+            }
+            None
+        }
+
+        Action::StageAll => Some(AsyncAction::StageAll),
+        Action::UnstageAll => Some(AsyncAction::UnstageAll),
+
+        Action::RefreshStatus => Some(AsyncAction::LoadGitStatus),
+
+        // Unhandled or context-inappropriate actions
         _ => None,
     }
 }
