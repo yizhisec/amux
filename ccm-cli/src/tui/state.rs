@@ -153,6 +153,81 @@ impl DirtyFlags {
     }
 }
 
+#[cfg(test)]
+mod dirty_flags_tests {
+    use super::*;
+
+    #[test]
+    fn test_dirty_flags_default() {
+        let flags = DirtyFlags::default();
+        assert!(!flags.sidebar);
+        assert!(!flags.terminal);
+        assert!(!flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_any_sidebar() {
+        let flags = DirtyFlags {
+            sidebar: true,
+            terminal: false,
+        };
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_any_terminal() {
+        let flags = DirtyFlags {
+            sidebar: false,
+            terminal: true,
+        };
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_any_both() {
+        let flags = DirtyFlags {
+            sidebar: true,
+            terminal: true,
+        };
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_any_none() {
+        let flags = DirtyFlags {
+            sidebar: false,
+            terminal: false,
+        };
+        assert!(!flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_clear() {
+        let mut flags = DirtyFlags {
+            sidebar: true,
+            terminal: true,
+        };
+        assert!(flags.any());
+
+        flags.clear();
+        assert!(!flags.sidebar);
+        assert!(!flags.terminal);
+        assert!(!flags.any());
+    }
+
+    #[test]
+    fn test_dirty_flags_clone() {
+        let flags1 = DirtyFlags {
+            sidebar: true,
+            terminal: false,
+        };
+        let flags2 = flags1.clone();
+
+        assert_eq!(flags1.sidebar, flags2.sidebar);
+        assert_eq!(flags1.terminal, flags2.terminal);
+    }
+}
+
 /// Async actions that can be queued from sync input handlers
 #[derive(Debug)]
 #[allow(dead_code)]

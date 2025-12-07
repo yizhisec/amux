@@ -189,3 +189,117 @@ where
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handle_text_input_character() {
+        let mut buffer = String::new();
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Handled => assert_eq!(buffer, "a"),
+            _ => panic!("Expected Handled"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_multiple_characters() {
+        let mut buffer = String::new();
+        let key_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
+        let key_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty());
+
+        handle_text_input(&key_a, &mut buffer);
+        handle_text_input(&key_b, &mut buffer);
+        assert_eq!(buffer, "ab");
+    }
+
+    #[test]
+    fn test_handle_text_input_backspace() {
+        let mut buffer = String::from("abc");
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Handled => assert_eq!(buffer, "ab"),
+            _ => panic!("Expected Handled"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_backspace_empty() {
+        let mut buffer = String::new();
+        let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Handled => assert_eq!(buffer, ""),
+            _ => panic!("Expected Handled"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_esc() {
+        let mut buffer = String::from("text");
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Cancel => {
+                // Buffer should not be cleared by the function
+                assert_eq!(buffer, "text");
+            }
+            _ => panic!("Expected Cancel"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_enter() {
+        let mut buffer = String::from("text");
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Submit => assert_eq!(buffer, "text"),
+            _ => panic!("Expected Submit"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_shift_enter_newline() {
+        let mut buffer = String::from("line1");
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Handled => assert_eq!(buffer, "line1\n"),
+            _ => panic!("Expected Handled"),
+        }
+    }
+
+    #[test]
+    fn test_handle_text_input_unhandled_key() {
+        let mut buffer = String::from("text");
+        let key = KeyEvent::new(KeyCode::Home, KeyModifiers::empty());
+
+        match handle_text_input(&key, &mut buffer) {
+            TextInputResult::Unhandled => assert_eq!(buffer, "text"),
+            _ => panic!("Expected Unhandled"),
+        }
+    }
+
+    #[test]
+    fn test_is_prefix_key_ctrl_s() {
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(is_prefix_key(&key));
+    }
+
+    #[test]
+    fn test_is_prefix_key_not_ctrl_s() {
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(!is_prefix_key(&key));
+    }
+
+    #[test]
+    fn test_is_prefix_key_s_without_ctrl() {
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty());
+        assert!(!is_prefix_key(&key));
+    }
+}
