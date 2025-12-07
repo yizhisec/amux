@@ -1774,9 +1774,12 @@ impl App {
                     // Only add if it matches current repo
                     if let Some(repo) = self.repos.get(self.repo_idx) {
                         if worktree.repo_id == repo.id {
-                            self.worktrees.push(worktree);
-                            self.dirty.sidebar = true;
-                            return true;
+                            // Check if worktree already exists to avoid duplicates
+                            if !self.worktrees.iter().any(|w| w.branch == worktree.branch) {
+                                self.worktrees.push(worktree);
+                                self.dirty.sidebar = true;
+                                return true;
+                            }
                         }
                     }
                 }
