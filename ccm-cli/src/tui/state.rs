@@ -471,11 +471,17 @@ use super::navigation::VirtualList;
 impl VirtualList for SidebarState {
     fn virtual_len(&self) -> usize {
         // Sidebar contains worktrees and their sessions
+        // Get all worktree indices and sort them to maintain consistent order
+        let mut worktree_indices: Vec<usize> = self.sessions_by_worktree.keys().copied().collect();
+        worktree_indices.sort_unstable();
+
         let mut count = 0;
-        for sessions in self.sessions_by_worktree.values() {
+        for idx in worktree_indices {
             count += 1; // Worktree itself
-            if self.expanded_worktrees.contains(&count) {
-                count += sessions.len(); // Sessions if expanded
+            if self.expanded_worktrees.contains(&idx) {
+                if let Some(sessions) = self.sessions_by_worktree.get(&idx) {
+                    count += sessions.len(); // Sessions if expanded
+                }
             }
         }
         count.max(1) // At least 1 item
