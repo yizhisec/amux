@@ -313,32 +313,6 @@ impl App {
         }
     }
 
-    /// Get current list length based on focus
-    #[allow(dead_code)]
-    pub fn current_list_len(&self) -> usize {
-        match self.focus {
-            Focus::Sidebar => self.sidebar_virtual_len(),
-            Focus::GitStatus => self.git_status_virtual_len(),
-            Focus::Branches => self.worktrees.len(),
-            Focus::Sessions => self.sessions.len(),
-            Focus::Terminal => 0,
-            Focus::DiffFiles => self.diff.files.len(),
-        }
-    }
-
-    /// Get current selection index based on focus
-    #[allow(dead_code)]
-    pub fn current_idx(&self) -> usize {
-        match self.focus {
-            Focus::Sidebar => self.sidebar.cursor,
-            Focus::GitStatus => self.git.cursor,
-            Focus::Branches => self.branch_idx,
-            Focus::Sessions => self.session_idx,
-            Focus::Terminal => 0,
-            Focus::DiffFiles => self.diff.cursor,
-        }
-    }
-
     // ========== Tree view helpers ==========
 
     /// Calculate the virtual list length for tree view
@@ -614,19 +588,6 @@ impl App {
         }
     }
 
-    /// Toggle focus between Branches and Sessions
-    #[allow(dead_code)]
-    pub fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Sidebar,   // Stay in sidebar
-            Focus::GitStatus => Focus::Sidebar, // Go back to sidebar
-            Focus::Branches => Focus::Sessions,
-            Focus::Sessions => Focus::Branches,
-            Focus::Terminal => Focus::Sessions,
-            Focus::DiffFiles => Focus::Branches,
-        };
-    }
-
     /// Enter terminal Insert mode (from Sessions)
     pub async fn enter_terminal(&mut self) -> Result<()> {
         if self.terminal.active_session_id.is_some() {
@@ -646,13 +607,6 @@ impl App {
     pub fn enter_insert_mode(&mut self) {
         self.terminal.mode = TerminalMode::Insert;
         self.scroll_to_bottom();
-    }
-
-    /// Exit to Normal mode (from Insert mode)
-    #[allow(dead_code)]
-    pub fn exit_to_normal_mode(&mut self) {
-        self.terminal.mode = TerminalMode::Normal;
-        deactivate_ime();
     }
 
     /// Exit terminal mode (back to sidebar)
@@ -824,23 +778,6 @@ impl App {
             parser.screen_mut().set_scrollback(0);
             self.terminal.scroll_offset = 0;
         }
-    }
-
-    /// Enter interactive mode (deprecated, use enter_terminal)
-    #[allow(dead_code)]
-    pub async fn enter_interactive(&mut self) -> Result<()> {
-        self.enter_terminal().await
-    }
-
-    /// Exit interactive mode
-    #[allow(dead_code)]
-    pub fn exit_interactive(&mut self) {
-        self.terminal.is_interactive = false;
-        self.focus = if self.sidebar.tree_view_enabled {
-            Focus::Sidebar
-        } else {
-            Focus::Sessions
-        };
     }
 
     /// Create new session and enter interactive mode
@@ -1345,58 +1282,6 @@ impl App {
     /// Disconnect from session stream
     pub fn disconnect_stream(&mut self) {
         self.terminal_stream = None;
-    }
-
-    /// Poll terminal output (non-blocking)
-    /// Note: Not used with tokio::select! architecture, kept for potential fallback
-    #[allow(dead_code)]
-    pub fn poll_terminal_output(&mut self) {
-        if let Some(stream) = &mut self.terminal_stream {
-            // Try to receive without blocking
-            while let Ok(data) = stream.output_rx.try_recv() {
-                if let Ok(mut parser) = self.terminal.parser.lock() {
-                    parser.process(&data);
-                }
-            }
-        }
-    }
-
-    /// Poll daemon events (non-blocking)
-    /// Returns true if any event was processed, or if resubscription is needed
-    /// Note: Not used with tokio::select! architecture, kept for potential fallback
-    #[allow(dead_code)]
-    pub fn poll_events(&mut self) -> bool {
-        let mut processed = false;
-        let mut channel_closed = false;
-
-        // Collect events first to avoid borrow issues
-        let mut events = Vec::new();
-        if let Some(rx) = &mut self.event_rx {
-            loop {
-                match rx.try_recv() {
-                    Ok(event) => events.push(event),
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        // Channel closed, need to resubscribe
-                        channel_closed = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Mark channel as closed so we can resubscribe
-        if channel_closed {
-            warn!("Event channel disconnected, will attempt resubscription");
-            self.event_rx = None;
-        }
-
-        // Process collected events
-        for event in events {
-            self.handle_daemon_event(event);
-            processed = true;
-        }
-        processed
     }
 
     /// Check if event subscription needs to be restored
@@ -2193,20 +2078,6 @@ impl App {
         lines
     }
 
-    /// Update terminal line cache (call before rendering when content changed)
-    #[allow(dead_code)]
-    pub fn update_terminal_cache(&mut self, height: u16, width: u16) {
-        self.terminal.cached_lines = self.generate_terminal_lines(height, width);
-        self.terminal.cached_size = (height, width);
-    }
-
-    /// Invalidate terminal cache (call when session changes)
-    #[allow(dead_code)]
-    pub fn invalidate_terminal_cache(&mut self) {
-        self.terminal.cached_lines.clear();
-        self.terminal.cached_size = (0, 0);
-    }
-
     // ========== Diff View ==========
 
     /// Switch to diff view
@@ -2359,16 +2230,6 @@ impl App {
         }
 
         DiffItem::None
-    }
-
-    /// Get file index from cursor position (even if on a line)
-    #[allow(dead_code)]
-    pub fn current_diff_file_idx(&self) -> Option<usize> {
-        match self.current_diff_item() {
-            DiffItem::File(idx) => Some(idx),
-            DiffItem::Line(file_idx, _) => Some(file_idx),
-            DiffItem::None => None,
-        }
     }
 
     /// Move cursor up in diff view

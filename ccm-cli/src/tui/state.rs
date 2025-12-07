@@ -138,28 +138,18 @@ pub enum PrefixMode {
 
 /// Tracks which UI components need redrawing
 #[derive(Default, Clone)]
-#[allow(dead_code)]
 pub struct DirtyFlags {
-    pub sidebar: bool,     // repo/branch/session list changed
-    pub terminal: bool,    // terminal content changed
-    pub status_bar: bool,  // status bar info changed
-    pub full_redraw: bool, // need full redraw (e.g., resize)
+    pub sidebar: bool,  // repo/branch/session list changed
+    pub terminal: bool, // terminal content changed
 }
 
-#[allow(dead_code)]
 impl DirtyFlags {
     pub fn any(&self) -> bool {
-        self.sidebar || self.terminal || self.status_bar || self.full_redraw
+        self.sidebar || self.terminal
     }
 
     pub fn clear(&mut self) {
         *self = Self::default();
-    }
-
-    pub fn mark_all(&mut self) {
-        self.sidebar = true;
-        self.terminal = true;
-        self.status_bar = true;
     }
 }
 
