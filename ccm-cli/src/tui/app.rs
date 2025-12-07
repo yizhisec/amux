@@ -527,6 +527,10 @@ impl App {
             self.available_branches.clear();
         }
 
+        // Clear worktree-related caches when refreshing
+        self.sessions_by_worktree.clear();
+        self.expanded_worktrees.clear();
+
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
 
@@ -1366,6 +1370,7 @@ impl App {
                 // Select the new worktree
                 if let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch_name) {
                     self.branch_idx = idx;
+                    self.sidebar_cursor = idx;
                     self.refresh_sessions().await?;
                 }
             }
