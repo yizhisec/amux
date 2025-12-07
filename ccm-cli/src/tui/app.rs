@@ -3301,6 +3301,11 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                         app.error_message = Some(format!("{}", e));
                     }
                     dirty = true;
+                    // Also check app.dirty to catch updates from async action
+                    if app.dirty.any() {
+                        dirty = true;
+                        app.dirty.clear();
+                    }
                 }
 
                 // Check if terminal content actually changed (only if PTY data was received)
@@ -3340,6 +3345,8 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                         .map_err(TuiError::Render)?;
                     dirty = false;
                     force_render = false;
+                    // Clear app dirty flags after render
+                    app.dirty.clear();
                     last_render = std::time::Instant::now();
                 }
             }
