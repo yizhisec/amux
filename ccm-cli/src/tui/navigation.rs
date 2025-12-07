@@ -8,8 +8,12 @@
 /// Virtual lists support navigating through a variable-length list with a cursor.
 /// This trait provides common navigation operations to avoid duplication.
 ///
-/// This trait is currently used to implement VirtualList for state types,
-/// and will be used to refactor navigation input handlers to eliminate code duplication.
+/// This trait is used throughout the codebase to implement unified navigation logic,
+/// reducing code duplication across different UI components (sidebar, diff, git status, todo).
+///
+/// Note: Some trait methods (page_up, page_down, is_at_top, is_at_bottom, scroll_offset, clamp_cursor)
+/// are not currently used but are included for completeness and future use cases. They are marked
+/// with #[allow(dead_code)] to suppress warnings while maintaining a cohesive trait interface.
 #[allow(dead_code)]
 pub trait VirtualList {
     /// Get the total length of the virtual list

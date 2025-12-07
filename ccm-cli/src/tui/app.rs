@@ -27,6 +27,7 @@ use tracing::{debug, warn};
 type Result<T> = std::result::Result<T, TuiError>;
 
 use super::input::{handle_input_sync, handle_mouse_sync};
+use super::navigation::VirtualList;
 use super::state::{
     AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, Focus, GitPanelItem, GitSection,
     GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView, SidebarItem, SidebarState,
@@ -330,20 +331,6 @@ impl App {
 
     // ========== Tree view helpers ==========
 
-    /// Calculate the virtual list length for tree view
-    pub fn sidebar_virtual_len(&self) -> usize {
-        let mut len = 0;
-        for (i, _wt) in self.worktrees.iter().enumerate() {
-            len += 1; // worktree itself
-            if self.sidebar.expanded_worktrees.contains(&i) {
-                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&i) {
-                    len += sessions.len();
-                }
-            }
-        }
-        len
-    }
-
     /// Get the current sidebar item at cursor position
     pub fn current_sidebar_item(&self) -> SidebarItem {
         let mut pos = 0;
@@ -385,8 +372,7 @@ impl App {
 
     /// Move cursor up in sidebar tree view
     pub fn sidebar_move_up(&mut self) -> Option<AsyncAction> {
-        if self.sidebar.cursor > 0 {
-            self.sidebar.cursor -= 1;
+        if self.sidebar.move_up() {
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
                 // Worktree changed, refresh git status
@@ -398,9 +384,7 @@ impl App {
 
     /// Move cursor down in sidebar tree view
     pub fn sidebar_move_down(&mut self) -> Option<AsyncAction> {
-        let max_cursor = self.sidebar_virtual_len().saturating_sub(1);
-        if self.sidebar.cursor < max_cursor {
-            self.sidebar.cursor += 1;
+        if self.sidebar.move_down() {
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
                 // Worktree changed, refresh git status
@@ -1787,55 +1771,6 @@ impl App {
         Ok(())
     }
 
-    /// Calculate virtual list length for git status panel
-    pub fn git_status_virtual_len(&self) -> usize {
-        let mut len = 0;
-
-        // Count staged section
-        let staged_count = self
-            .git
-            .files
-            .iter()
-            .filter(|f| f.section == GitSection::Staged)
-            .count();
-        if staged_count > 0 {
-            len += 1; // Section header
-            if self.git.expanded_sections.contains(&GitSection::Staged) {
-                len += staged_count;
-            }
-        }
-
-        // Count unstaged section
-        let unstaged_count = self
-            .git
-            .files
-            .iter()
-            .filter(|f| f.section == GitSection::Unstaged)
-            .count();
-        if unstaged_count > 0 {
-            len += 1; // Section header
-            if self.git.expanded_sections.contains(&GitSection::Unstaged) {
-                len += unstaged_count;
-            }
-        }
-
-        // Count untracked section
-        let untracked_count = self
-            .git
-            .files
-            .iter()
-            .filter(|f| f.section == GitSection::Untracked)
-            .count();
-        if untracked_count > 0 {
-            len += 1; // Section header
-            if self.git.expanded_sections.contains(&GitSection::Untracked) {
-                len += untracked_count;
-            }
-        }
-
-        len
-    }
-
     /// Get current git panel item at cursor position
     pub fn current_git_panel_item(&self) -> GitPanelItem {
         let mut pos = 0;
@@ -1892,17 +1827,14 @@ impl App {
 
     /// Move cursor up in git status panel
     pub fn git_status_move_up(&mut self) {
-        if self.git.cursor > 0 {
-            self.git.cursor -= 1;
+        if self.git.move_up() {
             self.dirty.sidebar = true;
         }
     }
 
     /// Move cursor down in git status panel
     pub fn git_status_move_down(&mut self) {
-        let max_cursor = self.git_status_virtual_len().saturating_sub(1);
-        if self.git.cursor < max_cursor {
-            self.git.cursor += 1;
+        if self.git.move_down() {
             self.dirty.sidebar = true;
         }
     }
@@ -2205,18 +2137,6 @@ impl App {
 
     // ========== Unified diff navigation ==========
 
-    /// Get total length of virtual diff list (files + expanded lines)
-    pub fn diff_virtual_list_len(&self) -> usize {
-        let mut len = 0;
-        for (i, _) in self.diff.files.iter().enumerate() {
-            len += 1; // File entry
-            if self.diff.expanded.contains(&i) {
-                len += self.diff.file_lines.get(&i).map(|l| l.len()).unwrap_or(0);
-            }
-        }
-        len
-    }
-
     /// Get current item at cursor position
     pub fn current_diff_item(&self) -> DiffItem {
         if self.diff.files.is_empty() {
@@ -2249,17 +2169,14 @@ impl App {
 
     /// Move cursor up in diff view
     pub fn diff_move_up(&mut self) {
-        if self.diff.cursor > 0 {
-            self.diff.cursor -= 1;
+        if self.diff.move_up() {
             self.dirty.sidebar = true;
         }
     }
 
     /// Move cursor down in diff view
     pub fn diff_move_down(&mut self) {
-        let max = self.diff_virtual_list_len();
-        if max > 0 && self.diff.cursor < max - 1 {
-            self.diff.cursor += 1;
+        if self.diff.move_down() {
             self.dirty.sidebar = true;
         }
     }

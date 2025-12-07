@@ -1,8 +1,10 @@
 //! TODO popup and input handling
 //!
 //! Uses common input handling utilities from utils module to reduce duplication.
+//! Navigation uses the VirtualList trait for consistency across components.
 
 use super::super::app::App;
+use super::super::navigation::VirtualList;
 use super::super::state::{AsyncAction, InputMode};
 use super::resolver;
 use super::utils::{handle_confirmation_with_enter, handle_text_input, TextInputResult};
@@ -39,26 +41,22 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
     match action {
         Action::MoveDown => {
-            if app.todo.cursor < app.todo.display_order.len().saturating_sub(1) {
-                app.todo.cursor += 1;
-            }
+            app.todo.move_down();
             None
         }
 
         Action::MoveUp => {
-            if app.todo.cursor > 0 {
-                app.todo.cursor -= 1;
-            }
+            app.todo.move_up();
             None
         }
 
         Action::GotoTop => {
-            app.todo.cursor = 0;
+            app.todo.goto_top();
             None
         }
 
         Action::GotoBottom => {
-            app.todo.cursor = app.todo.display_order.len().saturating_sub(1);
+            app.todo.goto_bottom();
             None
         }
 
