@@ -13,9 +13,9 @@ use ratatui::{
 
 /// Draw sidebar with worktrees and sessions
 pub fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.tree_view_enabled {
+    if app.sidebar.tree_view_enabled {
         // Tree view with git status panel
-        if app.git_panel_enabled {
+        if app.sidebar.git_panel_enabled {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -58,8 +58,8 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
     let mut cursor_pos = 0;
 
     for (wt_idx, wt) in app.worktrees.iter().enumerate() {
-        let is_expanded = app.expanded_worktrees.contains(&wt_idx);
-        let is_cursor = cursor_pos == app.sidebar_cursor;
+        let is_expanded = app.sidebar.expanded_worktrees.contains(&wt_idx);
+        let is_cursor = cursor_pos == app.sidebar.cursor;
 
         // Worktree row style
         let wt_style = if is_cursor && is_focused {
@@ -80,6 +80,7 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
 
         // Session count indicator
         let session_count = app
+            .sidebar
             .sessions_by_worktree
             .get(&wt_idx)
             .map(|s| s.len())
@@ -107,10 +108,10 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
 
         // Render sessions if expanded
         if is_expanded {
-            if let Some(sessions) = app.sessions_by_worktree.get(&wt_idx) {
+            if let Some(sessions) = app.sidebar.sessions_by_worktree.get(&wt_idx) {
                 for session in sessions.iter() {
-                    let is_session_cursor = cursor_pos == app.sidebar_cursor;
-                    let is_active = app.active_session_id.as_ref() == Some(&session.id);
+                    let is_session_cursor = cursor_pos == app.sidebar.cursor;
+                    let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
 
                     let s_style = if is_session_cursor && is_focused {
                         Style::default()
@@ -246,7 +247,7 @@ pub fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, session)| {
             let is_selected = i == app.session_idx;
-            let is_active = app.active_session_id.as_ref() == Some(&session.id);
+            let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
 
             let style = if is_selected && is_focused {
                 Style::default()

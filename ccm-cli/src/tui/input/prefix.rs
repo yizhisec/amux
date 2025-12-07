@@ -30,7 +30,7 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
                 app.exit_terminal();
             }
             // Go to sidebar (tree view) or sessions (legacy view)
-            app.focus = if app.tree_view_enabled {
+            app.focus = if app.sidebar.tree_view_enabled {
                 Focus::Sidebar
             } else {
                 Focus::Sessions
@@ -40,7 +40,7 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
 
         // Terminal: t = go to Terminal (enter insert mode)
         KeyCode::Char('t') => {
-            if app.active_session_id.is_some() {
+            if app.terminal.active_session_id.is_some() {
                 Some(AsyncAction::ConnectStream)
             } else {
                 None
@@ -80,7 +80,7 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
 
         // Actions: f = toggle fullscreen (terminal)
         KeyCode::Char('f') | KeyCode::Char('z') => {
-            if app.focus == Focus::Terminal || app.active_session_id.is_some() {
+            if app.focus == Focus::Terminal || app.terminal.active_session_id.is_some() {
                 app.toggle_fullscreen();
             }
             None
@@ -88,8 +88,8 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
 
         // Actions: [ = exit to terminal Normal mode (from Insert)
         KeyCode::Char('[') => {
-            if app.focus == Focus::Terminal && app.terminal_mode == TerminalMode::Insert {
-                app.terminal_mode = TerminalMode::Normal;
+            if app.focus == Focus::Terminal && app.terminal.mode == TerminalMode::Insert {
+                app.terminal.mode = TerminalMode::Normal;
                 app.dirty.terminal = true;
             }
             None

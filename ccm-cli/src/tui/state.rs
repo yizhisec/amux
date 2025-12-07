@@ -251,3 +251,150 @@ pub fn default_expanded_git_sections() -> HashSet<GitSection> {
     set.insert(GitSection::Untracked);
     set
 }
+
+// ============ Grouped State Types ============
+// These types group related fields from App for better organization.
+// They are designed to be used as embedded structs within App.
+
+use ccm_proto::daemon::{DiffFileInfo, DiffLine, SessionInfo, TodoItem};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Terminal-related state
+pub struct TerminalState {
+    /// VT100 parser for current session
+    pub parser: Arc<Mutex<vt100::Parser>>,
+    /// Per-session parsers (cached)
+    pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>,
+    /// Currently active session ID
+    pub active_session_id: Option<String>,
+    /// Whether in interactive mode
+    pub is_interactive: bool,
+    /// Terminal mode (Normal/Insert)
+    pub mode: TerminalMode,
+    /// Scroll offset for terminal content
+    pub scroll_offset: usize,
+    /// Whether terminal is fullscreen
+    pub fullscreen: bool,
+    /// Hash of terminal content for change detection
+    pub last_hash: u64,
+    /// Cached terminal lines for rendering
+    pub cached_lines: Vec<ratatui::text::Line<'static>>,
+    /// Cached terminal size (height, width)
+    pub cached_size: (u16, u16),
+    /// Terminal columns
+    pub cols: Option<u16>,
+    /// Terminal rows
+    pub rows: Option<u16>,
+}
+
+impl Default for TerminalState {
+    fn default() -> Self {
+        Self {
+            parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            session_parsers: HashMap::new(),
+            active_session_id: None,
+            is_interactive: false,
+            mode: TerminalMode::Normal,
+            scroll_offset: 0,
+            fullscreen: false,
+            last_hash: 0,
+            cached_lines: Vec::new(),
+            cached_size: (0, 0),
+            cols: None,
+            rows: None,
+        }
+    }
+}
+
+/// Diff view state
+#[derive(Default)]
+pub struct DiffState {
+    /// List of diff files
+    pub files: Vec<DiffFileInfo>,
+    /// Which files are expanded (by index)
+    pub expanded: HashSet<usize>,
+    /// Lines per expanded file
+    pub file_lines: HashMap<usize, Vec<DiffLine>>,
+    /// Unified cursor position in virtual list
+    pub cursor: usize,
+    /// Scroll offset for rendering
+    pub scroll_offset: usize,
+    /// Whether diff is fullscreen
+    pub fullscreen: bool,
+}
+
+/// Git status panel state
+pub struct GitState {
+    /// All files (staged + unstaged + untracked)
+    pub files: Vec<GitStatusFile>,
+    /// Cursor in virtual list
+    pub cursor: usize,
+    /// Expanded sections
+    pub expanded_sections: HashSet<GitSection>,
+    /// File to auto-expand in diff view
+    pub pending_diff_file: Option<String>,
+}
+
+impl Default for GitState {
+    fn default() -> Self {
+        Self {
+            files: Vec::new(),
+            cursor: 0,
+            expanded_sections: default_expanded_git_sections(),
+            pending_diff_file: None,
+        }
+    }
+}
+
+/// Sidebar state (tree view with worktrees and sessions)
+pub struct SidebarState {
+    /// Whether tree view is enabled
+    pub tree_view_enabled: bool,
+    /// Which worktrees are expanded (by index)
+    pub expanded_worktrees: HashSet<usize>,
+    /// Cursor position in virtual list
+    pub cursor: usize,
+    /// Sessions grouped by worktree index
+    pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>,
+    /// Whether git panel is enabled
+    pub git_panel_enabled: bool,
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self {
+            tree_view_enabled: true,
+            expanded_worktrees: HashSet::new(),
+            cursor: 0,
+            sessions_by_worktree: HashMap::new(),
+            git_panel_enabled: true,
+        }
+    }
+}
+
+/// TODO state
+#[derive(Default)]
+pub struct TodoState {
+    /// All TODO items
+    pub items: Vec<TodoItem>,
+    /// Cursor position
+    pub cursor: usize,
+    /// Expanded TODO items (by ID)
+    pub expanded: HashSet<String>,
+    /// Scroll offset
+    pub scroll_offset: usize,
+    /// Whether to show completed items
+    pub show_completed: bool,
+    /// Display order (indices in tree order)
+    pub display_order: Vec<usize>,
+}
+
+impl TodoState {
+    pub fn new() -> Self {
+        Self {
+            show_completed: true,
+            ..Default::default()
+        }
+    }
+}

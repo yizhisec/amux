@@ -13,7 +13,7 @@ use ratatui::{
 pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
     let is_terminal_focused = app.focus == Focus::Terminal;
     let border_color = if is_terminal_focused {
-        match app.terminal_mode {
+        match app.terminal.mode {
             TerminalMode::Insert => Color::Green,
             TerminalMode::Normal => Color::Yellow,
         }
@@ -22,11 +22,11 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let title = if is_terminal_focused {
-        match app.terminal_mode {
+        match app.terminal.mode {
             TerminalMode::Insert => " Terminal [INSERT] ",
             TerminalMode::Normal => " Terminal [NORMAL] ",
         }
-    } else if app.active_session_id.is_some() {
+    } else if app.terminal.active_session_id.is_some() {
         " Terminal [Preview] "
     } else {
         " Terminal [No session] "
@@ -41,7 +41,7 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     // Render terminal content using vt100
-    if app.active_session_id.is_some() {
+    if app.terminal.active_session_id.is_some() {
         let lines = app.get_terminal_lines(inner.height, inner.width);
         let paragraph = Paragraph::new(lines);
         f.render_widget(paragraph, inner);
@@ -56,12 +56,12 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw fullscreen terminal
 pub fn draw_terminal_fullscreen(f: &mut Frame, area: Rect, app: &App) {
-    let border_color = match app.terminal_mode {
+    let border_color = match app.terminal.mode {
         TerminalMode::Insert => Color::Green,
         TerminalMode::Normal => Color::Yellow,
     };
 
-    let title = match app.terminal_mode {
+    let title = match app.terminal.mode {
         TerminalMode::Insert => " Terminal [INSERT - FULLSCREEN] ",
         TerminalMode::Normal => " Terminal [NORMAL - FULLSCREEN] ",
     };

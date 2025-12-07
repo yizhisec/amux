@@ -148,13 +148,13 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     }
 
     // Fullscreen terminal mode
-    if app.terminal_fullscreen && app.focus == Focus::Terminal {
+    if app.terminal.fullscreen && app.focus == Focus::Terminal {
         draw_terminal_fullscreen(f, area, app);
         return;
     }
 
     // Fullscreen diff mode
-    if app.diff_fullscreen && app.focus == Focus::DiffFiles {
+    if app.diff.fullscreen && app.focus == Focus::DiffFiles {
         draw_diff_fullscreen(f, area, app);
         return;
     }

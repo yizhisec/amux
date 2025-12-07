@@ -3,8 +3,8 @@
 use crate::client::Client;
 use crate::error::TuiError;
 use ccm_proto::daemon::{
-    event as daemon_event, AttachInput, DiffFileInfo, DiffLine, Event as DaemonEvent,
-    LineCommentInfo, RepoInfo, SessionInfo, TodoItem, WorktreeInfo,
+    event as daemon_event, AttachInput, Event as DaemonEvent, LineCommentInfo, RepoInfo,
+    SessionInfo, TodoItem, WorktreeInfo,
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -15,7 +15,6 @@ use crossterm::{
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -28,9 +27,9 @@ type Result<T> = std::result::Result<T, TuiError>;
 
 use super::input::{handle_input_sync, handle_mouse_sync};
 use super::state::{
-    default_expanded_git_sections, AsyncAction, DeleteTarget, DiffItem, DirtyFlags, Focus,
-    GitPanelItem, GitSection, GitStatusFile, InputMode, PrefixMode, RightPanelView, SidebarItem,
-    TerminalMode,
+    AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, Focus, GitPanelItem, GitSection,
+    GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView, SidebarItem, SidebarState,
+    TerminalMode, TerminalState, TodoState,
 };
 use super::ui::draw;
 
@@ -74,49 +73,19 @@ pub struct App {
     pub add_worktree_idx: usize,      // Selection index in add worktree popup
     pub sessions: Vec<SessionInfo>,
 
-    // Terminal state
-    pub terminal_parser: Arc<Mutex<vt100::Parser>>,
-    pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>, // Per-session parsers
-    pub active_session_id: Option<String>,
-    pub is_interactive: bool,
-    pub terminal_stream: Option<TerminalStream>,
-    pub terminal_mode: TerminalMode,
-    pub scroll_offset: usize,
-    pub terminal_fullscreen: bool,
-    pub last_terminal_hash: u64, // Hash of terminal content for change detection
-    pub cached_terminal_lines: Vec<ratatui::text::Line<'static>>, // Cached terminal lines
-    pub cached_terminal_size: (u16, u16), // (height, width) for cache invalidation
+    // Grouped state components
+    pub terminal: TerminalState,                 // Terminal-related state
+    pub terminal_stream: Option<TerminalStream>, // Keep separate (has mpsc channels)
+    pub diff: DiffState,                         // Diff view state
+    pub git: GitState,                           // Git status panel state
+    pub sidebar: SidebarState,                   // Sidebar/tree view state
+    pub todo: TodoState,                         // TODO state
 
-    // Diff state
+    // Right panel view mode (shared between terminal and diff)
     pub right_panel_view: RightPanelView,
-    pub diff_files: Vec<DiffFileInfo>,
-    pub diff_expanded: std::collections::HashSet<usize>, // Which files are expanded
-    pub diff_file_lines: std::collections::HashMap<usize, Vec<DiffLine>>, // Lines per expanded file
-    pub diff_cursor: usize,                              // Unified cursor position in virtual list
-    pub diff_scroll_offset: usize,                       // Scroll offset for rendering
-    pub diff_fullscreen: bool,
 
     // Comment state
     pub line_comments: Vec<LineCommentInfo>, // All comments for current branch
-
-    // Tree view state (for sidebar)
-    pub tree_view_enabled: bool, // Enable tree view mode
-    pub expanded_worktrees: std::collections::HashSet<usize>, // Which worktrees are expanded
-    pub sidebar_cursor: usize,   // Cursor position in virtual list
-    pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>, // Sessions grouped by worktree index
-
-    // Git status panel state
-    pub git_panel_enabled: bool,
-    pub git_status_files: Vec<GitStatusFile>, // All files (staged + unstaged + untracked)
-    pub git_status_cursor: usize,             // Cursor in virtual list
-    pub expanded_git_sections: std::collections::HashSet<GitSection>, // Expanded sections
-    #[allow(dead_code)]
-    pub git_panel_scroll_offset: usize, // Scroll offset for rendering
-    pub pending_diff_file: Option<String>,    // File to auto-expand in diff view
-
-    // Terminal size tracking (for mouse position calculations)
-    pub terminal_cols: Option<u16>,
-    pub terminal_rows: Option<u16>,
 
     // UI state
     pub should_quit: bool,
@@ -133,14 +102,6 @@ pub struct App {
 
     // Dirty flags for optimized rendering
     pub dirty: DirtyFlags,
-
-    // TODO state
-    pub todo_items: Vec<TodoItem>,
-    pub todo_cursor: usize,
-    pub expanded_todos: std::collections::HashSet<String>,
-    pub todo_scroll_offset: usize,
-    pub todo_show_completed: bool,
-    pub todo_display_order: Vec<usize>, // Indices in tree order for navigation
 }
 
 impl App {
@@ -156,37 +117,14 @@ impl App {
             available_branches: Vec::new(),
             add_worktree_idx: 0,
             sessions: Vec::new(),
-            terminal_parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
-            session_parsers: HashMap::new(),
-            active_session_id: None,
-            is_interactive: false,
+            terminal: TerminalState::default(),
             terminal_stream: None,
-            terminal_mode: TerminalMode::Normal,
-            scroll_offset: 0,
-            terminal_fullscreen: false,
-            last_terminal_hash: 0,
-            cached_terminal_lines: Vec::new(),
-            cached_terminal_size: (0, 0),
+            diff: DiffState::default(),
+            git: GitState::default(),
+            sidebar: SidebarState::default(),
+            todo: TodoState::new(),
             right_panel_view: RightPanelView::Terminal,
-            diff_files: Vec::new(),
-            diff_expanded: std::collections::HashSet::new(),
-            diff_file_lines: std::collections::HashMap::new(),
-            diff_cursor: 0,
-            diff_scroll_offset: 0,
-            diff_fullscreen: false,
             line_comments: Vec::new(),
-            tree_view_enabled: true, // Enable tree view by default
-            expanded_worktrees: std::collections::HashSet::new(),
-            sidebar_cursor: 0,
-            sessions_by_worktree: HashMap::new(),
-            git_panel_enabled: true, // Enable git status panel by default
-            git_status_files: Vec::new(),
-            git_status_cursor: 0,
-            expanded_git_sections: default_expanded_git_sections(),
-            git_panel_scroll_offset: 0,
-            pending_diff_file: None,
-            terminal_cols: None,
-            terminal_rows: None,
             should_quit: false,
             error_message: None,
             status_message: None,
@@ -195,12 +133,6 @@ impl App {
             event_rx: None,
             prefix_mode: PrefixMode::None,
             dirty: DirtyFlags::default(),
-            todo_items: Vec::new(),
-            todo_cursor: 0,
-            expanded_todos: std::collections::HashSet::new(),
-            todo_scroll_offset: 0,
-            todo_show_completed: true,
-            todo_display_order: Vec::new(),
         };
 
         // Load initial data
@@ -290,8 +222,8 @@ impl App {
         }
 
         // Clear worktree-related caches when refreshing
-        self.sessions_by_worktree.clear();
-        self.expanded_worktrees.clear();
+        self.sidebar.sessions_by_worktree.clear();
+        self.sidebar.expanded_worktrees.clear();
 
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
@@ -348,32 +280,34 @@ impl App {
         let new_session_id = self.sessions.get(self.session_idx).map(|s| s.id.clone());
 
         // If session changed, disconnect old stream and connect new one
-        if self.active_session_id != new_session_id {
+        if self.terminal.active_session_id != new_session_id {
             self.disconnect_stream();
 
             // Save current parser to map if there's an active session
-            if let Some(old_id) = &self.active_session_id {
-                self.session_parsers
-                    .insert(old_id.clone(), self.terminal_parser.clone());
+            if let Some(old_id) = &self.terminal.active_session_id {
+                self.terminal
+                    .session_parsers
+                    .insert(old_id.clone(), self.terminal.parser.clone());
             }
 
             // Get or create parser for new session
             if let Some(new_id) = &new_session_id {
-                self.terminal_parser = self
+                self.terminal.parser = self
+                    .terminal
                     .session_parsers
                     .entry(new_id.clone())
                     .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
                     .clone();
             } else {
                 // No session selected, use a fresh parser
-                self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
             }
 
-            self.scroll_offset = 0;
-            self.active_session_id = new_session_id;
+            self.terminal.scroll_offset = 0;
+            self.terminal.active_session_id = new_session_id;
 
             // Auto-connect for preview if there's a session
-            if self.active_session_id.is_some() {
+            if self.terminal.active_session_id.is_some() {
                 let _ = self.connect_stream().await;
             }
         }
@@ -388,7 +322,7 @@ impl App {
             Focus::Branches => self.worktrees.len(),
             Focus::Sessions => self.sessions.len(),
             Focus::Terminal => 0,
-            Focus::DiffFiles => self.diff_files.len(),
+            Focus::DiffFiles => self.diff.files.len(),
         }
     }
 
@@ -396,12 +330,12 @@ impl App {
     #[allow(dead_code)]
     pub fn current_idx(&self) -> usize {
         match self.focus {
-            Focus::Sidebar => self.sidebar_cursor,
-            Focus::GitStatus => self.git_status_cursor,
+            Focus::Sidebar => self.sidebar.cursor,
+            Focus::GitStatus => self.git.cursor,
             Focus::Branches => self.branch_idx,
             Focus::Sessions => self.session_idx,
             Focus::Terminal => 0,
-            Focus::DiffFiles => self.diff_cursor,
+            Focus::DiffFiles => self.diff.cursor,
         }
     }
 
@@ -412,8 +346,8 @@ impl App {
         let mut len = 0;
         for (i, _wt) in self.worktrees.iter().enumerate() {
             len += 1; // worktree itself
-            if self.expanded_worktrees.contains(&i) {
-                if let Some(sessions) = self.sessions_by_worktree.get(&i) {
+            if self.sidebar.expanded_worktrees.contains(&i) {
+                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&i) {
                     len += sessions.len();
                 }
             }
@@ -425,14 +359,14 @@ impl App {
     pub fn current_sidebar_item(&self) -> SidebarItem {
         let mut pos = 0;
         for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
-            if pos == self.sidebar_cursor {
+            if pos == self.sidebar.cursor {
                 return SidebarItem::Worktree(wt_idx);
             }
             pos += 1;
-            if self.expanded_worktrees.contains(&wt_idx) {
-                if let Some(sessions) = self.sessions_by_worktree.get(&wt_idx) {
+            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
+                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
                     for (s_idx, _session) in sessions.iter().enumerate() {
-                        if pos == self.sidebar_cursor {
+                        if pos == self.sidebar.cursor {
                             return SidebarItem::Session(wt_idx, s_idx);
                         }
                         pos += 1;
@@ -446,12 +380,12 @@ impl App {
     /// Toggle expansion of current worktree
     pub fn toggle_sidebar_expand(&mut self) -> Option<AsyncAction> {
         if let SidebarItem::Worktree(wt_idx) = self.current_sidebar_item() {
-            if self.expanded_worktrees.contains(&wt_idx) {
-                self.expanded_worktrees.remove(&wt_idx);
+            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
+                self.sidebar.expanded_worktrees.remove(&wt_idx);
             } else {
-                self.expanded_worktrees.insert(wt_idx);
+                self.sidebar.expanded_worktrees.insert(wt_idx);
                 // Load sessions for this worktree if not loaded
-                if !self.sessions_by_worktree.contains_key(&wt_idx) {
+                if !self.sidebar.sessions_by_worktree.contains_key(&wt_idx) {
                     return Some(AsyncAction::LoadWorktreeSessions { wt_idx });
                 }
             }
@@ -462,8 +396,8 @@ impl App {
 
     /// Move cursor up in sidebar tree view
     pub fn sidebar_move_up(&mut self) -> Option<AsyncAction> {
-        if self.sidebar_cursor > 0 {
-            self.sidebar_cursor -= 1;
+        if self.sidebar.cursor > 0 {
+            self.sidebar.cursor -= 1;
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
                 // Worktree changed, refresh git status
@@ -476,8 +410,8 @@ impl App {
     /// Move cursor down in sidebar tree view
     pub fn sidebar_move_down(&mut self) -> Option<AsyncAction> {
         let max_cursor = self.sidebar_virtual_len().saturating_sub(1);
-        if self.sidebar_cursor < max_cursor {
-            self.sidebar_cursor += 1;
+        if self.sidebar.cursor < max_cursor {
+            self.sidebar.cursor += 1;
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
                 // Worktree changed, refresh git status
@@ -489,11 +423,11 @@ impl App {
 
     /// Toggle between tree view and legacy split view
     pub fn toggle_tree_view(&mut self) {
-        self.tree_view_enabled = !self.tree_view_enabled;
+        self.sidebar.tree_view_enabled = !self.sidebar.tree_view_enabled;
         self.dirty.sidebar = true;
 
         // Update focus based on mode
-        if self.tree_view_enabled {
+        if self.sidebar.tree_view_enabled {
             // Switch to tree view: change Focus::Branches/Sessions to Focus::Sidebar
             if self.focus == Focus::Branches || self.focus == Focus::Sessions {
                 self.focus = Focus::Sidebar;
@@ -505,7 +439,7 @@ impl App {
             }
         }
 
-        self.status_message = Some(if self.tree_view_enabled {
+        self.status_message = Some(if self.sidebar.tree_view_enabled {
             "Tree view enabled (T to toggle)".to_string()
         } else {
             "Legacy view enabled (T to toggle)".to_string()
@@ -529,23 +463,26 @@ impl App {
                 self.session_idx = s_idx;
                 // Get session id first to avoid borrow issues
                 let session_id = self
+                    .sidebar
                     .sessions_by_worktree
                     .get(&wt_idx)
                     .and_then(|sessions| sessions.get(s_idx))
                     .map(|s| s.id.clone());
 
                 if let Some(new_id) = session_id {
-                    if self.active_session_id.as_ref() != Some(&new_id) {
+                    if self.terminal.active_session_id.as_ref() != Some(&new_id) {
                         self.disconnect_stream();
 
                         // Save current parser if there was an active session
-                        if let Some(old_id) = &self.active_session_id {
-                            self.session_parsers
-                                .insert(old_id.clone(), self.terminal_parser.clone());
+                        if let Some(old_id) = &self.terminal.active_session_id {
+                            self.terminal
+                                .session_parsers
+                                .insert(old_id.clone(), self.terminal.parser.clone());
                         }
 
                         // Get or create parser for new session
-                        self.terminal_parser = self
+                        self.terminal.parser = self
+                            .terminal
                             .session_parsers
                             .entry(new_id.clone())
                             .or_insert_with(|| {
@@ -553,8 +490,8 @@ impl App {
                             })
                             .clone();
 
-                        self.active_session_id = Some(new_id);
-                        self.scroll_offset = 0;
+                        self.terminal.active_session_id = Some(new_id);
+                        self.terminal.scroll_offset = 0;
                         self.dirty.terminal = true;
                     }
                 }
@@ -648,28 +585,30 @@ impl App {
     fn update_active_session_sync(&mut self) {
         let new_session_id = self.sessions.get(self.session_idx).map(|s| s.id.clone());
 
-        if self.active_session_id != new_session_id {
+        if self.terminal.active_session_id != new_session_id {
             self.disconnect_stream();
 
             // Save current parser to map if there's an active session
-            if let Some(old_id) = &self.active_session_id {
-                self.session_parsers
-                    .insert(old_id.clone(), self.terminal_parser.clone());
+            if let Some(old_id) = &self.terminal.active_session_id {
+                self.terminal
+                    .session_parsers
+                    .insert(old_id.clone(), self.terminal.parser.clone());
             }
 
             // Get or create parser for new session
             if let Some(new_id) = &new_session_id {
-                self.terminal_parser = self
+                self.terminal.parser = self
+                    .terminal
                     .session_parsers
                     .entry(new_id.clone())
                     .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
                     .clone();
             } else {
-                self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
             }
 
-            self.scroll_offset = 0;
-            self.active_session_id = new_session_id;
+            self.terminal.scroll_offset = 0;
+            self.terminal.active_session_id = new_session_id;
             self.dirty.terminal = true;
             // Note: Stream connection is deferred - will happen when user enters terminal
         }
@@ -690,9 +629,9 @@ impl App {
 
     /// Enter terminal Insert mode (from Sessions)
     pub async fn enter_terminal(&mut self) -> Result<()> {
-        if self.active_session_id.is_some() {
+        if self.terminal.active_session_id.is_some() {
             self.focus = Focus::Terminal;
-            self.terminal_mode = TerminalMode::Insert;
+            self.terminal.mode = TerminalMode::Insert;
             self.scroll_to_bottom();
 
             // Ensure stream is connected
@@ -705,30 +644,30 @@ impl App {
 
     /// Enter Insert mode (from Normal mode)
     pub fn enter_insert_mode(&mut self) {
-        self.terminal_mode = TerminalMode::Insert;
+        self.terminal.mode = TerminalMode::Insert;
         self.scroll_to_bottom();
     }
 
     /// Exit to Normal mode (from Insert mode)
     #[allow(dead_code)]
     pub fn exit_to_normal_mode(&mut self) {
-        self.terminal_mode = TerminalMode::Normal;
+        self.terminal.mode = TerminalMode::Normal;
         deactivate_ime();
     }
 
     /// Exit terminal mode (back to sidebar)
     pub fn exit_terminal(&mut self) {
-        if self.terminal_fullscreen {
-            self.terminal_fullscreen = false;
+        if self.terminal.fullscreen {
+            self.terminal.fullscreen = false;
         } else {
             // Return to appropriate sidebar focus based on tree view mode
-            self.focus = if self.tree_view_enabled {
+            self.focus = if self.sidebar.tree_view_enabled {
                 Focus::Sidebar
             } else {
                 Focus::Sessions
             };
-            self.terminal_mode = TerminalMode::Normal;
-            self.is_interactive = false;
+            self.terminal.mode = TerminalMode::Normal;
+            self.terminal.is_interactive = false;
         }
     }
 
@@ -764,20 +703,22 @@ impl App {
             self.disconnect_stream();
 
             // Save current parser if there's an active session
-            if let Some(old_id) = &self.active_session_id {
-                self.session_parsers
-                    .insert(old_id.clone(), self.terminal_parser.clone());
+            if let Some(old_id) = &self.terminal.active_session_id {
+                self.terminal
+                    .session_parsers
+                    .insert(old_id.clone(), self.terminal.parser.clone());
             }
 
             // Get or create parser for shell session
-            self.terminal_parser = self
+            self.terminal.parser = self
+                .terminal
                 .session_parsers
                 .entry(new_id.clone())
                 .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
                 .clone();
 
-            self.scroll_offset = 0;
-            self.active_session_id = Some(new_id);
+            self.terminal.scroll_offset = 0;
+            self.terminal.active_session_id = Some(new_id);
             self.dirty.terminal = true;
 
             self.enter_terminal().await?;
@@ -806,7 +747,7 @@ impl App {
                     // Refresh sessions list (both legacy and tree view)
                     self.refresh_sessions().await?;
                     // Also refresh tree view sessions for current worktree
-                    if self.tree_view_enabled {
+                    if self.sidebar.tree_view_enabled {
                         self.load_worktree_sessions(self.branch_idx).await?;
                     }
 
@@ -816,18 +757,20 @@ impl App {
                     self.disconnect_stream();
 
                     // Save current parser if there's an active session
-                    if let Some(old_id) = &self.active_session_id {
-                        self.session_parsers
-                            .insert(old_id.clone(), self.terminal_parser.clone());
+                    if let Some(old_id) = &self.terminal.active_session_id {
+                        self.terminal
+                            .session_parsers
+                            .insert(old_id.clone(), self.terminal.parser.clone());
                     }
 
                     // Create parser for new shell session
-                    self.terminal_parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
-                    self.session_parsers
-                        .insert(new_id.clone(), self.terminal_parser.clone());
+                    self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                    self.terminal
+                        .session_parsers
+                        .insert(new_id.clone(), self.terminal.parser.clone());
 
-                    self.scroll_offset = 0;
-                    self.active_session_id = Some(new_id);
+                    self.terminal.scroll_offset = 0;
+                    self.terminal.active_session_id = Some(new_id);
                     self.dirty.terminal = true;
 
                     self.enter_terminal().await?;
@@ -844,42 +787,42 @@ impl App {
 
     /// Toggle fullscreen mode
     pub fn toggle_fullscreen(&mut self) {
-        self.terminal_fullscreen = !self.terminal_fullscreen;
+        self.terminal.fullscreen = !self.terminal.fullscreen;
     }
 
     /// Scroll up (older content)
     pub fn scroll_up(&mut self, lines: usize) {
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             let current = parser.screen().scrollback();
             let new_offset = current + lines;
             parser.screen_mut().set_scrollback(new_offset);
-            self.scroll_offset = parser.screen().scrollback();
+            self.terminal.scroll_offset = parser.screen().scrollback();
         }
     }
 
     /// Scroll down (newer content)
     pub fn scroll_down(&mut self, lines: usize) {
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             let current = parser.screen().scrollback();
             let new_offset = current.saturating_sub(lines);
             parser.screen_mut().set_scrollback(new_offset);
-            self.scroll_offset = parser.screen().scrollback();
+            self.terminal.scroll_offset = parser.screen().scrollback();
         }
     }
 
     /// Scroll to top
     pub fn scroll_to_top(&mut self) {
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             parser.screen_mut().set_scrollback(usize::MAX);
-            self.scroll_offset = parser.screen().scrollback();
+            self.terminal.scroll_offset = parser.screen().scrollback();
         }
     }
 
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             parser.screen_mut().set_scrollback(0);
-            self.scroll_offset = 0;
+            self.terminal.scroll_offset = 0;
         }
     }
 
@@ -892,8 +835,8 @@ impl App {
     /// Exit interactive mode
     #[allow(dead_code)]
     pub fn exit_interactive(&mut self) {
-        self.is_interactive = false;
-        self.focus = if self.tree_view_enabled {
+        self.terminal.is_interactive = false;
+        self.focus = if self.sidebar.tree_view_enabled {
             Focus::Sidebar
         } else {
             Focus::Sessions
@@ -918,9 +861,9 @@ impl App {
                             // Refresh sessions for this worktree
                             self.load_worktree_sessions(self.branch_idx).await?;
                             // Expand worktree
-                            self.expanded_worktrees.insert(self.branch_idx);
+                            self.sidebar.expanded_worktrees.insert(self.branch_idx);
                             // Set active session before entering terminal
-                            self.active_session_id = Some(session.id.clone());
+                            self.terminal.active_session_id = Some(session.id.clone());
                             self.enter_terminal().await?;
                         }
                         Err(e) => {
@@ -1002,9 +945,9 @@ impl App {
                             self.update_active_session().await;
                             // Also load sessions for tree view
                             self.load_worktree_sessions(b_idx).await?;
-                            self.expanded_worktrees.insert(b_idx);
+                            self.sidebar.expanded_worktrees.insert(b_idx);
                             // Return to appropriate focus before entering terminal
-                            self.focus = if self.tree_view_enabled {
+                            self.focus = if self.sidebar.tree_view_enabled {
                                 Focus::Sidebar
                             } else {
                                 Focus::Sessions
@@ -1132,7 +1075,7 @@ impl App {
                 // Select the new worktree
                 if let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch_name) {
                     self.branch_idx = idx;
-                    self.sidebar_cursor = idx;
+                    self.sidebar.cursor = idx;
                     self.refresh_sessions().await?;
                 }
             }
@@ -1162,7 +1105,7 @@ impl App {
         // Delete all sessions
         for session in sessions {
             // Disconnect if this is the active session
-            if self.active_session_id.as_ref() == Some(&session.id) {
+            if self.terminal.active_session_id.as_ref() == Some(&session.id) {
                 self.disconnect_stream();
             }
             self.client.destroy_session(&session.id).await?;
@@ -1240,7 +1183,7 @@ impl App {
                         }
                     }
                     SidebarItem::Session(wt_idx, s_idx) => {
-                        if let Some(sessions) = self.sessions_by_worktree.get(&wt_idx) {
+                        if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
                             if let Some(session) = sessions.get(s_idx) {
                                 self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
                                     session_id: session.id.clone(),
@@ -1312,7 +1255,7 @@ impl App {
             }
             DeleteTarget::Session { session_id, name } => {
                 // Disconnect if this is the active session
-                if self.active_session_id.as_ref() == Some(&session_id) {
+                if self.terminal.active_session_id.as_ref() == Some(&session_id) {
                     self.disconnect_stream();
                 }
 
@@ -1335,7 +1278,7 @@ impl App {
 
     /// Connect to session stream for preview/interaction
     pub async fn connect_stream(&mut self) -> Result<()> {
-        let session_id = match &self.active_session_id {
+        let session_id = match &self.terminal.active_session_id {
             Some(id) => id.clone(),
             None => return Ok(()),
         };
@@ -1351,7 +1294,7 @@ impl App {
         let inner_cols = terminal_width.saturating_sub(2); // borders
 
         // Resize vt100 parser to match
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             parser.screen_mut().set_size(inner_rows, inner_cols);
         }
 
@@ -1411,7 +1354,7 @@ impl App {
         if let Some(stream) = &mut self.terminal_stream {
             // Try to receive without blocking
             while let Ok(data) = stream.output_rx.try_recv() {
-                if let Ok(mut parser) = self.terminal_parser.lock() {
+                if let Ok(mut parser) = self.terminal.parser.lock() {
                     parser.process(&data);
                 }
             }
@@ -1713,7 +1656,7 @@ impl App {
                 .client
                 .list_sessions(Some(&repo.id), Some(&worktree.branch))
                 .await?;
-            self.sessions_by_worktree.insert(wt_idx, sessions);
+            self.sidebar.sessions_by_worktree.insert(wt_idx, sessions);
             self.dirty.sidebar = true;
         }
         Ok(())
@@ -1733,31 +1676,31 @@ impl App {
                 .await?;
 
             // Convert proto files to local representation
-            self.git_status_files.clear();
+            self.git.files.clear();
 
             for f in response.staged {
-                self.git_status_files.push(GitStatusFile {
+                self.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Staged,
                 });
             }
             for f in response.unstaged {
-                self.git_status_files.push(GitStatusFile {
+                self.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Unstaged,
                 });
             }
             for f in response.untracked {
-                self.git_status_files.push(GitStatusFile {
+                self.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Untracked,
                 });
             }
 
-            self.git_status_cursor = 0;
+            self.git.cursor = 0;
             self.dirty.sidebar = true;
 
             // Also load comments for this branch
@@ -1836,9 +1779,9 @@ impl App {
     /// Load TODO items for current repository
     pub async fn load_todos(&mut self) -> Result<()> {
         if let Some(repo) = self.repos.get(self.repo_idx) {
-            self.todo_items = self
+            self.todo.items = self
                 .client
-                .list_todos(&repo.id, self.todo_show_completed)
+                .list_todos(&repo.id, self.todo.show_completed)
                 .await?;
             self.rebuild_todo_display_order();
         }
@@ -1851,7 +1794,7 @@ impl App {
 
         // Build parent-to-children mapping
         let mut items_by_parent: HashMap<Option<String>, Vec<usize>> = HashMap::new();
-        for (i, item) in self.todo_items.iter().enumerate() {
+        for (i, item) in self.todo.items.iter().enumerate() {
             items_by_parent
                 .entry(item.parent_id.clone())
                 .or_default()
@@ -1877,12 +1820,12 @@ impl App {
             }
         }
 
-        self.todo_display_order.clear();
+        self.todo.display_order.clear();
         build_order(
-            &self.todo_items,
+            &self.todo.items,
             &items_by_parent,
             None,
-            &mut self.todo_display_order,
+            &mut self.todo.display_order,
         );
     }
 
@@ -1950,39 +1893,42 @@ impl App {
 
         // Count staged section
         let staged_count = self
-            .git_status_files
+            .git
+            .files
             .iter()
             .filter(|f| f.section == GitSection::Staged)
             .count();
         if staged_count > 0 {
             len += 1; // Section header
-            if self.expanded_git_sections.contains(&GitSection::Staged) {
+            if self.git.expanded_sections.contains(&GitSection::Staged) {
                 len += staged_count;
             }
         }
 
         // Count unstaged section
         let unstaged_count = self
-            .git_status_files
+            .git
+            .files
             .iter()
             .filter(|f| f.section == GitSection::Unstaged)
             .count();
         if unstaged_count > 0 {
             len += 1; // Section header
-            if self.expanded_git_sections.contains(&GitSection::Unstaged) {
+            if self.git.expanded_sections.contains(&GitSection::Unstaged) {
                 len += unstaged_count;
             }
         }
 
         // Count untracked section
         let untracked_count = self
-            .git_status_files
+            .git
+            .files
             .iter()
             .filter(|f| f.section == GitSection::Untracked)
             .count();
         if untracked_count > 0 {
             len += 1; // Section header
-            if self.expanded_git_sections.contains(&GitSection::Untracked) {
+            if self.git.expanded_sections.contains(&GitSection::Untracked) {
                 len += untracked_count;
             }
         }
@@ -2001,7 +1947,8 @@ impl App {
 
         for section in sections {
             let files: Vec<_> = self
-                .git_status_files
+                .git
+                .files
                 .iter()
                 .enumerate()
                 .filter(|(_, f)| f.section == section)
@@ -2012,15 +1959,15 @@ impl App {
             }
 
             // Section header
-            if pos == self.git_status_cursor {
+            if pos == self.git.cursor {
                 return GitPanelItem::Section(section);
             }
             pos += 1;
 
             // Files in section (if expanded)
-            if self.expanded_git_sections.contains(&section) {
+            if self.git.expanded_sections.contains(&section) {
                 for (file_idx, _) in files {
-                    if pos == self.git_status_cursor {
+                    if pos == self.git.cursor {
                         return GitPanelItem::File(file_idx);
                     }
                     pos += 1;
@@ -2034,10 +1981,10 @@ impl App {
     /// Toggle git section expansion
     pub fn toggle_git_section_expand(&mut self) {
         if let GitPanelItem::Section(section) = self.current_git_panel_item() {
-            if self.expanded_git_sections.contains(&section) {
-                self.expanded_git_sections.remove(&section);
+            if self.git.expanded_sections.contains(&section) {
+                self.git.expanded_sections.remove(&section);
             } else {
-                self.expanded_git_sections.insert(section);
+                self.git.expanded_sections.insert(section);
             }
             self.dirty.sidebar = true;
         }
@@ -2045,8 +1992,8 @@ impl App {
 
     /// Move cursor up in git status panel
     pub fn git_status_move_up(&mut self) {
-        if self.git_status_cursor > 0 {
-            self.git_status_cursor -= 1;
+        if self.git.cursor > 0 {
+            self.git.cursor -= 1;
             self.dirty.sidebar = true;
         }
     }
@@ -2054,8 +2001,8 @@ impl App {
     /// Move cursor down in git status panel
     pub fn git_status_move_down(&mut self) {
         let max_cursor = self.git_status_virtual_len().saturating_sub(1);
-        if self.git_status_cursor < max_cursor {
-            self.git_status_cursor += 1;
+        if self.git.cursor < max_cursor {
+            self.git.cursor += 1;
             self.dirty.sidebar = true;
         }
     }
@@ -2063,7 +2010,7 @@ impl App {
     /// Get file path of currently selected git status file
     pub fn current_git_file_path(&self) -> Option<String> {
         if let GitPanelItem::File(idx) = self.current_git_panel_item() {
-            self.git_status_files.get(idx).map(|f| f.path.clone())
+            self.git.files.get(idx).map(|f| f.path.clone())
         } else {
             None
         }
@@ -2072,7 +2019,8 @@ impl App {
     /// Check if current git item is staged
     pub fn is_current_git_item_staged(&self) -> bool {
         if let GitPanelItem::File(idx) = self.current_git_panel_item() {
-            self.git_status_files
+            self.git
+                .files
                 .get(idx)
                 .map(|f| f.section == GitSection::Staged)
                 .unwrap_or(false)
@@ -2103,8 +2051,8 @@ impl App {
     /// Send resize to terminal
     pub async fn resize_terminal(&mut self, rows: u16, cols: u16) -> Result<()> {
         // Store terminal size for mouse position calculations
-        self.terminal_cols = Some(cols);
-        self.terminal_rows = Some(rows);
+        self.terminal.cols = Some(cols);
+        self.terminal.rows = Some(rows);
 
         // Calculate inner area (same as connect_stream)
         let main_height = rows.saturating_sub(6);
@@ -2113,7 +2061,7 @@ impl App {
         let inner_cols = terminal_width.saturating_sub(2);
 
         // Resize parser
-        if let Ok(mut parser) = self.terminal_parser.lock() {
+        if let Ok(mut parser) = self.terminal.parser.lock() {
             parser.screen_mut().set_size(inner_rows, inner_cols);
         }
 
@@ -2136,8 +2084,8 @@ impl App {
     /// Returns true if terminal content has changed since last call
     pub fn update_terminal_hash(&mut self) -> bool {
         let new_hash = self.calculate_terminal_hash();
-        if new_hash != self.last_terminal_hash {
-            self.last_terminal_hash = new_hash;
+        if new_hash != self.terminal.last_hash {
+            self.terminal.last_hash = new_hash;
             true
         } else {
             false
@@ -2149,7 +2097,7 @@ impl App {
         use std::collections::hash_map::DefaultHasher;
         let mut hasher = DefaultHasher::new();
 
-        if let Ok(parser) = self.terminal_parser.lock() {
+        if let Ok(parser) = self.terminal.parser.lock() {
             let screen = parser.screen();
             // Hash the terminal contents as a simple string
             // This is lightweight since we only need to detect changes
@@ -2166,8 +2114,8 @@ impl App {
     /// Get terminal lines for rendering (uses cache when available)
     pub fn get_terminal_lines(&self, height: u16, width: u16) -> Vec<ratatui::text::Line<'static>> {
         // Use cached lines if available and size matches
-        if self.cached_terminal_size == (height, width) && !self.cached_terminal_lines.is_empty() {
-            return self.cached_terminal_lines.clone();
+        if self.terminal.cached_size == (height, width) && !self.terminal.cached_lines.is_empty() {
+            return self.terminal.cached_lines.clone();
         }
 
         // Generate lines from vt100 parser
@@ -2182,7 +2130,7 @@ impl App {
     ) -> Vec<ratatui::text::Line<'static>> {
         let mut lines = Vec::new();
 
-        if let Ok(parser) = self.terminal_parser.lock() {
+        if let Ok(parser) = self.terminal.parser.lock() {
             let screen = parser.screen();
 
             for row in 0..height {
@@ -2248,15 +2196,15 @@ impl App {
     /// Update terminal line cache (call before rendering when content changed)
     #[allow(dead_code)]
     pub fn update_terminal_cache(&mut self, height: u16, width: u16) {
-        self.cached_terminal_lines = self.generate_terminal_lines(height, width);
-        self.cached_terminal_size = (height, width);
+        self.terminal.cached_lines = self.generate_terminal_lines(height, width);
+        self.terminal.cached_size = (height, width);
     }
 
     /// Invalidate terminal cache (call when session changes)
     #[allow(dead_code)]
     pub fn invalidate_terminal_cache(&mut self) {
-        self.cached_terminal_lines.clear();
-        self.cached_terminal_size = (0, 0);
+        self.terminal.cached_lines.clear();
+        self.terminal.cached_size = (0, 0);
     }
 
     // ========== Diff View ==========
@@ -2274,16 +2222,16 @@ impl App {
     pub fn switch_to_terminal_view(&mut self) {
         self.right_panel_view = RightPanelView::Terminal;
         // Return to appropriate sidebar focus
-        self.focus = if self.tree_view_enabled {
+        self.focus = if self.sidebar.tree_view_enabled {
             Focus::Sidebar
         } else {
             Focus::Sessions
         };
-        self.diff_files.clear();
-        self.diff_expanded.clear();
-        self.diff_file_lines.clear();
-        self.diff_cursor = 0;
-        self.diff_scroll_offset = 0;
+        self.diff.files.clear();
+        self.diff.expanded.clear();
+        self.diff.file_lines.clear();
+        self.diff.cursor = 0;
+        self.diff.scroll_offset = 0;
     }
 
     /// Load diff files for current worktree
@@ -2294,19 +2242,19 @@ impl App {
         ) {
             match self.client.get_diff_files(&repo.id, &branch.branch).await {
                 Ok(files) => {
-                    self.diff_files = files;
-                    self.diff_expanded.clear();
-                    self.diff_file_lines.clear();
-                    self.diff_cursor = 0;
-                    self.diff_scroll_offset = 0;
+                    self.diff.files = files;
+                    self.diff.expanded.clear();
+                    self.diff.file_lines.clear();
+                    self.diff.cursor = 0;
+                    self.diff.scroll_offset = 0;
 
                     // If there's a pending file to expand, find and expand it
-                    if let Some(pending_file) = self.pending_diff_file.take() {
+                    if let Some(pending_file) = self.git.pending_diff_file.take() {
                         if let Some(idx) =
-                            self.diff_files.iter().position(|f| f.path == pending_file)
+                            self.diff.files.iter().position(|f| f.path == pending_file)
                         {
-                            self.diff_cursor = idx;
-                            self.diff_expanded.insert(idx);
+                            self.diff.cursor = idx;
+                            self.diff.expanded.insert(idx);
                             // Load the file's diff content
                             self.load_file_diff().await?;
                         }
@@ -2338,16 +2286,17 @@ impl App {
     pub async fn load_file_diff(&mut self) -> Result<()> {
         // Find which file needs loading (the one that's expanded but has no lines)
         let file_idx = self
-            .diff_expanded
+            .diff
+            .expanded
             .iter()
-            .find(|&&idx| !self.diff_file_lines.contains_key(&idx))
+            .find(|&&idx| !self.diff.file_lines.contains_key(&idx))
             .copied();
 
         if let Some(file_idx) = file_idx {
             if let (Some(repo), Some(branch), Some(file)) = (
                 self.repos.get(self.repo_idx).cloned(),
                 self.worktrees.get(self.branch_idx).cloned(),
-                self.diff_files.get(file_idx).cloned(),
+                self.diff.files.get(file_idx).cloned(),
             ) {
                 match self
                     .client
@@ -2355,12 +2304,12 @@ impl App {
                     .await
                 {
                     Ok(response) => {
-                        self.diff_file_lines.insert(file_idx, response.lines);
+                        self.diff.file_lines.insert(file_idx, response.lines);
                     }
                     Err(e) => {
                         self.error_message = Some(format!("Failed to load file diff: {}", e));
                         // Remove from expanded since load failed
-                        self.diff_expanded.remove(&file_idx);
+                        self.diff.expanded.remove(&file_idx);
                     }
                 }
             }
@@ -2373,10 +2322,10 @@ impl App {
     /// Get total length of virtual diff list (files + expanded lines)
     pub fn diff_virtual_list_len(&self) -> usize {
         let mut len = 0;
-        for (i, _) in self.diff_files.iter().enumerate() {
+        for (i, _) in self.diff.files.iter().enumerate() {
             len += 1; // File entry
-            if self.diff_expanded.contains(&i) {
-                len += self.diff_file_lines.get(&i).map(|l| l.len()).unwrap_or(0);
+            if self.diff.expanded.contains(&i) {
+                len += self.diff.file_lines.get(&i).map(|l| l.len()).unwrap_or(0);
             }
         }
         len
@@ -2384,23 +2333,23 @@ impl App {
 
     /// Get current item at cursor position
     pub fn current_diff_item(&self) -> DiffItem {
-        if self.diff_files.is_empty() {
+        if self.diff.files.is_empty() {
             return DiffItem::None;
         }
 
         let mut pos = 0;
-        for (file_idx, _) in self.diff_files.iter().enumerate() {
+        for (file_idx, _) in self.diff.files.iter().enumerate() {
             // Check if cursor is on this file
-            if pos == self.diff_cursor {
+            if pos == self.diff.cursor {
                 return DiffItem::File(file_idx);
             }
             pos += 1;
 
             // Check if cursor is on one of this file's lines
-            if self.diff_expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff_file_lines.get(&file_idx) {
+            if self.diff.expanded.contains(&file_idx) {
+                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
                     for line_idx in 0..lines.len() {
-                        if pos == self.diff_cursor {
+                        if pos == self.diff.cursor {
                             return DiffItem::Line(file_idx, line_idx);
                         }
                         pos += 1;
@@ -2424,8 +2373,8 @@ impl App {
 
     /// Move cursor up in diff view
     pub fn diff_move_up(&mut self) {
-        if self.diff_cursor > 0 {
-            self.diff_cursor -= 1;
+        if self.diff.cursor > 0 {
+            self.diff.cursor -= 1;
             self.dirty.sidebar = true;
         }
     }
@@ -2433,8 +2382,8 @@ impl App {
     /// Move cursor down in diff view
     pub fn diff_move_down(&mut self) {
         let max = self.diff_virtual_list_len();
-        if max > 0 && self.diff_cursor < max - 1 {
-            self.diff_cursor += 1;
+        if max > 0 && self.diff.cursor < max - 1 {
+            self.diff.cursor += 1;
             self.dirty.sidebar = true;
         }
     }
@@ -2443,23 +2392,24 @@ impl App {
     pub fn diff_prev_file(&mut self) {
         let mut pos = 0;
         let mut last_file_pos = 0;
-        for (file_idx, _) in self.diff_files.iter().enumerate() {
-            if pos >= self.diff_cursor {
+        for (file_idx, _) in self.diff.files.iter().enumerate() {
+            if pos >= self.diff.cursor {
                 // Found current or past cursor, go to last file
                 break;
             }
             last_file_pos = pos;
             pos += 1;
-            if self.diff_expanded.contains(&file_idx) {
+            if self.diff.expanded.contains(&file_idx) {
                 pos += self
-                    .diff_file_lines
+                    .diff
+                    .file_lines
                     .get(&file_idx)
                     .map(|l| l.len())
                     .unwrap_or(0);
             }
         }
-        if self.diff_cursor > 0 {
-            self.diff_cursor = last_file_pos;
+        if self.diff.cursor > 0 {
+            self.diff.cursor = last_file_pos;
             self.dirty.sidebar = true;
         }
     }
@@ -2467,17 +2417,18 @@ impl App {
     /// Jump to next file
     pub fn diff_next_file(&mut self) {
         let mut pos = 0;
-        for (file_idx, _) in self.diff_files.iter().enumerate() {
-            if pos > self.diff_cursor {
+        for (file_idx, _) in self.diff.files.iter().enumerate() {
+            if pos > self.diff.cursor {
                 // Found next file after cursor
-                self.diff_cursor = pos;
+                self.diff.cursor = pos;
                 self.dirty.sidebar = true;
                 return;
             }
             pos += 1;
-            if self.diff_expanded.contains(&file_idx) {
+            if self.diff.expanded.contains(&file_idx) {
                 pos += self
-                    .diff_file_lines
+                    .diff
+                    .file_lines
                     .get(&file_idx)
                     .map(|l| l.len())
                     .unwrap_or(0);
@@ -2488,14 +2439,14 @@ impl App {
     /// Toggle expansion of current file (only works when cursor is on a file)
     pub fn toggle_diff_expand(&mut self) -> Option<AsyncAction> {
         if let DiffItem::File(file_idx) = self.current_diff_item() {
-            if self.diff_expanded.contains(&file_idx) {
+            if self.diff.expanded.contains(&file_idx) {
                 // Collapse
-                self.diff_expanded.remove(&file_idx);
-                self.diff_file_lines.remove(&file_idx);
+                self.diff.expanded.remove(&file_idx);
+                self.diff.file_lines.remove(&file_idx);
                 None
             } else {
                 // Expand - need to load diff content
-                self.diff_expanded.insert(file_idx);
+                self.diff.expanded.insert(file_idx);
                 Some(AsyncAction::LoadFileDiff)
             }
         } else {
@@ -2505,7 +2456,7 @@ impl App {
 
     /// Toggle diff fullscreen mode
     pub fn toggle_diff_fullscreen(&mut self) {
-        self.diff_fullscreen = !self.diff_fullscreen;
+        self.diff.fullscreen = !self.diff.fullscreen;
     }
 
     // ========== Comment Operations ==========
@@ -2514,8 +2465,8 @@ impl App {
     pub fn start_add_line_comment(&mut self) {
         if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
             if let (Some(file), Some(lines)) = (
-                self.diff_files.get(file_idx),
-                self.diff_file_lines.get(&file_idx),
+                self.diff.files.get(file_idx),
+                self.diff.file_lines.get(&file_idx),
             ) {
                 if let Some(diff_line) = lines.get(line_idx) {
                     // Get actual line number from diff info
@@ -2635,8 +2586,8 @@ impl App {
         let edit_info: Option<(String, String, i32, String)> = {
             if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
                 if let (Some(file), Some(lines)) = (
-                    self.diff_files.get(file_idx),
-                    self.diff_file_lines.get(&file_idx),
+                    self.diff.files.get(file_idx),
+                    self.diff.file_lines.get(&file_idx),
                 ) {
                     if let Some(diff_line) = lines.get(line_idx) {
                         let line_number = diff_line
@@ -2717,8 +2668,8 @@ impl App {
     pub async fn delete_current_line_comment(&mut self) -> Result<()> {
         if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
             if let (Some(file), Some(lines)) = (
-                self.diff_files.get(file_idx),
-                self.diff_file_lines.get(&file_idx),
+                self.diff.files.get(file_idx),
+                self.diff.file_lines.get(&file_idx),
             ) {
                 if let Some(diff_line) = lines.get(line_idx) {
                     let line_number = diff_line
@@ -2762,9 +2713,9 @@ impl App {
 
         // Build a flat list of (file_idx, line_idx, line_number, file_path)
         let mut all_lines: Vec<(usize, usize, i32, String)> = Vec::new();
-        for (file_idx, file) in self.diff_files.iter().enumerate() {
-            if self.diff_expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff_file_lines.get(&file_idx) {
+        for (file_idx, file) in self.diff.files.iter().enumerate() {
+            if self.diff.expanded.contains(&file_idx) {
+                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
                     for (line_idx, diff_line) in lines.iter().enumerate() {
                         let line_number = diff_line
                             .new_lineno
@@ -2784,7 +2735,7 @@ impl App {
         // Find next comment after current position
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().skip(current_pos + 1) {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff_cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2793,7 +2744,7 @@ impl App {
         // Wrap around - search from beginning
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().take(current_pos + 1) {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff_cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2813,9 +2764,9 @@ impl App {
 
         // Build a flat list of (file_idx, line_idx, line_number, file_path)
         let mut all_lines: Vec<(usize, usize, i32, String)> = Vec::new();
-        for (file_idx, file) in self.diff_files.iter().enumerate() {
-            if self.diff_expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff_file_lines.get(&file_idx) {
+        for (file_idx, file) in self.diff.files.iter().enumerate() {
+            if self.diff.expanded.contains(&file_idx) {
+                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
                     for (line_idx, diff_line) in lines.iter().enumerate() {
                         let line_number = diff_line
                             .new_lineno
@@ -2836,7 +2787,7 @@ impl App {
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().take(current_pos).rev()
         {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff_cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2846,7 +2797,7 @@ impl App {
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().skip(current_pos).rev()
         {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff_cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2858,14 +2809,14 @@ impl App {
     /// Calculate cursor position for a specific file and line
     fn calculate_cursor_for_line(&self, target_file_idx: usize, target_line_idx: usize) -> usize {
         let mut cursor = 0;
-        for (file_idx, _) in self.diff_files.iter().enumerate() {
+        for (file_idx, _) in self.diff.files.iter().enumerate() {
             if file_idx == target_file_idx {
                 // Found the file, add the line offset
                 return cursor + 1 + target_line_idx; // +1 for file header
             }
             cursor += 1; // File header
-            if self.diff_expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff_file_lines.get(&file_idx) {
+            if self.diff.expanded.contains(&file_idx) {
+                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
                     cursor += lines.len();
                 }
             }
@@ -2917,7 +2868,7 @@ impl App {
         self.switch_to_terminal_view();
 
         // Connect if needed and send
-        if self.terminal_stream.is_none() && self.active_session_id.is_some() {
+        if self.terminal_stream.is_none() && self.terminal.active_session_id.is_some() {
             self.enter_terminal().await?;
         }
 
@@ -3021,8 +2972,8 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     Event::Resize(cols, rows) => {
                         let _ = app.resize_terminal(rows, cols).await;
                         // Invalidate cache when resize happens
-                        app.cached_terminal_lines.clear();
-                        app.cached_terminal_size = (0, 0);
+                        app.terminal.cached_lines.clear();
+                        app.terminal.cached_size = (0, 0);
                         dirty = true;
                         // Don't force render on resize - let it be throttled to reduce flicker
                     }
@@ -3042,7 +2993,7 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     None => std::future::pending().await,
                 }
             } => {
-                if let Ok(mut parser) = app.terminal_parser.lock() {
+                if let Ok(mut parser) = app.terminal.parser.lock() {
                     parser.process(&data);
                 }
                 // Don't set dirty immediately - mark for hash check on render tick

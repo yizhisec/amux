@@ -112,7 +112,7 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
 
     // Handle terminal modes when focused on terminal
     if app.focus == Focus::Terminal {
-        return match app.terminal_mode {
+        return match app.terminal.mode {
             TerminalMode::Insert => terminal::handle_insert_mode_sync(app, key),
             TerminalMode::Normal => {
                 terminal::handle_terminal_normal_mode_sync(app, key);

@@ -57,8 +57,8 @@ pub fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
         // Exit fullscreen or do nothing (Esc in Normal mode stays in Normal)
         // Use Prefix+s or Prefix+w to go back to sidebar
         KeyCode::Esc => {
-            if app.terminal_fullscreen {
-                app.terminal_fullscreen = false;
+            if app.terminal.fullscreen {
+                app.terminal.fullscreen = false;
             }
             // Esc in Normal mode: stay in Normal mode (like Claude Code)
             // User can use Tab/Shift+Tab or Prefix+s/w to navigate away

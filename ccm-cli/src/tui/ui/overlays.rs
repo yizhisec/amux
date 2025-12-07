@@ -478,7 +478,7 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(background, area);
 
     // Draw popup
-    let title = if app.todo_show_completed {
+    let title = if app.todo.show_completed {
         " TODO List (All) - [c] to hide completed "
     } else {
         " TODO List (Active) - [c] to show completed "
@@ -507,16 +507,17 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     // Draw TODO list with tree structure using pre-computed display order
     // Convert to ListItems with indentation
     let items: Vec<ListItem> = app
-        .todo_display_order
+        .todo
+        .display_order
         .iter()
         .enumerate()
         .map(|(display_idx, &item_idx)| {
-            let item = &app.todo_items[item_idx];
+            let item = &app.todo.items[item_idx];
             let checkbox = if item.completed { "[x]" } else { "[ ]" };
-            let depth = calculate_depth(&app.todo_items, item_idx);
+            let depth = calculate_depth(&app.todo.items, item_idx);
             let indent = "  ".repeat(depth);
 
-            let style = if display_idx == app.todo_cursor {
+            let style = if display_idx == app.todo.cursor {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)

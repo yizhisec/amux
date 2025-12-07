@@ -10,43 +10,43 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
         // Esc or q = close popup
         KeyCode::Esc | KeyCode::Char('q') => {
             app.input_mode = InputMode::Normal;
-            app.todo_cursor = 0;
-            app.todo_scroll_offset = 0;
+            app.todo.cursor = 0;
+            app.todo.scroll_offset = 0;
             None
         }
 
         // j/Down = move down
         KeyCode::Char('j') | KeyCode::Down => {
-            if app.todo_cursor < app.todo_display_order.len().saturating_sub(1) {
-                app.todo_cursor += 1;
+            if app.todo.cursor < app.todo.display_order.len().saturating_sub(1) {
+                app.todo.cursor += 1;
             }
             None
         }
 
         // k/Up = move up
         KeyCode::Char('k') | KeyCode::Up => {
-            if app.todo_cursor > 0 {
-                app.todo_cursor -= 1;
+            if app.todo.cursor > 0 {
+                app.todo.cursor -= 1;
             }
             None
         }
 
         // g = go to top
         KeyCode::Char('g') => {
-            app.todo_cursor = 0;
+            app.todo.cursor = 0;
             None
         }
 
         // G = go to bottom
         KeyCode::Char('G') => {
-            app.todo_cursor = app.todo_display_order.len().saturating_sub(1);
+            app.todo.cursor = app.todo.display_order.len().saturating_sub(1);
             None
         }
 
         // Space = toggle completion
         KeyCode::Char(' ') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
                     return Some(AsyncAction::ToggleTodo {
                         todo_id: item.id.clone(),
                     });
@@ -64,8 +64,8 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
         // A = add child TODO
         KeyCode::Char('A') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::AddTodo {
                         parent_id: Some(item.id.clone()),
                     };
@@ -77,8 +77,8 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
         // e = edit TODO title
         KeyCode::Char('e') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::EditTodo {
                         todo_id: item.id.clone(),
                     };
@@ -90,8 +90,8 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
         // E = edit TODO description
         KeyCode::Char('E') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::EditTodoDescription {
                         todo_id: item.id.clone(),
                     };
@@ -103,8 +103,8 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
         // d = delete TODO
         KeyCode::Char('d') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
                     app.input_mode = InputMode::ConfirmDeleteTodo {
                         todo_id: item.id.clone(),
                         title: item.title.clone(),
@@ -116,24 +116,24 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 
         // c = toggle show completed
         KeyCode::Char('c') => {
-            app.todo_show_completed = !app.todo_show_completed;
+            app.todo.show_completed = !app.todo.show_completed;
             Some(AsyncAction::LoadTodos)
         }
 
         // h/l = expand/collapse (for future tree view)
         KeyCode::Char('h') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
-                    app.expanded_todos.remove(&item.id);
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
+                    app.todo.expanded.remove(&item.id);
                 }
             }
             None
         }
 
         KeyCode::Char('l') => {
-            if let Some(&item_idx) = app.todo_display_order.get(app.todo_cursor) {
-                if let Some(item) = app.todo_items.get(item_idx) {
-                    app.expanded_todos.insert(item.id.clone());
+            if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
+                if let Some(item) = app.todo.items.get(item_idx) {
+                    app.todo.expanded.insert(item.id.clone());
                 }
             }
             None

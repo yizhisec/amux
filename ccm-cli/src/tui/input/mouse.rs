@@ -10,7 +10,7 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
     // Determine which area the mouse is over based on x position
     // Layout: 25% sidebar (left), 75% main content (right)
     // We use a simple heuristic: x < 25% of terminal width = sidebar
-    let terminal_width = app.terminal_cols.unwrap_or(80);
+    let terminal_width = app.terminal.cols.unwrap_or(80);
     let sidebar_width = terminal_width / 4; // ~25%
     let in_sidebar = mouse.column < sidebar_width;
 
@@ -94,7 +94,7 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             // Click to focus: left side = sidebar, right side = terminal/diff
             if in_sidebar {
-                if app.tree_view_enabled {
+                if app.sidebar.tree_view_enabled {
                     app.focus = Focus::Sidebar;
                 } else {
                     // In legacy mode, keep current sidebar focus

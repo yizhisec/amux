@@ -22,7 +22,7 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
                 Focus::Sidebar => {
                     // In tree view: Enter terminal if on a session, else do nothing
                     if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
-                        if app.active_session_id.is_some() {
+                        if app.terminal.active_session_id.is_some() {
                             return Some(AsyncAction::ConnectStream);
                         }
                     }
@@ -32,7 +32,7 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
                 }
                 Focus::Sessions => {
                     // Enter terminal Normal mode if session is active
-                    if app.active_session_id.is_some() {
+                    if app.terminal.active_session_id.is_some() {
                         return Some(AsyncAction::ConnectStream);
                     }
                 }
@@ -80,7 +80,7 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
                     }
                     SidebarItem::Session(_, _) => {
                         // Enter terminal when on session
-                        if app.active_session_id.is_some() {
+                        if app.terminal.active_session_id.is_some() {
                             Some(AsyncAction::ConnectStream)
                         } else {
                             None
@@ -94,7 +94,7 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
                 None
             }
             Focus::Sessions => {
-                if app.active_session_id.is_some() {
+                if app.terminal.active_session_id.is_some() {
                     Some(AsyncAction::ConnectStream)
                 } else {
                     None
@@ -113,7 +113,7 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
         }
 
         // Switch to Git Status panel (g key)
-        KeyCode::Char('g') if app.focus == Focus::Sidebar && app.git_panel_enabled => {
+        KeyCode::Char('g') if app.focus == Focus::Sidebar && app.sidebar.git_panel_enabled => {
             app.focus = Focus::GitStatus;
             app.status_message = Some("Switched to Git Status panel".to_string());
             Some(AsyncAction::LoadGitStatus)

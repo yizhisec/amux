@@ -32,7 +32,8 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
 
     for (section, section_name, section_color) in sections {
         let files: Vec<_> = app
-            .git_status_files
+            .git
+            .files
             .iter()
             .enumerate()
             .filter(|(_, f)| f.section == section)
@@ -42,8 +43,8 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
             continue;
         }
 
-        let is_expanded = app.expanded_git_sections.contains(&section);
-        let is_cursor = cursor_pos == app.git_status_cursor;
+        let is_expanded = app.git.expanded_sections.contains(&section);
+        let is_cursor = cursor_pos == app.git.cursor;
 
         // Section header style
         let section_style = if is_cursor && is_focused {
@@ -71,7 +72,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
         // Files in section (if expanded)
         if is_expanded {
             for (_file_idx, file) in files {
-                let is_file_cursor = cursor_pos == app.git_status_cursor;
+                let is_file_cursor = cursor_pos == app.git.cursor;
 
                 let file_style = if is_file_cursor && is_focused {
                     Style::default()
@@ -130,7 +131,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
         )])));
     }
 
-    let total_files = app.git_status_files.len();
+    let total_files = app.git.files.len();
     let title = if is_focused {
         format!(" Git Status ({}) [*] ", total_files)
     } else {

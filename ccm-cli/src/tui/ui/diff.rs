@@ -34,9 +34,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let title = if is_focused {
-        format!(" Changes ({}) [*] ", app.diff_files.len())
+        format!(" Changes ({}) [*] ", app.diff.files.len())
     } else {
-        format!(" Changes ({}) ", app.diff_files.len())
+        format!(" Changes ({}) ", app.diff.files.len())
     };
 
     let block = Block::default()
@@ -47,7 +47,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.diff_files.is_empty() {
+    if app.diff.files.is_empty() {
         let placeholder = Paragraph::new("No changes")
             .style(Style::default().fg(Color::DarkGray))
             .alignment(ratatui::layout::Alignment::Center);
@@ -61,9 +61,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
     // Build list of lines: files + expanded diff content
     let mut lines: Vec<Line> = Vec::new();
 
-    for (file_idx, file) in app.diff_files.iter().enumerate() {
+    for (file_idx, file) in app.diff.files.iter().enumerate() {
         let is_file_selected = current_item == DiffItem::File(file_idx);
-        let is_expanded = app.diff_expanded.contains(&file_idx);
+        let is_expanded = app.diff.expanded.contains(&file_idx);
 
         // File style
         let file_style = if is_file_selected && is_focused {
@@ -128,7 +128,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
         // If this file is expanded, show diff lines
         if is_expanded {
-            if let Some(file_lines) = app.diff_file_lines.get(&file_idx) {
+            if let Some(file_lines) = app.diff.file_lines.get(&file_idx) {
                 for (line_idx, diff_line) in file_lines.iter().enumerate() {
                     let is_line_selected = current_item == DiffItem::Line(file_idx, line_idx);
 
@@ -305,15 +305,15 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
     // Calculate scroll - we need to ensure cursor is visible
     let visible_height = inner.height as usize;
     let total_lines = lines.len();
-    let cursor_line = app.diff_cursor;
+    let cursor_line = app.diff.cursor;
 
     // Calculate scroll offset to keep cursor visible
-    let scroll_offset = if cursor_line < app.diff_scroll_offset {
+    let scroll_offset = if cursor_line < app.diff.scroll_offset {
         cursor_line
-    } else if cursor_line >= app.diff_scroll_offset + visible_height {
+    } else if cursor_line >= app.diff.scroll_offset + visible_height {
         cursor_line.saturating_sub(visible_height / 2)
     } else {
-        app.diff_scroll_offset
+        app.diff.scroll_offset
     }
     .min(total_lines.saturating_sub(visible_height));
 
