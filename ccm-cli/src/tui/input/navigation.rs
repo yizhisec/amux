@@ -118,6 +118,40 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
 
         Action::SwitchRepo(idx) => app.switch_repo_sync(idx),
 
+        Action::Select => {
+            // Select action: context-aware behavior
+            match app.focus {
+                Focus::Sidebar => {
+                    // In sidebar: toggle expand for worktrees, enter terminal for sessions
+                    match app.current_sidebar_item() {
+                        SidebarItem::Worktree(_) => app.toggle_sidebar_expand(),
+                        SidebarItem::Session(_, _) => {
+                            if app.terminal.active_session_id.is_some() {
+                                Some(AsyncAction::ConnectStream)
+                            } else {
+                                None
+                            }
+                        }
+                        SidebarItem::None => None,
+                    }
+                }
+                Focus::Branches => {
+                    // In branches: move to sessions view
+                    app.focus = Focus::Sessions;
+                    None
+                }
+                Focus::Sessions => {
+                    // In sessions: enter terminal
+                    if app.terminal.active_session_id.is_some() {
+                        Some(AsyncAction::ConnectStream)
+                    } else {
+                        None
+                    }
+                }
+                Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => None,
+            }
+        }
+
         Action::ToggleExpand => app.toggle_sidebar_expand(),
 
         Action::ToggleTreeView => {
