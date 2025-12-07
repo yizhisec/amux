@@ -10,11 +10,13 @@ use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{
-        disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode, size, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+        EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -275,6 +277,9 @@ pub struct App {
     pub terminal_mode: TerminalMode,
     pub scroll_offset: usize,
     pub terminal_fullscreen: bool,
+    pub last_terminal_hash: u64, // Hash of terminal content for change detection
+    pub cached_terminal_lines: Vec<ratatui::text::Line<'static>>, // Cached terminal lines
+    pub cached_terminal_size: (u16, u16), // (height, width) for cache invalidation
 
     // Diff state
     pub right_panel_view: RightPanelView,
@@ -345,6 +350,9 @@ impl App {
             terminal_mode: TerminalMode::Normal,
             scroll_offset: 0,
             terminal_fullscreen: false,
+            last_terminal_hash: 0,
+            cached_terminal_lines: Vec::new(),
+            cached_terminal_size: (0, 0),
             right_panel_view: RightPanelView::Terminal,
             diff_files: Vec::new(),
             diff_expanded: std::collections::HashSet::new(),
@@ -1626,8 +1634,8 @@ impl App {
         self.subscribe_events().await;
     }
 
-    /// Handle a daemon event
-    fn handle_daemon_event(&mut self, event: DaemonEvent) {
+    /// Handle daemon event and return true if UI needs redraw
+    fn handle_daemon_event(&mut self, event: DaemonEvent) -> bool {
         match event.event {
             Some(daemon_event::Event::SessionCreated(e)) => {
                 debug!(
@@ -1642,18 +1650,22 @@ impl App {
                     ) {
                         if session.repo_id == repo.id && session.branch == branch.branch {
                             self.sessions.push(session);
+                            return true; // Session list changed
                         }
                     }
                 }
+                false
             }
             Some(daemon_event::Event::SessionDestroyed(e)) => {
                 debug!("Event: SessionDestroyed {}", e.session_id);
+                let old_len = self.sessions.len();
                 // Remove session from list
                 self.sessions.retain(|s| s.id != e.session_id);
                 // Clamp session index
                 if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
                     self.session_idx = self.sessions.len() - 1;
                 }
+                self.sessions.len() != old_len // Only redraw if session was actually removed
             }
             Some(daemon_event::Event::SessionNameUpdated(e)) => {
                 debug!(
@@ -1662,18 +1674,26 @@ impl App {
                 );
                 // Update session name in list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
-                    session.name = e.new_name;
+                    if session.name != e.new_name {
+                        session.name = e.new_name;
+                        return true; // Name changed
+                    }
                 }
+                false
             }
             Some(daemon_event::Event::SessionStatusChanged(e)) => {
                 debug!(
                     "Event: SessionStatusChanged {} -> {}",
                     e.session_id, e.new_status
                 );
-                // Update session status in list
+                // Update session status in list - only redraw if status actually changed
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
-                    session.status = e.new_status;
+                    if session.status != e.new_status {
+                        session.status = e.new_status;
+                        return true; // Status changed
+                    }
                 }
+                false
             }
             Some(daemon_event::Event::WorktreeAdded(e)) => {
                 debug!(
@@ -1686,25 +1706,32 @@ impl App {
                         if worktree.repo_id == repo.id {
                             self.worktrees.push(worktree);
                             self.dirty.sidebar = true;
+                            return true;
                         }
                     }
                 }
+                false
             }
             Some(daemon_event::Event::WorktreeRemoved(e)) => {
                 debug!("Event: WorktreeRemoved {} {}", e.repo_id, e.branch);
                 // Remove worktree from list if it matches current repo
                 if let Some(repo) = self.repos.get(self.repo_idx) {
                     if e.repo_id == repo.id {
+                        let old_len = self.worktrees.len();
                         self.worktrees.retain(|w| w.branch != e.branch);
                         // Clamp branch index
                         if !self.worktrees.is_empty() && self.branch_idx >= self.worktrees.len() {
                             self.branch_idx = self.worktrees.len() - 1;
                         }
-                        self.dirty.sidebar = true;
+                        if self.worktrees.len() != old_len {
+                            self.dirty.sidebar = true;
+                            return true;
+                        }
                     }
                 }
+                false
             }
-            None => {}
+            None => false,
         }
     }
 
@@ -2124,8 +2151,54 @@ impl App {
         Ok(())
     }
 
-    /// Get terminal lines for rendering
+    /// Calculate a hash of visible terminal content for change detection
+    /// Returns true if terminal content has changed since last call
+    pub fn update_terminal_hash(&mut self) -> bool {
+        let new_hash = self.calculate_terminal_hash();
+        if new_hash != self.last_terminal_hash {
+            self.last_terminal_hash = new_hash;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Calculate hash of current terminal content
+    fn calculate_terminal_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+
+        if let Ok(parser) = self.terminal_parser.lock() {
+            let screen = parser.screen();
+            // Hash the terminal contents as a simple string
+            // This is lightweight since we only need to detect changes
+            screen.contents().hash(&mut hasher);
+            // Also hash cursor position as it affects rendering
+            let (cursor_row, cursor_col) = screen.cursor_position();
+            cursor_row.hash(&mut hasher);
+            cursor_col.hash(&mut hasher);
+        }
+
+        hasher.finish()
+    }
+
+    /// Get terminal lines for rendering (uses cache when available)
     pub fn get_terminal_lines(&self, height: u16, width: u16) -> Vec<ratatui::text::Line<'static>> {
+        // Use cached lines if available and size matches
+        if self.cached_terminal_size == (height, width) && !self.cached_terminal_lines.is_empty() {
+            return self.cached_terminal_lines.clone();
+        }
+
+        // Generate lines from vt100 parser
+        self.generate_terminal_lines(height, width)
+    }
+
+    /// Generate terminal lines from vt100 parser (internal, always regenerates)
+    fn generate_terminal_lines(
+        &self,
+        height: u16,
+        width: u16,
+    ) -> Vec<ratatui::text::Line<'static>> {
         let mut lines = Vec::new();
 
         if let Ok(parser) = self.terminal_parser.lock() {
@@ -2189,6 +2262,20 @@ impl App {
         }
 
         lines
+    }
+
+    /// Update terminal line cache (call before rendering when content changed)
+    #[allow(dead_code)]
+    pub fn update_terminal_cache(&mut self, height: u16, width: u16) {
+        self.cached_terminal_lines = self.generate_terminal_lines(height, width);
+        self.cached_terminal_size = (height, width);
+    }
+
+    /// Invalidate terminal cache (call when session changes)
+    #[allow(dead_code)]
+    pub fn invalidate_terminal_cache(&mut self) {
+        self.cached_terminal_lines.clear();
+        self.cached_terminal_size = (0, 0);
     }
 
     // ========== Diff View ==========
@@ -2909,9 +2996,14 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     // Spawn input reader thread (crossterm events are blocking)
     let mut input_rx = spawn_input_reader();
 
-    // Render interval (~60fps)
-    let mut render_interval = tokio::time::interval(std::time::Duration::from_millis(16));
+    // Render interval (~30fps for smoother rendering, reduces flicker)
+    let mut render_interval = tokio::time::interval(std::time::Duration::from_millis(33));
     render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Minimum time between renders to prevent flicker during high-frequency updates
+    // 100ms (10fps) provides stable rendering during plan mode while still feeling responsive
+    let min_render_interval = std::time::Duration::from_millis(100);
+    let mut last_render = std::time::Instant::now();
 
     // Fallback timers
     let mut last_refresh = std::time::Instant::now();
@@ -2921,6 +3013,8 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
 
     // State
     let mut dirty = true;
+    let mut force_render = false; // Force immediate render (for user input)
+    let mut pty_received = false; // Track if PTY data was received (needs hash check)
     let mut pending_action: Option<AsyncAction> = None;
 
     // Main loop with tokio::select!
@@ -2941,14 +3035,20 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                             pending_action = Some(action);
                         }
                         dirty = true;
+                        force_render = true; // User input needs immediate feedback
                     }
                     Event::Resize(cols, rows) => {
                         let _ = app.resize_terminal(rows, cols).await;
+                        // Invalidate cache when resize happens
+                        app.cached_terminal_lines.clear();
+                        app.cached_terminal_size = (0, 0);
                         dirty = true;
+                        // Don't force render on resize - let it be throttled to reduce flicker
                     }
                     Event::Mouse(mouse) => {
                         handle_mouse_sync(&mut app, mouse);
                         dirty = true;
+                        force_render = true;
                     }
                     _ => {}
                 }
@@ -2964,7 +3064,9 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                 if let Ok(mut parser) = app.terminal_parser.lock() {
                     parser.process(&data);
                 }
-                dirty = true;
+                // Don't set dirty immediately - mark for hash check on render tick
+                // This prevents excessive redraws when content hasn't visually changed
+                pty_received = true;
             }
 
             // 3. Daemon events
@@ -2974,8 +3076,10 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     None => std::future::pending().await,
                 }
             } => {
-                app.handle_daemon_event(event);
-                dirty = true;
+                // Only mark dirty if the event actually changed something visible
+                if app.handle_daemon_event(event) {
+                    dirty = true;
+                }
             }
 
             // 4. Render tick + execute pending async actions
@@ -2986,6 +3090,14 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                         app.error_message = Some(format!("{}", e));
                     }
                     dirty = true;
+                }
+
+                // Check if terminal content actually changed (only if PTY data was received)
+                if pty_received {
+                    if app.update_terminal_hash() {
+                        dirty = true;
+                    }
+                    pty_received = false;
                 }
 
                 // Check if we need to resubscribe (event channel disconnected)
@@ -3004,10 +3116,20 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     }
                 }
 
-                // Only render if dirty
-                if dirty {
+                // Render if:
+                // 1. force_render is set (user input - needs immediate feedback), OR
+                // 2. dirty and minimum interval has passed (background updates - throttled)
+                if dirty && (force_render || last_render.elapsed() >= min_render_interval) {
+                    // Use synchronized update to prevent flicker
+                    // Terminal will buffer all output until EndSynchronizedUpdate
+                    execute!(terminal.backend_mut(), BeginSynchronizedUpdate)
+                        .map_err(TuiError::Render)?;
                     terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
+                    execute!(terminal.backend_mut(), EndSynchronizedUpdate)
+                        .map_err(TuiError::Render)?;
                     dirty = false;
+                    force_render = false;
+                    last_render = std::time::Instant::now();
                 }
             }
         }
