@@ -1319,17 +1319,14 @@ fn draw_input_overlay(f: &mut Frame, area: Rect, app: &App) {
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
-
-    // Draw input box
+    // Draw input box with background to cover underlying content
     let input = Paragraph::new(app.input_buffer.as_str())
-        .style(Style::default().fg(Color::Yellow))
+        .style(Style::default().fg(Color::Yellow).bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
+                .border_style(Style::default().fg(Color::Cyan).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
                 .title(" New Branch (Enter=create, Esc=cancel) "),
         );
     f.render_widget(input, popup_area);
@@ -1350,17 +1347,14 @@ fn draw_rename_session_overlay(f: &mut Frame, area: Rect, app: &App) {
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
-
-    // Draw input box
+    // Draw input box with background to cover underlying content
     let input = Paragraph::new(app.input_buffer.as_str())
-        .style(Style::default().fg(Color::Yellow))
+        .style(Style::default().fg(Color::Yellow).bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green))
+                .border_style(Style::default().fg(Color::Green).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
                 .title(" Rename Session (Enter=save, Esc=cancel) "),
         );
     f.render_widget(input, popup_area);
@@ -1380,10 +1374,6 @@ fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget)
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
 
     // Build message based on target
     let (title, message) = match target {
@@ -1409,10 +1399,12 @@ fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget)
 
     let confirm = Paragraph::new(text)
         .alignment(ratatui::layout::Alignment::Center)
+        .style(Style::default().bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red))
+                .border_style(Style::default().fg(Color::Red).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
                 .title(title),
         );
     f.render_widget(confirm, popup_area);
@@ -1428,10 +1420,6 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: 
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
-
     // Split popup into sections
     let inner = popup_area.inner(ratatui::layout::Margin::new(1, 1));
     let chunks = Layout::default()
@@ -1445,16 +1433,17 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: 
         ])
         .split(inner);
 
-    // Draw border
+    // Draw border with background to cover underlying content
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(Color::Cyan).bg(Color::Black))
+        .style(Style::default().bg(Color::Black))
         .title(" Add Worktree (j/k=select, Enter=add, Esc=cancel) ");
     f.render_widget(block, popup_area);
 
     // Instructions
     let instructions = Paragraph::new("Select existing branch or type new name:")
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(Color::DarkGray).bg(Color::Black));
     f.render_widget(instructions, chunks[0]);
 
     // Base branch info (only shown when typing new branch name)
@@ -1463,9 +1452,9 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: 
         None => "Base: HEAD (new branch will be created from HEAD)".to_string(),
     };
     let base_style = if !app.input_buffer.is_empty() {
-        Style::default().fg(Color::Green)
+        Style::default().fg(Color::Green).bg(Color::Black)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::DarkGray).bg(Color::Black)
     };
     let base_paragraph = Paragraph::new(base_info).style(base_style);
     f.render_widget(base_paragraph, chunks[1]);
@@ -1481,27 +1470,28 @@ fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: 
                 let style = if is_selected {
                     Style::default()
                         .fg(Color::Yellow)
+                        .bg(Color::Black)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::White).bg(Color::Black)
                 };
                 let prefix = if is_selected { "> " } else { "  " };
                 ListItem::new(format!("{}○ {}", prefix, branch.branch)).style(style)
             })
             .collect();
-        let list = List::new(items);
+        let list = List::new(items).style(Style::default().bg(Color::Black));
         f.render_widget(list, chunks[2]);
     } else {
         let empty = Paragraph::new("No available branches without worktree")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(Color::DarkGray).bg(Color::Black));
         f.render_widget(empty, chunks[2]);
     }
 
     // Input field
     let input_style = if !app.input_buffer.is_empty() {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(Color::Yellow).bg(Color::Black)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::DarkGray).bg(Color::Black)
     };
     let input_text = if app.input_buffer.is_empty() {
         "New branch: (type to create new)"
@@ -1534,10 +1524,6 @@ fn draw_confirm_delete_branch_overlay(f: &mut Frame, area: Rect, branch: &str) {
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
-
     let text = vec![
         Line::from(format!("Worktree deleted. Delete branch '{}'?", branch)),
         Line::from(""),
@@ -1551,10 +1537,12 @@ fn draw_confirm_delete_branch_overlay(f: &mut Frame, area: Rect, branch: &str) {
 
     let confirm = Paragraph::new(text)
         .alignment(ratatui::layout::Alignment::Center)
+        .style(Style::default().bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow))
+                .border_style(Style::default().fg(Color::Yellow).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
                 .title(" Delete Branch? "),
         );
     f.render_widget(confirm, popup_area);
@@ -1573,10 +1561,6 @@ fn draw_confirm_delete_worktree_sessions_overlay(
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
 
     let session_word = if session_count == 1 {
         "session"
@@ -1600,10 +1584,12 @@ fn draw_confirm_delete_worktree_sessions_overlay(
 
     let confirm = Paragraph::new(text)
         .alignment(ratatui::layout::Alignment::Center)
+        .style(Style::default().bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow))
+                .border_style(Style::default().fg(Color::Yellow).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
                 .title(" Delete Sessions? "),
         );
     f.render_widget(confirm, popup_area);
@@ -1627,10 +1613,6 @@ fn draw_add_line_comment_overlay(
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
 
     // Truncate file path if too long
     let max_path_len = (popup_width as usize).saturating_sub(20);
@@ -1669,12 +1651,15 @@ fn draw_add_line_comment_overlay(
         )]));
     }
 
-    let input = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(" Add Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
-    );
+    let input = Paragraph::new(text)
+        .style(Style::default().bg(Color::Black))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
+                .title(" Add Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
+        );
     f.render_widget(input, popup_area);
 
     // Calculate cursor position for multiline input
@@ -1703,10 +1688,6 @@ fn draw_edit_line_comment_overlay(
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let clear = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(clear, area);
-
     // Truncate file path if too long
     let max_path_len = (popup_width as usize).saturating_sub(20);
     let display_path = if file_path.len() > max_path_len {
@@ -1744,12 +1725,15 @@ fn draw_edit_line_comment_overlay(
         )]));
     }
 
-    let input = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green))
-            .title(" Edit Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
-    );
+    let input = Paragraph::new(text)
+        .style(Style::default().bg(Color::Black))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
+                .title(" Edit Comment (Enter=save, Shift+Enter=newline, Esc=cancel) "),
+        );
     f.render_widget(input, popup_area);
 
     // Calculate cursor position for multiline input
