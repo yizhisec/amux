@@ -3,6 +3,7 @@
 mod app;
 pub mod highlight;
 mod input;
+pub mod navigation;
 pub mod state;
 mod ui;
 

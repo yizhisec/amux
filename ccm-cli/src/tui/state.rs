@@ -464,3 +464,91 @@ impl TodoState {
         }
     }
 }
+
+// VirtualList implementations for state types
+use super::navigation::VirtualList;
+
+impl VirtualList for SidebarState {
+    fn virtual_len(&self) -> usize {
+        // Sidebar contains worktrees and their sessions
+        let mut count = 0;
+        for sessions in self.sessions_by_worktree.values() {
+            count += 1; // Worktree itself
+            if self.expanded_worktrees.contains(&count) {
+                count += sessions.len(); // Sessions if expanded
+            }
+        }
+        count.max(1) // At least 1 item
+    }
+
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn set_cursor(&mut self, pos: usize) {
+        self.cursor = pos;
+    }
+}
+
+impl VirtualList for DiffState {
+    fn virtual_len(&self) -> usize {
+        let mut count = 0;
+        for (idx, _) in self.files.iter().enumerate() {
+            count += 1; // File header
+            if self.expanded.contains(&idx) {
+                if let Some(lines) = self.file_lines.get(&idx) {
+                    count += lines.len();
+                }
+            }
+        }
+        count.max(1)
+    }
+
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn set_cursor(&mut self, pos: usize) {
+        self.cursor = pos;
+    }
+}
+
+impl VirtualList for GitState {
+    fn virtual_len(&self) -> usize {
+        let mut count = 0;
+        for section in [
+            GitSection::Staged,
+            GitSection::Unstaged,
+            GitSection::Untracked,
+        ] {
+            if self.expanded_sections.contains(&section) {
+                count += 1; // Section header
+                            // Count files in this section
+                count += self.files.iter().filter(|f| f.section == section).count();
+            }
+        }
+        count.max(1)
+    }
+
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn set_cursor(&mut self, pos: usize) {
+        self.cursor = pos;
+    }
+}
+
+impl VirtualList for TodoState {
+    fn virtual_len(&self) -> usize {
+        self.display_order.len().max(1)
+    }
+
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn set_cursor(&mut self, pos: usize) {
+        self.cursor = pos;
+    }
+}
