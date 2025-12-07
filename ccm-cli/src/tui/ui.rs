@@ -1,7 +1,8 @@
 //! TUI rendering - Tab + Sidebar + Terminal layout
 
-use super::app::{
-    App, DeleteTarget, Focus, GitSection, InputMode, PrefixMode, RightPanelView, TerminalMode,
+use super::app::App;
+use super::state::{
+    DeleteTarget, Focus, GitSection, InputMode, PrefixMode, RightPanelView, TerminalMode,
 };
 use super::highlight::Highlighter;
 use ccm_proto::daemon::{DiffLine, FileStatus, LineType, TodoItem};
@@ -1023,7 +1024,7 @@ fn draw_diff_fullscreen(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw diff with inline file expansion (unified navigation view)
 fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
-    use super::app::DiffItem;
+    use super::state::DiffItem;
 
     let is_focused = app.focus == Focus::DiffFiles;
     let border_style = if is_focused {

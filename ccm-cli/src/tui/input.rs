@@ -5,7 +5,8 @@
 //!
 //! All input handlers are synchronous and return Option<AsyncAction> for deferred execution.
 
-use super::app::{App, AsyncAction, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
+use super::app::App;
+use super::state::{AsyncAction, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 /// Handle keyboard input (sync version - returns async action if needed)
@@ -562,7 +563,7 @@ fn handle_terminal_normal_mode_sync(app: &mut App, key: KeyEvent) {
 
 /// Handle input in navigation mode (sidebar)
 fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    use super::app::SidebarItem;
+    use super::state::SidebarItem;
 
     // Clear status messages on any key press
     app.status_message = None;
