@@ -86,6 +86,11 @@ fn execute_diff_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             None
         }
 
+        Action::BackToTerminal => {
+            app.switch_to_terminal_view();
+            None
+        }
+
         // Unhandled or context-inappropriate actions
         _ => None,
     }

@@ -396,6 +396,8 @@ pub struct SidebarState {
     pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>,
     /// Whether git panel is enabled
     pub git_panel_enabled: bool,
+    /// Total number of items in the virtual list (worktrees + expanded sessions)
+    pub total_items: usize,
 }
 
 impl Default for SidebarState {
@@ -406,6 +408,7 @@ impl Default for SidebarState {
             cursor: 0,
             sessions_by_worktree: HashMap::new(),
             git_panel_enabled: true,
+            total_items: 0,
         }
     }
 }
@@ -442,21 +445,9 @@ use super::navigation::VirtualList;
 
 impl VirtualList for SidebarState {
     fn virtual_len(&self) -> usize {
-        // Sidebar contains worktrees and their sessions
-        // Get all worktree indices and sort them to maintain consistent order
-        let mut worktree_indices: Vec<usize> = self.sessions_by_worktree.keys().copied().collect();
-        worktree_indices.sort_unstable();
-
-        let mut count = 0;
-        for idx in worktree_indices {
-            count += 1; // Worktree itself
-            if self.expanded_worktrees.contains(&idx) {
-                if let Some(sessions) = self.sessions_by_worktree.get(&idx) {
-                    count += sessions.len(); // Sessions if expanded
-                }
-            }
-        }
-        count.max(1) // At least 1 item
+        // This needs to be updated by the app when worktrees are loaded
+        // For now, return the stored count
+        self.total_items.max(1)
     }
 
     fn cursor(&self) -> usize {

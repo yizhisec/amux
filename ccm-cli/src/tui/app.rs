@@ -245,6 +245,7 @@ impl App {
         // Clear worktree-related caches when refreshing
         self.sidebar.sessions_by_worktree.clear();
         self.sidebar.expanded_worktrees.clear();
+        self.update_sidebar_total_items();
 
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
@@ -337,6 +338,20 @@ impl App {
     // ========== Tree view helpers ==========
 
     /// Get the current sidebar item at cursor position
+    /// Update total_items count in sidebar based on current worktrees and expanded state
+    fn update_sidebar_total_items(&mut self) {
+        let mut count = 0;
+        for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
+            count += 1; // Worktree itself
+            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
+                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
+                    count += sessions.len(); // Sessions if expanded
+                }
+            }
+        }
+        self.sidebar.total_items = count;
+    }
+
     pub fn current_sidebar_item(&self) -> SidebarItem {
         let mut pos = 0;
         for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
@@ -367,9 +382,11 @@ impl App {
                 self.sidebar.expanded_worktrees.insert(wt_idx);
                 // Load sessions for this worktree if not loaded
                 if !self.sidebar.sessions_by_worktree.contains_key(&wt_idx) {
+                    self.update_sidebar_total_items();
                     return Some(AsyncAction::LoadWorktreeSessions { wt_idx });
                 }
             }
+            self.update_sidebar_total_items();
             self.dirty.sidebar = true;
         }
         None
@@ -860,6 +877,7 @@ impl App {
                             self.load_worktree_sessions(self.branch_idx).await?;
                             // Expand worktree
                             self.sidebar.expanded_worktrees.insert(self.branch_idx);
+                            self.update_sidebar_total_items();
                             // Set active session before entering terminal
                             self.terminal.active_session_id = Some(session.id.clone());
                             self.enter_terminal().await?;
@@ -944,6 +962,7 @@ impl App {
                             // Also load sessions for tree view
                             self.load_worktree_sessions(b_idx).await?;
                             self.sidebar.expanded_worktrees.insert(b_idx);
+                            self.update_sidebar_total_items();
                             // Return to appropriate focus before entering terminal
                             self.focus = if self.sidebar.tree_view_enabled {
                                 Focus::Sidebar
@@ -1674,6 +1693,7 @@ impl App {
                 .list_sessions(Some(&repo.id), Some(&worktree.branch))
                 .await?;
             self.sidebar.sessions_by_worktree.insert(wt_idx, sessions);
+            self.update_sidebar_total_items();
             self.dirty.sidebar = true;
         }
         Ok(())

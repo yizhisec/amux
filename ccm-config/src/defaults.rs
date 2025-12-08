@@ -183,6 +183,7 @@ fn default_diff_bindings() -> HashMap<String, String> {
     map.insert("z".to_string(), "toggle-fullscreen".to_string());
 
     map.insert("Esc".to_string(), "back-to-terminal".to_string());
+    map.insert("q".to_string(), "back-to-terminal".to_string());
     map.insert("t".to_string(), "back-to-terminal".to_string());
 
     map
