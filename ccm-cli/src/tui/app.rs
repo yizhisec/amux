@@ -67,6 +67,9 @@ pub struct App {
     // Focus position
     pub focus: Focus,
 
+    // Focus restoration stack for popups/dialogs
+    pub saved_focus_stack: Vec<Focus>,
+
     // Data
     pub repos: Vec<RepoInfo>,
     pub worktrees: Vec<WorktreeInfo>, // Only branches with worktrees
@@ -125,6 +128,7 @@ impl App {
             branch_idx: 0,
             session_idx: 0,
             focus: Focus::Sidebar,
+            saved_focus_stack: Vec::new(),
             repos: Vec::new(),
             worktrees: Vec::new(),
             available_branches: Vec::new(),
@@ -893,11 +897,33 @@ impl App {
         Ok(())
     }
 
-    /// Cancel input mode
+    /// Save current focus before opening a dialog/popup
+    pub fn save_focus(&mut self) {
+        self.saved_focus_stack.push(self.focus.clone());
+    }
+
+    /// Restore focus after closing a dialog/popup
+    /// Returns true if focus was restored, false if stack was empty
+    pub fn restore_focus(&mut self) -> bool {
+        if let Some(saved) = self.saved_focus_stack.pop() {
+            self.focus = saved;
+            true
+        } else {
+            // Stack empty - graceful degradation
+            #[cfg(debug_assertions)]
+            eprintln!("WARNING: Focus stack empty during restore_focus()");
+            false
+        }
+    }
+
+    /// Cancel input mode and restore focus
     pub fn cancel_input(&mut self) {
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
         self.status_message = None;
+
+        // Restore focus when canceling
+        self.restore_focus();
     }
 
     /// Start add worktree mode
@@ -915,7 +941,8 @@ impl App {
 
     /// Start rename session mode
     pub fn start_rename_session(&mut self) {
-        if let Some(session) = self.sessions.get(self.session_idx) {
+        if let Some(session) = self.sessions.get(self.session_idx).cloned() {
+            self.save_focus();
             self.input_mode = InputMode::RenameSession {
                 session_id: session.id.clone(),
             };
@@ -933,6 +960,7 @@ impl App {
         let new_name = self.input_buffer.trim().to_string();
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
+        self.restore_focus();
 
         if new_name.is_empty() {
             self.error_message = Some("Session name cannot be empty".to_string());
@@ -986,6 +1014,7 @@ impl App {
 
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
+        self.restore_focus();
 
         // Create worktree (pass base_branch only when creating new branch)
         let base = if use_base {
@@ -1059,6 +1088,7 @@ impl App {
         };
 
         self.input_mode = InputMode::Normal;
+        self.restore_focus();
 
         // Get repo_id
         let repo_id = match self.repos.get(self.repo_idx) {
@@ -1082,6 +1112,7 @@ impl App {
 
     /// Request deletion (enters confirm mode)
     pub fn request_delete(&mut self) {
+        self.save_focus();
         match self.focus {
             Focus::Sidebar => {
                 // In tree view: delete based on current selection
@@ -1174,11 +1205,13 @@ impl App {
                 match self.client.remove_worktree(&repo_id, &branch).await {
                     Ok(_) => {
                         // After removing worktree, ask if user wants to delete branch too
+                        // Don't restore focus yet - we're chaining to another dialog
                         self.input_mode = InputMode::ConfirmDeleteBranch(branch);
                         self.refresh_branches().await?;
                     }
                     Err(e) => {
                         self.error_message = Some(e.to_string());
+                        self.restore_focus();
                     }
                 }
             }
@@ -1194,9 +1227,11 @@ impl App {
                         self.refresh_sessions().await?;
                         // Also refresh worktree sessions for tree view
                         self.load_worktree_sessions(self.branch_idx).await?;
+                        self.restore_focus();
                     }
                     Err(e) => {
                         self.error_message = Some(e.to_string());
+                        self.restore_focus();
                     }
                 }
             }

@@ -301,6 +301,9 @@ pub struct TerminalState {
     pub session_parsers: HashMap<String, Arc<Mutex<vt100::Parser>>>,
     /// Currently active session ID
     pub active_session_id: Option<String>,
+    /// Session ID before switching to shell (for Ctrl+` toggle)
+    #[allow(dead_code)]
+    pub session_before_shell: Option<String>,
     /// Whether in interactive mode
     pub is_interactive: bool,
     /// Terminal mode (Normal/Insert)
@@ -321,6 +324,7 @@ impl Default for TerminalState {
             parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             session_parsers: HashMap::new(),
             active_session_id: None,
+            session_before_shell: None,
             is_interactive: false,
             mode: TerminalMode::Normal,
             scroll_offset: 0,

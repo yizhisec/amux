@@ -70,6 +70,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
+            app.save_focus();
             app.focus = Focus::Branches;
             app.start_add_worktree();
             None
@@ -79,6 +80,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
+            // request_delete already calls save_focus
             app.request_delete();
             None
         }
@@ -111,6 +113,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
+            app.save_focus();
             app.input_mode = InputMode::TodoPopup;
             Some(AsyncAction::LoadTodos)
         }
