@@ -62,28 +62,24 @@ pub trait VirtualList {
     }
 
     /// Page up by a given number of lines
+    /// Returns true if moved the full distance, false if hit the top
     fn page_up(&mut self, lines: usize) -> bool {
         let current = self.cursor();
-        if current > 0 {
-            let new_pos = current.saturating_sub(lines);
-            self.set_cursor(new_pos);
-            true
-        } else {
-            false
-        }
+        let new_pos = current.saturating_sub(lines);
+        self.set_cursor(new_pos);
+        // Return true only if we moved the full distance
+        current >= lines
     }
 
     /// Page down by a given number of lines
+    /// Returns true if moved the full distance, false if hit the bottom
     fn page_down(&mut self, lines: usize) -> bool {
         let current = self.cursor();
         let max = self.virtual_len().saturating_sub(1);
-        if current < max {
-            let new_pos = (current + lines).min(max);
-            self.set_cursor(new_pos);
-            true
-        } else {
-            false
-        }
+        let new_pos = (current + lines).min(max);
+        self.set_cursor(new_pos);
+        // Return true only if we moved the full distance
+        new_pos == current + lines
     }
 
     /// Check if cursor is at the top

@@ -1,17 +1,17 @@
 //! Dialog input handling (confirmations, text input overlays)
 //!
-//! Uses common input handling utilities from utils module to reduce duplication.
+//! Uses common input handling utilities from input/utils module to reduce duplication.
 
-use super::super::app::App;
-use super::super::state::{AsyncAction, InputMode};
-use super::utils::{
+use crate::tui::app::App;
+use crate::tui::input::utils::{
     handle_confirmation, handle_confirmation_with_enter, handle_text_input_with_actions,
 };
+use crate::tui::state::{AsyncAction, InputMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handle input when in confirm delete mode
 pub fn handle_confirm_delete_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    use super::super::state::{DeleteTarget, ExitCleanupAction};
+    use crate::tui::state::{DeleteTarget, ExitCleanupAction};
 
     // Only Session deletion has options (Destroy/Stop)
     let is_session = matches!(

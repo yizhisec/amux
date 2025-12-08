@@ -1,9 +1,9 @@
 //! Terminal mode input handling (Insert and Normal modes)
 
-use super::super::app::App;
-use super::super::state::AsyncAction;
-use super::resolver;
-use super::utils::key_to_bytes;
+use crate::tui::app::App;
+use crate::tui::input::resolver;
+use crate::tui::input::utils::key_to_bytes;
+use crate::tui::state::AsyncAction;
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -67,7 +67,7 @@ fn execute_terminal_insert_action(app: &mut App, action: Action) -> Option<Async
 
         // Exit insert mode
         Action::NormalMode => {
-            app.terminal.mode = super::super::state::TerminalMode::Normal;
+            app.terminal.mode = crate::tui::state::TerminalMode::Normal;
             None
         }
 

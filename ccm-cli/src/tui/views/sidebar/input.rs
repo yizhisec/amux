@@ -1,8 +1,8 @@
 //! Navigation mode input handling (sidebar navigation)
 
-use super::super::app::App;
-use super::super::state::{AsyncAction, Focus, RightPanelView, SidebarItem};
-use super::resolver;
+use crate::tui::app::App;
+use crate::tui::input::resolver;
+use crate::tui::state::{AsyncAction, Focus, RightPanelView, SidebarItem};
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 

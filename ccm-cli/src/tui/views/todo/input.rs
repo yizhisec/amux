@@ -3,11 +3,13 @@
 //! Uses common input handling utilities from utils module to reduce duplication.
 //! Navigation uses the VirtualList trait for consistency across components.
 
-use super::super::app::App;
-use super::super::navigation::VirtualList;
-use super::super::state::{AsyncAction, InputMode};
-use super::resolver;
-use super::utils::{handle_confirmation_with_enter, handle_text_input, TextInputResult};
+use crate::tui::app::App;
+use crate::tui::input::resolver;
+use crate::tui::input::utils::{
+    handle_confirmation_with_enter, handle_text_input, TextInputResult,
+};
+use crate::tui::state::{AsyncAction, InputMode};
+use crate::tui::widgets::virtual_list::VirtualList;
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 

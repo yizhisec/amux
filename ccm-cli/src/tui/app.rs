@@ -26,13 +26,13 @@ use tracing::{debug, warn};
 type Result<T> = std::result::Result<T, TuiError>;
 
 use super::input::{handle_input_sync, handle_mouse_sync, TextInput};
-use super::navigation::VirtualList;
 use super::state::{
     AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, ExitCleanupAction, Focus,
     GitPanelItem, GitSection, GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView,
     SidebarItem, SidebarState, TerminalMode, TerminalState, TodoState,
 };
 use super::ui::draw;
+use super::widgets::VirtualList;
 
 /// Terminal stream state for a session
 pub struct TerminalStream {

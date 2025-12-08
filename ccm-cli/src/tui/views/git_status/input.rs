@@ -1,8 +1,8 @@
 //! Git status panel input handling
 
-use super::super::app::App;
-use super::super::state::{AsyncAction, Focus, RightPanelView};
-use super::resolver;
+use crate::tui::app::App;
+use crate::tui::input::resolver;
+use crate::tui::state::{AsyncAction, Focus, RightPanelView};
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 

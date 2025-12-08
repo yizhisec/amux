@@ -3,8 +3,8 @@
 //! This module provides terminal rendering using a simple inline widget
 //! that converts vt100::Screen to ratatui widgets, similar to tui-term crate.
 
-use super::super::app::App;
-use super::super::state::{Focus, TerminalMode};
+use crate::tui::app::App;
+use crate::tui::state::{Focus, TerminalMode};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

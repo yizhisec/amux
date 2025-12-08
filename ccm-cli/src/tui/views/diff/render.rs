@@ -1,8 +1,8 @@
 //! Diff view rendering
 
-use super::super::app::App;
-use super::super::state::{DiffItem, Focus};
-use super::helpers::{
+use crate::tui::app::App;
+use crate::tui::state::{DiffItem, Focus};
+use crate::tui::widgets::helpers::{
     find_paired_addition, find_paired_deletion, get_highlighter, render_word_diff_line,
 };
 use ccm_proto::daemon::{FileStatus, LineType};

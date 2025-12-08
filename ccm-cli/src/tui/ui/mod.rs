@@ -1,39 +1,27 @@
-//! TUI rendering - Tab + Sidebar + Terminal layout
+//! TUI rendering - Main layout coordinator
 //!
-//! This module is organized into sub-modules by functional domain:
-//! - `helpers`: Word-level diff utilities and syntax highlighting
-//! - `tab_bar`: Tab bar and status bar rendering
-//! - `sidebar`: Sidebar with worktrees and sessions
-//! - `git_panel`: Git status panel
-//! - `terminal`: Terminal preview/interaction area
-//! - `diff`: Diff view with inline expansion
-//! - `overlays`: All popup dialogs and overlays
+//! This module coordinates the overall layout and delegates rendering to:
+//! - `tab_bar`: Tab bar and status bar rendering (top level)
+//! - `views`: Main functional areas (sidebar, terminal, diff, git_status, todo)
+//! - `overlays`: Popup dialogs and overlays
 
-mod diff;
-mod git_panel;
-mod helpers;
-mod overlays;
-mod sidebar;
-mod tab_bar;
-mod terminal;
-
-use super::app::App;
-use super::state::{Focus, InputMode, RightPanelView};
-use diff::{draw_diff_fullscreen, draw_diff_view};
-use overlays::{
-    draw_add_line_comment_overlay, draw_add_todo_overlay, draw_add_worktree_overlay,
-    draw_confirm_delete_branch_overlay, draw_confirm_delete_overlay,
-    draw_confirm_delete_todo_overlay, draw_confirm_delete_worktree_sessions_overlay,
-    draw_edit_line_comment_overlay, draw_edit_todo_description_overlay, draw_edit_todo_overlay,
-    draw_input_overlay, draw_rename_session_overlay, draw_todo_popup,
+use crate::tui::app::App;
+use crate::tui::overlays::dialogs::{
+    draw_add_line_comment_overlay, draw_add_worktree_overlay, draw_confirm_delete_branch_overlay,
+    draw_confirm_delete_overlay, draw_confirm_delete_worktree_sessions_overlay,
+    draw_edit_line_comment_overlay, draw_input_overlay, draw_rename_session_overlay,
 };
+use crate::tui::state::{Focus, InputMode, RightPanelView};
+use crate::tui::tab_bar::{draw_status_bar, draw_tab_bar};
+use crate::tui::views::todo::{
+    draw_add_todo_overlay, draw_confirm_delete_todo_overlay, draw_edit_todo_description_overlay,
+    draw_edit_todo_overlay, draw_todo_popup,
+};
+use crate::tui::views::{diff, sidebar, terminal};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
 };
-use sidebar::draw_sidebar;
-use tab_bar::{draw_status_bar, draw_tab_bar};
-use terminal::{draw_terminal, draw_terminal_fullscreen};
 
 /// Main draw function - entry point for TUI rendering
 pub fn draw(f: &mut Frame, app: &App) {
@@ -149,13 +137,13 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 
     // Fullscreen terminal mode
     if app.terminal.fullscreen && app.focus == Focus::Terminal {
-        draw_terminal_fullscreen(f, area, app);
+        terminal::draw_terminal_fullscreen(f, area, app);
         return;
     }
 
     // Fullscreen diff mode
     if app.diff.fullscreen && app.focus == Focus::DiffFiles {
-        draw_diff_fullscreen(f, area, app);
+        diff::draw_diff_fullscreen(f, area, app);
         return;
     }
 
@@ -168,11 +156,11 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         ])
         .split(area);
 
-    draw_sidebar(f, chunks[0], app);
+    sidebar::draw_sidebar(f, chunks[0], app);
 
     // Draw right panel based on view mode
     match app.right_panel_view {
-        RightPanelView::Terminal => draw_terminal(f, chunks[1], app),
-        RightPanelView::Diff => draw_diff_view(f, chunks[1], app),
+        RightPanelView::Terminal => terminal::draw_terminal(f, chunks[1], app),
+        RightPanelView::Diff => diff::draw_diff_view(f, chunks[1], app),
     }
 }

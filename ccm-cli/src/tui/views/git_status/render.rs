@@ -1,7 +1,7 @@
 //! Git status panel rendering
 
-use super::super::app::App;
-use super::super::state::{Focus, GitSection};
+use crate::tui::app::App;
+use crate::tui::state::{Focus, GitSection};
 use ccm_proto::daemon::FileStatus;
 use ratatui::{
     layout::Rect,

@@ -1,8 +1,8 @@
 //! Sidebar rendering (worktrees and sessions)
 
-use super::super::app::App;
-use super::super::state::Focus;
-use super::git_panel::draw_git_status_panel;
+use crate::tui::app::App;
+use crate::tui::state::Focus;
+use crate::tui::views::git_status::draw_git_status_panel;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},

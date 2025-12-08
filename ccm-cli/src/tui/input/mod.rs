@@ -1,39 +1,38 @@
-//! Input handling - navigation mode vs terminal Normal/Insert modes
+//! Input handling - main input dispatcher
 //!
 //! Supports both direct keybindings and prefix key mode (Ctrl+s as prefix).
 //! Prefix mode allows access to navigation commands from any context.
 //!
 //! All input handlers are synchronous and return Option<AsyncAction> for deferred execution.
 //!
-//! This module is organized into sub-modules by input context:
+//! This module contains:
 //! - `utils`: Utility functions (key conversion, mode checks)
 //! - `prefix`: Prefix key command handling (Ctrl+s + ?)
-//! - `terminal`: Terminal mode input (Insert/Normal)
-//! - `navigation`: Sidebar navigation
-//! - `dialogs`: Confirmation dialogs and text input overlays
-//! - `diff`: Diff view input handling
-//! - `git_status`: Git status panel input
-//! - `todo`: TODO popup and input handling
+//! - `resolver`: Key-to-action resolution
 //! - `mouse`: Mouse event handling
+//!
+//! Input handlers for specific views are in their respective view modules:
+//! - `views::sidebar::input` - Sidebar navigation
+//! - `views::terminal::input` - Terminal mode input
+//! - `views::diff::input` - Diff view input
+//! - `views::git_status::input` - Git status panel input
+//! - `views::todo::input` - TODO popup input
+//! - `overlays::input` - Dialogs and confirmation overlays
 
-mod dialogs;
-mod diff;
-mod git_status;
 mod mouse;
-mod navigation;
 mod prefix;
-mod resolver;
-mod terminal;
-mod todo;
+pub mod resolver;
 pub mod utils;
 
-use super::app::App;
-use super::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
+use crate::tui::app::App;
+use crate::tui::overlays::input as overlay_input;
+use crate::tui::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
+use crate::tui::views::{diff, git_status, sidebar, terminal, todo};
 use crossterm::event::KeyEvent;
 
 // Re-export for external use
+pub use super::widgets::TextInput;
 pub use mouse::handle_mouse_sync;
-pub use utils::TextInput;
 
 /// Handle keyboard input (sync version - returns async action if needed)
 pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
@@ -51,27 +50,27 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
 
     // Handle input mode (new branch name entry)
     if app.input_mode == InputMode::NewBranch {
-        return dialogs::handle_input_mode_sync(app, key);
+        return overlay_input::handle_input_mode_sync(app, key);
     }
 
     // Handle add worktree mode
     if matches!(app.input_mode, InputMode::AddWorktree { .. }) {
-        return dialogs::handle_add_worktree_mode_sync(app, key);
+        return overlay_input::handle_add_worktree_mode_sync(app, key);
     }
 
     // Handle rename session mode
     if matches!(app.input_mode, InputMode::RenameSession { .. }) {
-        return dialogs::handle_rename_session_mode_sync(app, key);
+        return overlay_input::handle_rename_session_mode_sync(app, key);
     }
 
     // Handle confirm delete mode
     if matches!(app.input_mode, InputMode::ConfirmDelete(_)) {
-        return dialogs::handle_confirm_delete_sync(app, key);
+        return overlay_input::handle_confirm_delete_sync(app, key);
     }
 
     // Handle confirm delete branch mode
     if matches!(app.input_mode, InputMode::ConfirmDeleteBranch(_)) {
-        return dialogs::handle_confirm_delete_branch_sync(app, key);
+        return overlay_input::handle_confirm_delete_branch_sync(app, key);
     }
 
     // Handle confirm delete worktree sessions mode
@@ -79,17 +78,17 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         app.input_mode,
         InputMode::ConfirmDeleteWorktreeSessions { .. }
     ) {
-        return dialogs::handle_confirm_delete_worktree_sessions_sync(app, key);
+        return overlay_input::handle_confirm_delete_worktree_sessions_sync(app, key);
     }
 
     // Handle add line comment mode
     if matches!(app.input_mode, InputMode::AddLineComment { .. }) {
-        return dialogs::handle_add_line_comment_mode_sync(app, key);
+        return overlay_input::handle_add_line_comment_mode_sync(app, key);
     }
 
     // Handle edit line comment mode
     if matches!(app.input_mode, InputMode::EditLineComment { .. }) {
-        return dialogs::handle_edit_line_comment_mode_sync(app, key);
+        return overlay_input::handle_edit_line_comment_mode_sync(app, key);
     }
 
     // Handle TODO modes
@@ -135,5 +134,5 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     }
 
     // Handle sidebar navigation
-    navigation::handle_navigation_input_sync(app, key)
+    sidebar::handle_navigation_input_sync(app, key)
 }

@@ -441,7 +441,7 @@ impl TodoState {
 }
 
 // VirtualList implementations for state types
-use super::navigation::VirtualList;
+use super::widgets::VirtualList;
 
 impl VirtualList for SidebarState {
     fn virtual_len(&self) -> usize {

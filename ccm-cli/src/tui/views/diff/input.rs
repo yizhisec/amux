@@ -1,8 +1,8 @@
 //! Diff view input handling
 
-use super::super::app::App;
-use super::super::state::AsyncAction;
-use super::resolver;
+use crate::tui::app::App;
+use crate::tui::input::resolver;
+use crate::tui::state::AsyncAction;
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
 

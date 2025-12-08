@@ -1,7 +1,7 @@
 //! Tab bar and status bar rendering
 
-use super::super::app::App;
-use super::super::state::{Focus, PrefixMode, TerminalMode};
+use crate::tui::app::App;
+use crate::tui::state::{Focus, PrefixMode, TerminalMode};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
