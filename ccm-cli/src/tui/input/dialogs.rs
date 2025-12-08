@@ -3,7 +3,7 @@
 //! Uses common input handling utilities from utils module to reduce duplication.
 
 use super::super::app::App;
-use super::super::state::AsyncAction;
+use super::super::state::{AsyncAction, InputMode};
 use super::utils::{
     handle_confirmation, handle_confirmation_with_enter, handle_text_input_with_actions,
 };
@@ -11,7 +11,75 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Handle input when in confirm delete mode
 pub fn handle_confirm_delete_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    handle_confirmation_with_enter(app, &key, |a| a.cancel_input(), AsyncAction::ConfirmDelete)
+    use super::super::state::{DeleteTarget, ExitCleanupAction};
+
+    // Only Session deletion has options (Destroy/Stop)
+    let is_session = matches!(
+        app.input_mode,
+        InputMode::ConfirmDelete(DeleteTarget::Session { .. })
+    );
+
+    if !is_session {
+        // For other deletions (Worktree etc.), use simple confirmation
+        let target = match &app.input_mode {
+            InputMode::ConfirmDelete(t) => t.clone(),
+            _ => return None,
+        };
+        return handle_confirmation_with_enter(
+            app,
+            &key,
+            |a| a.cancel_input(),
+            AsyncAction::ConfirmDelete {
+                target,
+                action: ExitCleanupAction::Destroy, // Worktree can only be destroyed
+            },
+        );
+    }
+
+    // Session deletion: support navigation and selection
+    match key.code {
+        // j/k or up/down navigate options
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.session_delete_action = match app.session_delete_action {
+                ExitCleanupAction::Destroy => ExitCleanupAction::Stop,
+                ExitCleanupAction::Stop => ExitCleanupAction::Stop,
+            };
+            None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.session_delete_action = match app.session_delete_action {
+                ExitCleanupAction::Destroy => ExitCleanupAction::Destroy,
+                ExitCleanupAction::Stop => ExitCleanupAction::Destroy,
+            };
+            None
+        }
+        // Shortcuts
+        KeyCode::Char('d') => {
+            app.session_delete_action = ExitCleanupAction::Destroy;
+            None
+        }
+        KeyCode::Char('s') => {
+            app.session_delete_action = ExitCleanupAction::Stop;
+            None
+        }
+        // Enter confirms
+        KeyCode::Enter => {
+            let target = match &app.input_mode {
+                InputMode::ConfirmDelete(t) => t.clone(),
+                _ => return None,
+            };
+            Some(AsyncAction::ConfirmDelete {
+                target,
+                action: app.session_delete_action,
+            })
+        }
+        // Esc/n cancels
+        KeyCode::Esc | KeyCode::Char('n') => {
+            app.cancel_input();
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Handle input when in confirm delete branch mode (after worktree deletion)

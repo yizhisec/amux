@@ -28,9 +28,9 @@ type Result<T> = std::result::Result<T, TuiError>;
 use super::input::{handle_input_sync, handle_mouse_sync};
 use super::navigation::VirtualList;
 use super::state::{
-    AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, Focus, GitPanelItem, GitSection,
-    GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView, SidebarItem, SidebarState,
-    TerminalMode, TerminalState, TodoState,
+    AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, ExitCleanupAction, Focus,
+    GitPanelItem, GitSection, GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView,
+    SidebarItem, SidebarState, TerminalMode, TerminalState, TodoState,
 };
 use super::ui::draw;
 
@@ -97,6 +97,7 @@ pub struct App {
     pub status_message: Option<String>,
     pub input_mode: InputMode,
     pub input_buffer: String,
+    pub session_delete_action: ExitCleanupAction, // Session deletion selection (Destroy/Stop)
 
     // Event subscription
     pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
@@ -147,6 +148,7 @@ impl App {
             status_message: None,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            session_delete_action: ExitCleanupAction::Destroy, // Default to destroy
             event_rx: None,
             prefix_mode: PrefixMode::None,
             config,
@@ -1255,12 +1257,11 @@ impl App {
     }
 
     /// Confirm and execute deletion
-    pub async fn confirm_delete(&mut self) -> Result<()> {
-        let target = match &self.input_mode {
-            InputMode::ConfirmDelete(t) => t.clone(),
-            _ => return Ok(()),
-        };
-
+    pub async fn confirm_delete(
+        &mut self,
+        target: DeleteTarget,
+        action: ExitCleanupAction,
+    ) -> Result<()> {
         self.input_mode = InputMode::Normal;
 
         match target {
@@ -1284,9 +1285,23 @@ impl App {
                     self.disconnect_stream();
                 }
 
-                match self.client.destroy_session(&session_id).await {
-                    Ok(_) => {
-                        self.status_message = Some(format!("Destroyed session: {}", name));
+                // Execute action based on user selection
+                let result = match action {
+                    ExitCleanupAction::Destroy => self
+                        .client
+                        .destroy_session(&session_id)
+                        .await
+                        .map(|_| format!("Destroyed session: {}", name)),
+                    ExitCleanupAction::Stop => self
+                        .client
+                        .stop_session(&session_id)
+                        .await
+                        .map(|_| format!("Stopped session: {}", name)),
+                };
+
+                match result {
+                    Ok(msg) => {
+                        self.status_message = Some(msg);
                         self.refresh_sessions().await?;
                         // Also refresh worktree sessions for tree view
                         self.load_worktree_sessions(self.branch_idx).await?;
@@ -1433,17 +1448,44 @@ impl App {
             }
             Some(daemon_event::Event::SessionStatusChanged(e)) => {
                 debug!(
-                    "Event: SessionStatusChanged {} -> {}",
-                    e.session_id, e.new_status
+                    "Event: SessionStatusChanged {} {} -> {}",
+                    e.session_id, e.old_status, e.new_status
                 );
-                // Update session status in list - only redraw if status actually changed
+                let mut changed = false;
+
+                // Update session status in main sessions list
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
+                    debug!(
+                        "Found session in sessions list, current status: {}, new status: {}",
+                        session.status, e.new_status
+                    );
                     if session.status != e.new_status {
+                        debug!(
+                            "Status changed! Updating from {} to {}",
+                            session.status, e.new_status
+                        );
                         session.status = e.new_status;
-                        return true; // Status changed
+                        changed = true;
+                    }
+                } else {
+                    debug!("Session {} not found in sessions list", e.session_id);
+                }
+
+                // Also update in sidebar sessions_by_worktree (for tree view)
+                for sessions in self.sidebar.sessions_by_worktree.values_mut() {
+                    if let Some(session) = sessions.iter_mut().find(|s| s.id == e.session_id) {
+                        debug!(
+                            "Found session in sidebar, updating status from {} to {}",
+                            session.status, e.new_status
+                        );
+                        if session.status != e.new_status {
+                            session.status = e.new_status;
+                            changed = true;
+                        }
                     }
                 }
-                false
+
+                changed
             }
             Some(daemon_event::Event::WorktreeAdded(e)) => {
                 debug!(
@@ -1512,8 +1554,8 @@ impl App {
             AsyncAction::SubmitAddWorktree => {
                 self.submit_add_worktree().await?;
             }
-            AsyncAction::ConfirmDelete => {
-                self.confirm_delete().await?;
+            AsyncAction::ConfirmDelete { target, action } => {
+                self.confirm_delete(target, action).await?;
             }
             AsyncAction::ConfirmDeleteBranch => {
                 self.confirm_delete_branch().await?;
@@ -2655,6 +2697,30 @@ impl App {
         }
 
         Ok(())
+    }
+}
+
+// Drop trait for automatic cleanup on abnormal exit
+impl Drop for App {
+    fn drop(&mut self) {
+        // Only cleanup on abnormal exit (should_quit = false means unexpected termination)
+        if !self.should_quit && !self.sessions.is_empty() {
+            let running_ids: Vec<String> = self
+                .sessions
+                .iter()
+                .filter(|s| s.status == 1) // SESSION_STATUS_RUNNING
+                .map(|s| s.id.clone())
+                .collect();
+
+            if !running_ids.is_empty() {
+                // Drop cannot be async, so create a sync runtime
+                if let Ok(runtime) = tokio::runtime::Runtime::new() {
+                    for session_id in running_ids {
+                        let _ = runtime.block_on(self.client.stop_session(&session_id));
+                    }
+                }
+            }
+        }
     }
 }
 

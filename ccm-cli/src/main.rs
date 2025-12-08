@@ -10,7 +10,14 @@ mod tui;
 
 use client::Client;
 use error::CliError;
+use futures::stream::StreamExt;
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook_tokio::Signals;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tracing::debug;
 
 /// Find the main repository path for a git directory.
@@ -76,6 +83,27 @@ async fn main() -> Result<(), CliError> {
     init_logging();
     debug!("CCM CLI starting");
 
+    // Setup signal handlers for graceful shutdown
+    let should_exit = Arc::new(AtomicBool::new(false));
+    let should_exit_signal = should_exit.clone();
+
+    let mut signals = Signals::new([SIGINT, SIGTERM])?;
+    let signals_handle = signals.handle();
+
+    // Spawn signal handler task
+    tokio::spawn(async move {
+        while let Some(signal) = signals.next().await {
+            match signal {
+                SIGINT | SIGTERM => {
+                    debug!("Received signal {}, triggering shutdown", signal);
+                    should_exit_signal.store(true, Ordering::Relaxed);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
     // Connect to daemon
     let client = match Client::connect().await {
         Ok(c) => c,
@@ -100,8 +128,15 @@ async fn main() -> Result<(), CliError> {
         }
     }
 
+    // Pass signal flag to TUI (will be checked in event loop)
+    // For now, we rely on Drop trait to handle cleanup
+    // In the future, we can check should_exit in the event loop
+
     // Run TUI
     tui::run_with_client(app).await?;
+
+    // Cleanup signal handler
+    signals_handle.close();
 
     Ok(())
 }

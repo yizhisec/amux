@@ -1,6 +1,7 @@
 //! Session attach/detach handlers
 
 use crate::error::{DaemonError, SessionError};
+use crate::events::EventBroadcaster;
 use crate::persistence;
 use crate::session::SessionStatus;
 use crate::state::SharedState;
@@ -17,6 +18,7 @@ pub type AttachSessionStream =
 /// Attach to a session
 pub async fn attach_session(
     state: SharedState,
+    events: EventBroadcaster,
     mut input_stream: Streaming<AttachInput>,
 ) -> Result<Response<AttachSessionStream>, Status> {
     // Get session ID from first message
@@ -39,6 +41,7 @@ pub async fn attach_session(
 
         // Start session if not running
         if session.status() == SessionStatus::Stopped {
+            tracing::info!("Starting stopped session: {}", session_id);
             session.start().map_err(|e| {
                 Status::from(DaemonError::Session(SessionError::Start(e.to_string())))
             })?;
@@ -47,6 +50,17 @@ pub async fn attach_session(
             if let Err(e) = persistence::save_session_meta(session) {
                 tracing::warn!("Failed to persist session metadata: {}", e);
             }
+
+            // Emit status changed event (Stopped -> Running)
+            tracing::info!(
+                "Emitting SessionStatusChanged event for {}: Stopped -> Running",
+                session_id
+            );
+            events.emit_session_status_changed(
+                session_id.clone(),
+                2, // SESSION_STATUS_STOPPED
+                1, // SESSION_STATUS_RUNNING
+            );
         }
     }
 

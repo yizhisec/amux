@@ -226,3 +226,44 @@ pub async fn destroy_session(
 
     Ok(Response::new(Empty {}))
 }
+
+/// Stop a session (kill PTY but keep metadata)
+pub async fn stop_session(
+    state: &SharedState,
+    events: &EventBroadcaster,
+    req: StopSessionRequest,
+) -> Result<Response<Empty>, Status> {
+    let mut state = state.write().await;
+
+    let session = state.sessions.get_mut(&req.session_id).ok_or_else(|| {
+        Status::from(DaemonError::Session(SessionError::NotFound(
+            req.session_id.clone(),
+        )))
+    })?;
+
+    // Get status before stopping
+    let old_status = match session.status() {
+        SessionStatus::Running => session_status::SessionStatus::Running as i32,
+        SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
+    };
+
+    // Stop session (kill PTY)
+    if let Err(e) = session.stop() {
+        tracing::warn!("Failed to stop session {}: {}", req.session_id, e);
+        return Err(Status::internal(format!("Failed to stop session: {}", e)));
+    }
+
+    // Save terminal history
+    if let Err(e) = persistence::save_session_history(session) {
+        tracing::warn!("Failed to save session history: {}", e);
+    }
+
+    let new_status = session_status::SessionStatus::Stopped as i32;
+
+    // Emit status changed event if status actually changed
+    if old_status != new_status {
+        events.emit_session_status_changed(req.session_id, old_status, new_status);
+    }
+
+    Ok(Response::new(Empty {}))
+}

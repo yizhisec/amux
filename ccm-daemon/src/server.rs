@@ -107,6 +107,13 @@ impl CcmDaemon for CcmDaemonService {
         handlers::session::destroy_session(&self.state, &self.events, request.into_inner()).await
     }
 
+    async fn stop_session(
+        &self,
+        request: Request<StopSessionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        handlers::session::stop_session(&self.state, &self.events, request.into_inner()).await
+    }
+
     // ============ Events ============
 
     type SubscribeEventsStream = handlers::events::SubscribeEventsStream;
@@ -172,7 +179,12 @@ impl CcmDaemon for CcmDaemonService {
         &self,
         request: Request<Streaming<AttachInput>>,
     ) -> Result<Response<Self::AttachSessionStream>, Status> {
-        handlers::attach::attach_session(self.state.clone(), request.into_inner()).await
+        handlers::attach::attach_session(
+            self.state.clone(),
+            self.events.clone(),
+            request.into_inner(),
+        )
+        .await
     }
 
     // ============ Git Status Operations ============

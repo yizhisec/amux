@@ -1,7 +1,7 @@
 //! Overlay and dialog rendering (popups, confirmations, inputs)
 
 use super::super::app::App;
-use super::super::state::{DeleteTarget, InputMode};
+use super::super::state::{DeleteTarget, ExitCleanupAction, InputMode};
 use ccm_proto::daemon::TodoItem;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -68,46 +68,100 @@ pub fn draw_rename_session_overlay(f: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Draw confirm delete overlay
-pub fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, target: &DeleteTarget) {
-    // Center the confirm box
-    let popup_width = 50.min(area.width.saturating_sub(4));
-    let popup_height = 5;
+pub fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, app: &App, target: &DeleteTarget) {
+    let (title, lines) = match target {
+        DeleteTarget::Session { name, .. } => {
+            // Session deletion: show two options (Destroy/Stop)
+            let mut lines = vec![
+                Line::from(format!("Delete session '{}'?", name)),
+                Line::from(""),
+            ];
+
+            // Option 1: Destroy
+            let destroy_indicator = if app.session_delete_action == ExitCleanupAction::Destroy {
+                "▸ "
+            } else {
+                "  "
+            };
+            lines.push(Line::from(vec![
+                Span::raw(destroy_indicator),
+                Span::styled(
+                    "[d] Destroy",
+                    if app.session_delete_action == ExitCleanupAction::Destroy {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Red)
+                    },
+                ),
+                Span::raw(" (delete all data)"),
+            ]));
+
+            // Option 2: Stop
+            let stop_indicator = if app.session_delete_action == ExitCleanupAction::Stop {
+                "▸ "
+            } else {
+                "  "
+            };
+            lines.push(Line::from(vec![
+                Span::raw(stop_indicator),
+                Span::styled(
+                    "[s] Stop",
+                    if app.session_delete_action == ExitCleanupAction::Stop {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Blue)
+                    },
+                ),
+                Span::raw(" (stop PTY, keep metadata)"),
+            ]));
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("[Enter]", Style::default().fg(Color::Green)),
+                Span::raw(" Confirm  "),
+                Span::styled("[Esc/n]", Style::default().fg(Color::Red)),
+                Span::raw(" Cancel"),
+            ]));
+
+            (" Delete Session ", lines)
+        }
+        DeleteTarget::Worktree { branch, .. } => {
+            // Worktree deletion: simple Yes/No
+            let lines = vec![
+                Line::from(format!("Delete worktree '{}'?", branch)),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("[y/Enter]", Style::default().fg(Color::Green)),
+                    Span::raw(" Yes  "),
+                    Span::styled("[n/Esc]", Style::default().fg(Color::Red)),
+                    Span::raw(" No"),
+                ]),
+            ];
+            (" Delete Worktree ", lines)
+        }
+    };
+
+    // Center dialog
+    let popup_width = 60.min(area.width.saturating_sub(4));
+    let popup_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Build message based on target
-    let (title, message) = match target {
-        DeleteTarget::Worktree { branch, .. } => (
-            " Delete Worktree ",
-            format!("Delete worktree '{}'?", branch),
-        ),
-        DeleteTarget::Session { name, .. } => {
-            (" Delete Session ", format!("Delete session '{}'?", name))
-        }
-    };
-
-    let text = vec![
-        Line::from(message),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("[y/Enter]", Style::default().fg(Color::Green)),
-            Span::raw(" Yes  "),
-            Span::styled("[n/Esc]", Style::default().fg(Color::Red)),
-            Span::raw(" No"),
-        ]),
-    ];
-
-    let confirm = Paragraph::new(text)
-        .alignment(ratatui::layout::Alignment::Center)
+    let confirm = Paragraph::new(lines)
         .style(Style::default().bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red).bg(Color::Black))
+                .border_style(Style::default().fg(Color::Yellow).bg(Color::Black))
                 .style(Style::default().bg(Color::Black))
                 .title(title),
         );
+
     f.render_widget(confirm, popup_area);
 }
 

@@ -72,6 +72,13 @@ pub enum DeleteTarget {
     Session { session_id: String, name: String },
 }
 
+/// Exit cleanup action for sessions
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExitCleanupAction {
+    Destroy, // Destroy all sessions (delete data)
+    Stop,    // Stop sessions (kill PTY, keep metadata)
+}
+
 /// Input mode for text entry
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
@@ -207,7 +214,10 @@ pub enum AsyncAction {
     SubmitInput,
     SubmitRenameSession,
     SubmitAddWorktree,
-    ConfirmDelete,
+    ConfirmDelete {
+        target: DeleteTarget,
+        action: ExitCleanupAction,
+    },
     ConfirmDeleteBranch,
     ConfirmDeleteWorktreeSessions,
     DestroySession {

@@ -19,6 +19,7 @@ service CcmDaemon {
     rpc CreateSession(CreateSessionRequest) returns (SessionInfo);
     rpc RenameSession(RenameSessionRequest) returns (SessionInfo);
     rpc DestroySession(DestroySessionRequest) returns (Empty);
+    rpc StopSession(StopSessionRequest) returns (Empty);
 
     // Attach/Detach
     rpc AttachSession(stream AttachInput) returns (stream AttachOutput);
@@ -133,6 +134,10 @@ message RenameSessionRequest {
 }
 
 message DestroySessionRequest {
+    string session_id = 1;
+}
+
+message StopSessionRequest {
     string session_id = 1;
 }
 

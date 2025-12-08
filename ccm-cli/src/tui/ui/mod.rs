@@ -74,7 +74,7 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 
     // Check for confirm delete overlay
     if let InputMode::ConfirmDelete(ref target) = app.input_mode {
-        draw_confirm_delete_overlay(f, area, target);
+        draw_confirm_delete_overlay(f, area, app, target);
         return;
     }
 

@@ -236,6 +236,15 @@ impl Client {
         Ok(())
     }
 
+    pub async fn stop_session(&mut self, session_id: &str) -> Result<()> {
+        self.inner
+            .stop_session(StopSessionRequest {
+                session_id: session_id.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+
     // ============ Attach ============
 
     pub fn inner_mut(&mut self) -> &mut CcmDaemonClient<Channel> {
