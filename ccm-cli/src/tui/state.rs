@@ -302,7 +302,6 @@ pub struct TerminalState {
     /// Currently active session ID
     pub active_session_id: Option<String>,
     /// Session ID before switching to shell (for Ctrl+` toggle)
-    #[allow(dead_code)]
     pub session_before_shell: Option<String>,
     /// Whether in interactive mode
     pub is_interactive: bool,

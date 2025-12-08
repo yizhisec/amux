@@ -30,6 +30,7 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
             app.input_mode = InputMode::Normal;
             app.todo.cursor = 0;
             app.todo.scroll_offset = 0;
+            app.restore_focus();
             None
         }
 
@@ -44,6 +45,7 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             app.input_mode = InputMode::Normal;
             app.todo.cursor = 0;
             app.todo.scroll_offset = 0;
+            app.restore_focus();
             None
         }
 
@@ -79,6 +81,7 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         }
 
         Action::AddTodo => {
+            app.save_focus();
             app.input_mode = InputMode::AddTodo { parent_id: None };
             app.input_buffer.clear();
             None
@@ -86,7 +89,8 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
 
         Action::AddChildTodo => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
+                if let Some(item) = app.todo.items.get(item_idx).cloned() {
+                    app.save_focus();
                     app.input_mode = InputMode::AddTodo {
                         parent_id: Some(item.id.clone()),
                     };
@@ -98,7 +102,8 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
 
         Action::EditTodoTitle => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
+                if let Some(item) = app.todo.items.get(item_idx).cloned() {
+                    app.save_focus();
                     app.input_mode = InputMode::EditTodo {
                         todo_id: item.id.clone(),
                     };
@@ -110,7 +115,8 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
 
         Action::EditTodoDescription => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
+                if let Some(item) = app.todo.items.get(item_idx).cloned() {
+                    app.save_focus();
                     app.input_mode = InputMode::EditTodoDescription {
                         todo_id: item.id.clone(),
                     };
@@ -122,7 +128,8 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
 
         Action::DeleteTodo => {
             if let Some(&item_idx) = app.todo.display_order.get(app.todo.cursor) {
-                if let Some(item) = app.todo.items.get(item_idx) {
+                if let Some(item) = app.todo.items.get(item_idx).cloned() {
+                    app.save_focus();
                     app.input_mode = InputMode::ConfirmDeleteTodo {
                         todo_id: item.id.clone(),
                         title: item.title.clone(),
@@ -148,11 +155,13 @@ pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAc
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
+            app.restore_focus();
             None
         }
         TextInputResult::Submit => {
             if app.input_buffer.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
+                app.restore_focus();
                 return None;
             }
 
@@ -163,6 +172,7 @@ pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAc
             if let InputMode::AddTodo { parent_id } =
                 std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
             {
+                app.restore_focus();
                 return Some(AsyncAction::CreateTodo {
                     title,
                     description: None,
@@ -181,11 +191,13 @@ pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
+            app.restore_focus();
             None
         }
         TextInputResult::Submit => {
             if app.input_buffer.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
+                app.restore_focus();
                 return None;
             }
 
@@ -195,6 +207,7 @@ pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
             if let InputMode::EditTodo { todo_id } =
                 std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
             {
+                app.restore_focus();
                 return Some(AsyncAction::UpdateTodo {
                     todo_id,
                     title: Some(title),
@@ -213,6 +226,7 @@ pub fn handle_edit_todo_description_mode_sync(app: &mut App, key: KeyEvent) -> O
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
             app.input_buffer.clear();
+            app.restore_focus();
             None
         }
         TextInputResult::Submit => {
@@ -226,6 +240,7 @@ pub fn handle_edit_todo_description_mode_sync(app: &mut App, key: KeyEvent) -> O
             if let InputMode::EditTodoDescription { todo_id } =
                 std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
             {
+                app.restore_focus();
                 return Some(AsyncAction::UpdateTodo {
                     todo_id,
                     title: None,
@@ -250,7 +265,10 @@ pub fn handle_confirm_delete_todo_sync(app: &mut App, key: KeyEvent) -> Option<A
     handle_confirmation_with_enter(
         app,
         &key,
-        |a| a.input_mode = InputMode::TodoPopup,
+        |a| {
+            a.input_mode = InputMode::TodoPopup;
+            a.restore_focus();
+        },
         todo_id
             .map(|id| AsyncAction::DeleteTodo { todo_id: id })
             .unwrap_or(AsyncAction::RefreshAll), // Fallback (shouldn't happen)

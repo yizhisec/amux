@@ -623,7 +623,7 @@ impl App {
         }
     }
 
-    /// Switch to or create shell session for current worktree (Ctrl+`)
+    /// Toggle between current session and shell session (Ctrl+`)
     pub async fn switch_to_shell_session(&mut self) -> Result<()> {
         const SHELL_SESSION_NAME: &str = "__shell__";
 
@@ -647,87 +647,150 @@ impl App {
             })
             .cloned();
 
-        if let Some(session) = shell_session {
-            // Shell session exists, switch to it
-            let new_id = session.id.clone();
+        // Check if currently in shell session
+        let currently_in_shell = self
+            .terminal
+            .active_session_id
+            .as_ref()
+            .and_then(|id| shell_session.as_ref().map(|s| &s.id == id))
+            .unwrap_or(false);
 
-            // Disconnect current stream
-            self.disconnect_stream();
+        if currently_in_shell {
+            // Currently in shell, toggle back to previous session
+            if let Some(previous_session_id) = &self.terminal.session_before_shell {
+                // Verify previous session still exists
+                let previous_session_exists =
+                    self.sessions.iter().any(|s| &s.id == previous_session_id);
 
-            // Save current parser if there's an active session
-            if let Some(old_id) = &self.terminal.active_session_id {
-                self.terminal
-                    .session_parsers
-                    .insert(old_id.clone(), self.terminal.parser.clone());
-            }
-
-            // Get or create parser for shell session
-            self.terminal.parser = self
-                .terminal
-                .session_parsers
-                .entry(new_id.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
-                .clone();
-
-            self.terminal.scroll_offset = 0;
-            self.terminal.active_session_id = Some(new_id);
-
-            self.enter_terminal().await?;
-            self.status_message = Some("Switched to shell session".to_string());
-        } else {
-            // Create new shell session
-            let repo = match self.repos.get(self.repo_idx) {
-                Some(r) => r.clone(),
-                None => {
-                    self.status_message = Some("No repository selected".to_string());
-                    return Ok(());
-                }
-            };
-
-            match self
-                .client
-                .create_session(
-                    &repo.id,
-                    &current_worktree.branch,
-                    Some(SHELL_SESSION_NAME),
-                    Some(true),
-                )
-                .await
-            {
-                Ok(session) => {
-                    // Refresh sessions list (both legacy and tree view)
-                    self.refresh_sessions().await?;
-                    // Also refresh tree view sessions for current worktree
-                    if self.sidebar.tree_view_enabled {
-                        self.load_worktree_sessions(self.branch_idx).await?;
-                    }
-
-                    let new_id = session.id;
+                if previous_session_exists {
+                    let target_id = previous_session_id.clone();
 
                     // Disconnect current stream
                     self.disconnect_stream();
 
-                    // Save current parser if there's an active session
+                    // Save current parser
                     if let Some(old_id) = &self.terminal.active_session_id {
                         self.terminal
                             .session_parsers
                             .insert(old_id.clone(), self.terminal.parser.clone());
                     }
 
-                    // Create parser for new shell session
-                    self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
-                    self.terminal
+                    // Restore or create parser for target session
+                    self.terminal.parser = self
+                        .terminal
                         .session_parsers
-                        .insert(new_id.clone(), self.terminal.parser.clone());
+                        .entry(target_id.clone())
+                        .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                        .clone();
 
                     self.terminal.scroll_offset = 0;
-                    self.terminal.active_session_id = Some(new_id);
+                    self.terminal.active_session_id = Some(target_id);
+
+                    // Clear session_before_shell (we've returned to it)
+                    self.terminal.session_before_shell = None;
 
                     self.enter_terminal().await?;
-                    self.status_message = Some("Created shell session".to_string());
+                    self.status_message = Some("Switched back from shell".to_string());
+                } else {
+                    // Previous session no longer exists
+                    self.terminal.session_before_shell = None;
+                    self.status_message = Some("Previous session no longer exists".to_string());
                 }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to create shell session: {}", e));
+            } else {
+                // Already in shell but no previous session saved
+                self.status_message = Some("Already in shell session".to_string());
+            }
+        } else {
+            // Not in shell, toggle to shell
+
+            // Save current session ID (if any)
+            if let Some(current_id) = &self.terminal.active_session_id {
+                self.terminal.session_before_shell = Some(current_id.clone());
+            }
+
+            if let Some(session) = shell_session {
+                // Shell session exists, switch to it
+                let new_id = session.id.clone();
+
+                // Disconnect current stream
+                self.disconnect_stream();
+
+                // Save current parser
+                if let Some(old_id) = &self.terminal.active_session_id {
+                    self.terminal
+                        .session_parsers
+                        .insert(old_id.clone(), self.terminal.parser.clone());
+                }
+
+                // Get or create parser for shell session
+                self.terminal.parser = self
+                    .terminal
+                    .session_parsers
+                    .entry(new_id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                    .clone();
+
+                self.terminal.scroll_offset = 0;
+                self.terminal.active_session_id = Some(new_id);
+
+                self.enter_terminal().await?;
+                self.status_message = Some("Switched to shell session".to_string());
+            } else {
+                // Create new shell session
+                let repo = match self.repos.get(self.repo_idx) {
+                    Some(r) => r.clone(),
+                    None => {
+                        self.status_message = Some("No repository selected".to_string());
+                        return Ok(());
+                    }
+                };
+
+                match self
+                    .client
+                    .create_session(
+                        &repo.id,
+                        &current_worktree.branch,
+                        Some(SHELL_SESSION_NAME),
+                        Some(true),
+                    )
+                    .await
+                {
+                    Ok(session) => {
+                        // Refresh sessions list (both legacy and tree view)
+                        self.refresh_sessions().await?;
+                        // Also refresh tree view sessions for current worktree
+                        if self.sidebar.tree_view_enabled {
+                            self.load_worktree_sessions(self.branch_idx).await?;
+                        }
+
+                        let new_id = session.id;
+
+                        // Disconnect current stream
+                        self.disconnect_stream();
+
+                        // Save current parser
+                        if let Some(old_id) = &self.terminal.active_session_id {
+                            self.terminal
+                                .session_parsers
+                                .insert(old_id.clone(), self.terminal.parser.clone());
+                        }
+
+                        // Create parser for new shell session
+                        self.terminal.parser =
+                            Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                        self.terminal
+                            .session_parsers
+                            .insert(new_id.clone(), self.terminal.parser.clone());
+
+                        self.terminal.scroll_offset = 0;
+                        self.terminal.active_session_id = Some(new_id);
+
+                        self.enter_terminal().await?;
+                        self.status_message = Some("Created shell session".to_string());
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to create shell session: {}", e));
+                    }
                 }
             }
         }
@@ -2173,15 +2236,16 @@ impl App {
     pub fn start_add_line_comment(&mut self) {
         if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
             if let (Some(file), Some(lines)) = (
-                self.diff.files.get(file_idx),
+                self.diff.files.get(file_idx).cloned(),
                 self.diff.file_lines.get(&file_idx),
             ) {
-                if let Some(diff_line) = lines.get(line_idx) {
+                if let Some(diff_line) = lines.get(line_idx).cloned() {
                     // Get actual line number from diff info
                     let line_number = diff_line
                         .new_lineno
                         .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
 
+                    self.save_focus();
                     self.input_mode = InputMode::AddLineComment {
                         file_path: file.path.clone(),
                         line_number,
@@ -2209,6 +2273,7 @@ impl App {
         let comment_text = self.input_buffer.trim().to_string();
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
+        self.restore_focus();
 
         if comment_text.is_empty() {
             self.status_message = Some("Comment cannot be empty".to_string());
@@ -2325,6 +2390,7 @@ impl App {
 
         // Now mutate self
         if let Some((comment_id, file_path, line_number, comment_text)) = edit_info {
+            self.save_focus();
             self.input_mode = InputMode::EditLineComment {
                 comment_id,
                 file_path,
@@ -2346,6 +2412,7 @@ impl App {
         let comment_text = self.input_buffer.trim().to_string();
         self.input_mode = InputMode::Normal;
         self.input_buffer.clear();
+        self.restore_focus();
 
         if comment_text.is_empty() {
             self.status_message = Some("Comment cannot be empty".to_string());
