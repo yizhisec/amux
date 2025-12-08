@@ -47,6 +47,11 @@ pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
 /// Execute a git status action
 fn execute_git_status_action(app: &mut App, action: Action) -> Option<AsyncAction> {
     match action {
+        Action::FocusSidebar => {
+            app.focus = Focus::Sidebar;
+            None
+        }
+
         Action::MoveUp => {
             app.git_status_move_up();
             None

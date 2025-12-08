@@ -40,6 +40,13 @@ pub fn handle_todo_popup_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
 /// Execute a TODO popup action
 fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
     match action {
+        Action::ClosePopup => {
+            app.input_mode = InputMode::Normal;
+            app.todo.cursor = 0;
+            app.todo.scroll_offset = 0;
+            None
+        }
+
         Action::MoveDown => {
             app.todo.move_down();
             None

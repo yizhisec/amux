@@ -209,6 +209,7 @@ fn default_git_status_bindings() -> HashMap<String, String> {
 
     map.insert("Tab".to_string(), "focus-diff".to_string());
     map.insert("Esc".to_string(), "focus-sidebar".to_string());
+    map.insert("q".to_string(), "focus-sidebar".to_string());
 
     map
 }
