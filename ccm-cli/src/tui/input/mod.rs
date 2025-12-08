@@ -25,14 +25,15 @@ mod prefix;
 mod resolver;
 mod terminal;
 mod todo;
-mod utils;
+pub mod utils;
 
 use super::app::App;
 use super::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
 use crossterm::event::KeyEvent;
 
-// Re-export mouse handler for external use
+// Re-export for external use
 pub use mouse::handle_mouse_sync;
+pub use utils::TextInput;
 
 /// Handle keyboard input (sync version - returns async action if needed)
 pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {

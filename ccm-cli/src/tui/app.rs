@@ -25,7 +25,7 @@ use tracing::{debug, warn};
 
 type Result<T> = std::result::Result<T, TuiError>;
 
-use super::input::{handle_input_sync, handle_mouse_sync};
+use super::input::{handle_input_sync, handle_mouse_sync, TextInput};
 use super::navigation::VirtualList;
 use super::state::{
     AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, ExitCleanupAction, Focus,
@@ -96,7 +96,7 @@ pub struct App {
     pub error_message: Option<String>,
     pub status_message: Option<String>,
     pub input_mode: InputMode,
-    pub input_buffer: String,
+    pub text_input: TextInput,
     pub session_delete_action: ExitCleanupAction, // Session deletion selection (Destroy/Stop)
 
     // Event subscription
@@ -150,7 +150,7 @@ impl App {
             error_message: None,
             status_message: None,
             input_mode: InputMode::Normal,
-            input_buffer: String::new(),
+            text_input: TextInput::new(),
             session_delete_action: ExitCleanupAction::Destroy, // Default to destroy
             event_rx: None,
             last_git_refresh: None,
@@ -895,7 +895,7 @@ impl App {
             Focus::Branches => {
                 // Enter input mode for new branch name
                 self.input_mode = InputMode::NewBranch;
-                self.input_buffer.clear();
+                self.text_input.clear();
                 self.status_message = Some("Enter branch name:".to_string());
             }
             Focus::Sessions => {
@@ -936,9 +936,9 @@ impl App {
             return Ok(());
         }
 
-        let branch_name = self.input_buffer.trim().to_string();
+        let branch_name = self.text_input.trim().to_string();
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.status_message = None;
 
         if branch_name.is_empty() {
@@ -1007,7 +1007,7 @@ impl App {
     /// Cancel input mode and restore focus
     pub fn cancel_input(&mut self) {
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.status_message = None;
 
         // Restore focus when canceling
@@ -1023,7 +1023,7 @@ impl App {
             .map(|w| w.branch.clone());
 
         self.input_mode = InputMode::AddWorktree { base_branch };
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.add_worktree_idx = 0;
     }
 
@@ -1034,7 +1034,7 @@ impl App {
             self.input_mode = InputMode::RenameSession {
                 session_id: session.id.clone(),
             };
-            self.input_buffer = session.name.clone();
+            self.text_input.set_content(session.name.clone());
         }
     }
 
@@ -1045,9 +1045,9 @@ impl App {
             _ => return Ok(()),
         };
 
-        let new_name = self.input_buffer.trim().to_string();
+        let new_name = self.text_input.trim().to_string();
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.restore_focus();
 
         if new_name.is_empty() {
@@ -1081,9 +1081,9 @@ impl App {
 
         // Determine branch name: typed input or selected from list
         // Only use base_branch when creating a NEW branch (typing in input)
-        let (branch_name, use_base) = if !self.input_buffer.is_empty() {
+        let (branch_name, use_base) = if !self.text_input.is_empty() {
             // Creating new branch - use base_branch
-            (self.input_buffer.trim().to_string(), true)
+            (self.text_input.trim().to_string(), true)
         } else if let Some(branch) = self.available_branches.get(self.add_worktree_idx) {
             // Selecting existing branch - no need for base
             (branch.branch.clone(), false)
@@ -1101,7 +1101,7 @@ impl App {
         };
 
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.restore_focus();
 
         // Create worktree (pass base_branch only when creating new branch)
@@ -2354,7 +2354,7 @@ impl App {
                         line_number,
                         line_type: diff_line.line_type,
                     };
-                    self.input_buffer.clear();
+                    self.text_input.clear();
                 }
             }
         } else {
@@ -2373,9 +2373,9 @@ impl App {
             _ => return Ok(()),
         };
 
-        let comment_text = self.input_buffer.trim().to_string();
+        let comment_text = self.text_input.trim().to_string();
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.restore_focus();
 
         if comment_text.is_empty() {
@@ -2499,7 +2499,7 @@ impl App {
                 file_path,
                 line_number,
             };
-            self.input_buffer = comment_text;
+            self.text_input.set_content(comment_text);
         } else {
             self.status_message = Some("No comment on this line to edit".to_string());
         }
@@ -2512,9 +2512,9 @@ impl App {
             _ => return Ok(()),
         };
 
-        let comment_text = self.input_buffer.trim().to_string();
+        let comment_text = self.text_input.trim().to_string();
         self.input_mode = InputMode::Normal;
-        self.input_buffer.clear();
+        self.text_input.clear();
         self.restore_focus();
 
         if comment_text.is_empty() {

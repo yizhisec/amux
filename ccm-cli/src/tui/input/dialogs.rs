@@ -109,7 +109,7 @@ pub fn handle_confirm_delete_worktree_sessions_sync(
 pub fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     // Shift+Enter: insert newline (when typing new branch name)
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.input_buffer.push('\n');
+        app.text_input.insert('\n');
         return None;
     }
 
@@ -122,14 +122,14 @@ pub fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<Asy
         // Confirm selection
         KeyCode::Enter => Some(AsyncAction::SubmitAddWorktree),
         // Navigate up in branch list (clear input buffer if typing)
-        KeyCode::Up | KeyCode::Char('k') if app.input_buffer.is_empty() => {
+        KeyCode::Up | KeyCode::Char('k') if app.text_input.is_empty() => {
             if app.add_worktree_idx > 0 {
                 app.add_worktree_idx -= 1;
             }
             None
         }
         // Navigate down in branch list
-        KeyCode::Down | KeyCode::Char('j') if app.input_buffer.is_empty() => {
+        KeyCode::Down | KeyCode::Char('j') if app.text_input.is_empty() => {
             if app.add_worktree_idx + 1 < app.available_branches.len() {
                 app.add_worktree_idx += 1;
             }
@@ -137,12 +137,12 @@ pub fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<Asy
         }
         // Backspace - delete character or if empty, go back to list selection
         KeyCode::Backspace => {
-            app.input_buffer.pop();
+            app.text_input.backspace();
             None
         }
         // Type character - switch to new branch input mode
         KeyCode::Char(c) => {
-            app.input_buffer.push(c);
+            app.text_input.insert(c);
             None
         }
         _ => None,

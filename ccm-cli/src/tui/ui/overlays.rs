@@ -21,7 +21,7 @@ pub fn draw_input_overlay(f: &mut Frame, area: Rect, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     // Draw input box with background to cover underlying content
-    let input = Paragraph::new(app.input_buffer.as_str())
+    let input = Paragraph::new(app.text_input.content())
         .style(Style::default().fg(Color::Yellow).bg(Color::Black))
         .block(
             Block::default()
@@ -34,7 +34,7 @@ pub fn draw_input_overlay(f: &mut Frame, area: Rect, app: &App) {
 
     // Show cursor
     f.set_cursor_position((
-        popup_area.x + app.input_buffer.len() as u16 + 1,
+        popup_area.x + app.text_input.cursor_display_offset() as u16 + 1,
         popup_area.y + 1,
     ));
 }
@@ -49,7 +49,7 @@ pub fn draw_rename_session_overlay(f: &mut Frame, area: Rect, app: &App) {
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     // Draw input box with background to cover underlying content
-    let input = Paragraph::new(app.input_buffer.as_str())
+    let input = Paragraph::new(app.text_input.content())
         .style(Style::default().fg(Color::Yellow).bg(Color::Black))
         .block(
             Block::default()
@@ -62,7 +62,7 @@ pub fn draw_rename_session_overlay(f: &mut Frame, area: Rect, app: &App) {
 
     // Show cursor
     f.set_cursor_position((
-        popup_area.x + app.input_buffer.len() as u16 + 1,
+        popup_area.x + app.text_input.cursor_display_offset() as u16 + 1,
         popup_area.y + 1,
     ));
 }
@@ -206,7 +206,7 @@ pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_bran
         Some(branch) => format!("Base: {} (new branch will be created from here)", branch),
         None => "Base: HEAD (new branch will be created from HEAD)".to_string(),
     };
-    let base_style = if !app.input_buffer.is_empty() {
+    let base_style = if !app.text_input.is_empty() {
         Style::default().fg(Color::Green).bg(Color::Black)
     } else {
         Style::default().fg(Color::DarkGray).bg(Color::Black)
@@ -221,7 +221,7 @@ pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_bran
             .iter()
             .enumerate()
             .map(|(i, branch)| {
-                let is_selected = i == app.add_worktree_idx && app.input_buffer.is_empty();
+                let is_selected = i == app.add_worktree_idx && app.text_input.is_empty();
                 let style = if is_selected {
                     Style::default()
                         .fg(Color::Yellow)
@@ -243,17 +243,17 @@ pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_bran
     }
 
     // Input field
-    let input_style = if !app.input_buffer.is_empty() {
+    let input_style = if !app.text_input.is_empty() {
         Style::default().fg(Color::Yellow).bg(Color::Black)
     } else {
         Style::default().fg(Color::DarkGray).bg(Color::Black)
     };
-    let input_text = if app.input_buffer.is_empty() {
+    let input_text = if app.text_input.is_empty() {
         "New branch: (type to create new)"
     } else {
-        &app.input_buffer
+        app.text_input.content()
     };
-    let prefix = if !app.input_buffer.is_empty() {
+    let prefix = if !app.text_input.is_empty() {
         "> "
     } else {
         "  "
@@ -262,9 +262,9 @@ pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_bran
     f.render_widget(input, chunks[4]);
 
     // Show cursor if typing
-    if !app.input_buffer.is_empty() {
+    if !app.text_input.is_empty() {
         f.set_cursor_position((
-            chunks[4].x + 7 + app.input_buffer.len() as u16, // 7 = "> New: ".len()
+            chunks[4].x + 7 + app.text_input.cursor_display_offset() as u16, // 7 = "> New: ".len()
             chunks[4].y,
         ));
     }
@@ -359,7 +359,7 @@ pub fn draw_add_line_comment_overlay(
     line_number: i32,
 ) {
     // Calculate input lines for dynamic height
-    let input_lines: Vec<&str> = app.input_buffer.lines().collect();
+    let input_lines: Vec<&str> = app.text_input.content().lines().collect();
     let input_line_count = input_lines.len().max(1);
 
     // Center the input box with dynamic height
@@ -418,8 +418,7 @@ pub fn draw_add_line_comment_overlay(
     f.render_widget(input, popup_area);
 
     // Calculate cursor position for multiline input
-    let last_line = input_lines.last().copied().unwrap_or("");
-    let cursor_x = popup_area.x + 3 + last_line.len() as u16; // 3 = "> " + border
+    let cursor_x = popup_area.x + 3 + app.text_input.cursor_display_offset() as u16; // 3 = "> " + border
     let cursor_y = popup_area.y + 4 + (input_line_count.saturating_sub(1)) as u16;
     f.set_cursor_position((cursor_x, cursor_y));
 }
@@ -433,7 +432,7 @@ pub fn draw_edit_line_comment_overlay(
     line_number: i32,
 ) {
     // Calculate input lines for dynamic height
-    let input_lines: Vec<&str> = app.input_buffer.lines().collect();
+    let input_lines: Vec<&str> = app.text_input.content().lines().collect();
     let input_line_count = input_lines.len().max(1);
 
     // Center the input box with dynamic height
@@ -492,8 +491,7 @@ pub fn draw_edit_line_comment_overlay(
     f.render_widget(input, popup_area);
 
     // Calculate cursor position for multiline input
-    let last_line = input_lines.last().copied().unwrap_or("");
-    let cursor_x = popup_area.x + 3 + last_line.len() as u16; // 3 = "> " + border
+    let cursor_x = popup_area.x + 3 + app.text_input.cursor_display_offset() as u16; // 3 = "> " + border
     let cursor_y = popup_area.y + 4 + (input_line_count.saturating_sub(1)) as u16;
     f.set_cursor_position((cursor_x, cursor_y));
 }
@@ -642,11 +640,14 @@ pub fn draw_add_todo_overlay(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, popup_area);
 
     // Input text
-    let input = Paragraph::new(app.input_buffer.as_str()).style(Style::default().fg(Color::White));
+    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
     f.render_widget(input, inner);
 
     // Cursor
-    f.set_cursor_position((inner.x + app.input_buffer.len() as u16, inner.y));
+    f.set_cursor_position((
+        inner.x + app.text_input.cursor_display_offset() as u16,
+        inner.y,
+    ));
 }
 
 /// Draw edit TODO overlay
@@ -679,11 +680,14 @@ pub fn draw_edit_todo_overlay(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, popup_area);
 
     // Input text
-    let input = Paragraph::new(app.input_buffer.as_str()).style(Style::default().fg(Color::White));
+    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
     f.render_widget(input, inner);
 
     // Cursor
-    f.set_cursor_position((inner.x + app.input_buffer.len() as u16, inner.y));
+    f.set_cursor_position((
+        inner.x + app.text_input.cursor_display_offset() as u16,
+        inner.y,
+    ));
 }
 
 /// Draw edit TODO description overlay
@@ -716,11 +720,14 @@ pub fn draw_edit_todo_description_overlay(f: &mut Frame, area: Rect, app: &App) 
     f.render_widget(block, popup_area);
 
     // Input text
-    let input = Paragraph::new(app.input_buffer.as_str()).style(Style::default().fg(Color::White));
+    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
     f.render_widget(input, inner);
 
     // Cursor
-    f.set_cursor_position((inner.x + app.input_buffer.len() as u16, inner.y));
+    f.set_cursor_position((
+        inner.x + app.text_input.cursor_display_offset() as u16,
+        inner.y,
+    ));
 }
 
 /// Draw confirm delete TODO overlay

@@ -83,7 +83,7 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         Action::AddTodo => {
             app.save_focus();
             app.input_mode = InputMode::AddTodo { parent_id: None };
-            app.input_buffer.clear();
+            app.text_input.clear();
             None
         }
 
@@ -94,7 +94,7 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
                     app.input_mode = InputMode::AddTodo {
                         parent_id: Some(item.id.clone()),
                     };
-                    app.input_buffer.clear();
+                    app.text_input.clear();
                 }
             }
             None
@@ -107,7 +107,7 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
                     app.input_mode = InputMode::EditTodo {
                         todo_id: item.id.clone(),
                     };
-                    app.input_buffer = item.title.clone();
+                    app.text_input.set_content(item.title.clone());
                 }
             }
             None
@@ -120,7 +120,8 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
                     app.input_mode = InputMode::EditTodoDescription {
                         todo_id: item.id.clone(),
                     };
-                    app.input_buffer = item.description.clone().unwrap_or_default();
+                    app.text_input
+                        .set_content(item.description.clone().unwrap_or_default());
                 }
             }
             None
@@ -151,22 +152,22 @@ fn execute_todo_action(app: &mut App, action: Action) -> Option<AsyncAction> {
 
 /// Handle add TODO mode (entering new TODO title)
 pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match handle_text_input(&key, &mut app.input_buffer) {
+    match handle_text_input(&key, &mut app.text_input) {
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
-            app.input_buffer.clear();
+            app.text_input.clear();
             app.restore_focus();
             None
         }
         TextInputResult::Submit => {
-            if app.input_buffer.is_empty() {
+            if app.text_input.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
                 app.restore_focus();
                 return None;
             }
 
-            let title = app.input_buffer.clone();
-            app.input_buffer.clear();
+            let title = app.text_input.content().to_string();
+            app.text_input.clear();
 
             // Extract parent_id before changing mode
             if let InputMode::AddTodo { parent_id } =
@@ -187,22 +188,22 @@ pub fn handle_add_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAc
 
 /// Handle edit TODO mode (editing title)
 pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match handle_text_input(&key, &mut app.input_buffer) {
+    match handle_text_input(&key, &mut app.text_input) {
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
-            app.input_buffer.clear();
+            app.text_input.clear();
             app.restore_focus();
             None
         }
         TextInputResult::Submit => {
-            if app.input_buffer.is_empty() {
+            if app.text_input.is_empty() {
                 app.input_mode = InputMode::TodoPopup;
                 app.restore_focus();
                 return None;
             }
 
-            let title = app.input_buffer.clone();
-            app.input_buffer.clear();
+            let title = app.text_input.content().to_string();
+            app.text_input.clear();
 
             if let InputMode::EditTodo { todo_id } =
                 std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
@@ -222,20 +223,20 @@ pub fn handle_edit_todo_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
 
 /// Handle edit TODO description mode
 pub fn handle_edit_todo_description_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
-    match handle_text_input(&key, &mut app.input_buffer) {
+    match handle_text_input(&key, &mut app.text_input) {
         TextInputResult::Cancel => {
             app.input_mode = InputMode::TodoPopup;
-            app.input_buffer.clear();
+            app.text_input.clear();
             app.restore_focus();
             None
         }
         TextInputResult::Submit => {
-            let description = if app.input_buffer.is_empty() {
+            let description = if app.text_input.is_empty() {
                 None
             } else {
-                Some(app.input_buffer.clone())
+                Some(app.text_input.content().to_string())
             };
-            app.input_buffer.clear();
+            app.text_input.clear();
 
             if let InputMode::EditTodoDescription { todo_id } =
                 std::mem::replace(&mut app.input_mode, InputMode::TodoPopup)
