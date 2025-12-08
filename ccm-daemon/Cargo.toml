@@ -28,6 +28,8 @@ async-stream = "0.3"
 uuid = { version = "1.0", features = ["v4"] }
 libc.workspace = true
 vt100 = "0.15"
+notify = "6.1"
+notify-debouncer-full = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

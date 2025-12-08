@@ -187,6 +187,7 @@ message Event {
         SessionStatusChangedEvent session_status_changed = 4;
         WorktreeAddedEvent worktree_added = 5;
         WorktreeRemovedEvent worktree_removed = 6;
+        GitStatusChangedEvent git_status_changed = 7;
     }
 }
 
@@ -217,6 +218,11 @@ message WorktreeAddedEvent {
 }
 
 message WorktreeRemovedEvent {
+    string repo_id = 1;
+    string branch = 2;
+}
+
+message GitStatusChangedEvent {
     string repo_id = 1;
     string branch = 2;
 }

@@ -53,6 +53,9 @@ pub async fn subscribe_events(
                         (Some(filter_repo_id), Some(event::Event::WorktreeRemoved(e))) => {
                             &e.repo_id == filter_repo_id
                         }
+                        (Some(filter_repo_id), Some(event::Event::GitStatusChanged(e))) => {
+                            &e.repo_id == filter_repo_id
+                        }
                         (_, None) => false,
                     };
 

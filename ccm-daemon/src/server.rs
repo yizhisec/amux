@@ -4,6 +4,7 @@
 //! All handler implementations are delegated to the handlers module.
 
 use crate::events::EventBroadcaster;
+use crate::file_watcher::WatcherManager;
 use crate::handlers;
 use crate::state::SharedState;
 use ccm_proto::daemon::ccm_daemon_server::CcmDaemon;
@@ -14,11 +15,67 @@ use tonic::{Request, Response, Status, Streaming};
 pub struct CcmDaemonService {
     state: SharedState,
     events: EventBroadcaster,
+    pub watcher_manager: WatcherManager,
 }
 
 impl CcmDaemonService {
     pub fn new(state: SharedState, events: EventBroadcaster) -> Self {
-        Self { state, events }
+        let watcher_manager = WatcherManager::new(events.clone());
+        Self {
+            state,
+            events,
+            watcher_manager,
+        }
+    }
+
+    /// Initialize watchers for all existing worktrees
+    ///
+    /// This should be called after the daemon starts to set up file watching
+    /// for any worktrees that already exist.
+    pub async fn initialize_watchers(&self) -> anyhow::Result<()> {
+        use crate::git::GitOps;
+        use tracing::{info, warn};
+
+        let state = self.state.read().await;
+
+        info!("Initializing file watchers for {} repos", state.repos.len());
+
+        for repo in state.repos.values() {
+            let git_repo = match GitOps::open(&repo.path) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Failed to open repo {}: {}", repo.id, e);
+                    continue;
+                }
+            };
+
+            // List all worktrees (includes main worktree with is_main: true)
+            let worktrees = match GitOps::list_worktrees(&git_repo) {
+                Ok(wts) => wts,
+                Err(e) => {
+                    warn!("Failed to list worktrees for {}: {}", repo.id, e);
+                    continue;
+                }
+            };
+
+            info!("Found {} worktrees for repo {}", worktrees.len(), repo.id);
+
+            for wt in worktrees {
+                // Watch both main and additional worktrees
+                if let Err(e) = self
+                    .watcher_manager
+                    .watch_worktree(repo.id.clone(), wt.branch.clone(), wt.path.clone())
+                    .await
+                {
+                    warn!(
+                        "Failed to start watcher for {}/{}: {}",
+                        repo.id, wt.branch, e
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -60,14 +117,31 @@ impl CcmDaemon for CcmDaemonService {
         &self,
         request: Request<CreateWorktreeRequest>,
     ) -> Result<Response<WorktreeInfo>, Status> {
-        handlers::worktree::create_worktree(&self.state, &self.events, request.into_inner()).await
+        let result = handlers::worktree::create_worktree(&self.state, &self.events, request.into_inner()).await?;
+
+        // Start watching the newly created worktree
+        let info = result.get_ref();
+        if let Err(e) = self.watcher_manager.watch_worktree(
+            info.repo_id.clone(),
+            info.branch.clone(),
+            std::path::PathBuf::from(&info.path),
+        ).await {
+            tracing::warn!("Failed to start watcher for {}/{}: {}", info.repo_id, info.branch, e);
+        }
+
+        Ok(result)
     }
 
     async fn remove_worktree(
         &self,
         request: Request<RemoveWorktreeRequest>,
     ) -> Result<Response<Empty>, Status> {
-        handlers::worktree::remove_worktree(&self.state, &self.events, request.into_inner()).await
+        let req = request.into_inner();
+
+        // Stop watching the worktree before removing it
+        self.watcher_manager.unwatch_worktree(&req.repo_id, &req.branch).await;
+
+        handlers::worktree::remove_worktree(&self.state, &self.events, req).await
     }
 
     async fn delete_branch(

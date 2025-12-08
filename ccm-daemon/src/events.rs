@@ -1,8 +1,9 @@
 //! Event broadcasting system for real-time updates
 
 use ccm_proto::daemon::{
-    Event, SessionCreatedEvent, SessionDestroyedEvent, SessionNameUpdatedEvent,
-    SessionStatusChangedEvent, WorktreeAddedEvent, WorktreeInfo, WorktreeRemovedEvent,
+    Event, GitStatusChangedEvent, SessionCreatedEvent, SessionDestroyedEvent,
+    SessionNameUpdatedEvent, SessionStatusChangedEvent, WorktreeAddedEvent, WorktreeInfo,
+    WorktreeRemovedEvent,
 };
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -111,6 +112,15 @@ impl EventBroadcaster {
         self.broadcast(Event {
             event: Some(ccm_proto::daemon::event::Event::WorktreeRemoved(
                 WorktreeRemovedEvent { repo_id, branch },
+            )),
+        });
+    }
+
+    /// Emit a git status changed event
+    pub fn emit_git_status_changed(&self, repo_id: String, branch: String) {
+        self.broadcast(Event {
+            event: Some(ccm_proto::daemon::event::Event::GitStatusChanged(
+                GitStatusChangedEvent { repo_id, branch },
             )),
         });
     }

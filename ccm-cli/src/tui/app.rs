@@ -102,6 +102,9 @@ pub struct App {
     // Event subscription
     pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
 
+    // Git refresh debounce
+    pub last_git_refresh: Option<std::time::Instant>,
+
     // Prefix key mode
     pub prefix_mode: PrefixMode,
 
@@ -150,6 +153,7 @@ impl App {
             input_buffer: String::new(),
             session_delete_action: ExitCleanupAction::Destroy, // Default to destroy
             event_rx: None,
+            last_git_refresh: None,
             prefix_mode: PrefixMode::None,
             config,
             keybinds,
@@ -1419,7 +1423,7 @@ impl App {
     }
 
     /// Handle daemon event and return true if UI needs redraw
-    fn handle_daemon_event(&mut self, event: DaemonEvent) -> bool {
+    fn handle_daemon_event(&mut self, event: DaemonEvent) -> Option<AsyncAction> {
         match event.event {
             Some(daemon_event::Event::SessionCreated(e)) => {
                 debug!(
@@ -1434,11 +1438,12 @@ impl App {
                     ) {
                         if session.repo_id == repo.id && session.branch == branch.branch {
                             self.sessions.push(session);
-                            return true; // Session list changed
+                            self.dirty.sidebar = true;
+                            return None; // Session list changed, will redraw
                         }
                     }
                 }
-                false
+                None
             }
             Some(daemon_event::Event::SessionDestroyed(e)) => {
                 debug!("Event: SessionDestroyed {}", e.session_id);
@@ -1449,7 +1454,11 @@ impl App {
                 if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
                     self.session_idx = self.sessions.len() - 1;
                 }
-                self.sessions.len() != old_len // Only redraw if session was actually removed
+                // Only redraw if session was actually removed
+                if self.sessions.len() != old_len {
+                    self.dirty.sidebar = true;
+                }
+                None
             }
             Some(daemon_event::Event::SessionNameUpdated(e)) => {
                 debug!(
@@ -1460,10 +1469,11 @@ impl App {
                 if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
                     if session.name != e.new_name {
                         session.name = e.new_name;
-                        return true; // Name changed
+                        self.dirty.sidebar = true;
+                        return None; // Name changed
                     }
                 }
-                false
+                None
             }
             Some(daemon_event::Event::SessionStatusChanged(e)) => {
                 debug!(
@@ -1504,7 +1514,10 @@ impl App {
                     }
                 }
 
-                changed
+                if changed {
+                    self.dirty.sidebar = true;
+                }
+                None
             }
             Some(daemon_event::Event::WorktreeAdded(e)) => {
                 debug!(
@@ -1519,12 +1532,12 @@ impl App {
                             if !self.worktrees.iter().any(|w| w.branch == worktree.branch) {
                                 self.worktrees.push(worktree);
                                 self.dirty.sidebar = true;
-                                return true;
+                                return None;
                             }
                         }
                     }
                 }
-                false
+                None
             }
             Some(daemon_event::Event::WorktreeRemoved(e)) => {
                 debug!("Event: WorktreeRemoved {} {}", e.repo_id, e.branch);
@@ -1539,13 +1552,38 @@ impl App {
                         }
                         if self.worktrees.len() != old_len {
                             self.dirty.sidebar = true;
-                            return true;
+                            return None;
                         }
                     }
                 }
-                false
+                None
             }
-            None => false,
+            Some(daemon_event::Event::GitStatusChanged(e)) => {
+                debug!("Event: GitStatusChanged {}/{}", e.repo_id, e.branch);
+
+                // Only refresh if event is for current worktree
+                if let (Some(repo), Some(worktree)) = (
+                    self.repos.get(self.repo_idx),
+                    self.worktrees.get(self.branch_idx),
+                ) {
+                    if e.repo_id == repo.id && e.branch == worktree.branch {
+                        debug!("Auto-refreshing git status for {}/{}", e.repo_id, e.branch);
+
+                        // Client-side debounce: avoid refreshing too frequently
+                        if let Some(last) = self.last_git_refresh {
+                            if last.elapsed() < std::time::Duration::from_millis(500) {
+                                debug!("Skipping refresh: debounced (last refresh was {}ms ago)", last.elapsed().as_millis());
+                                return None; // Skip if refreshed <500ms ago
+                            }
+                        }
+
+                        self.last_git_refresh = Some(std::time::Instant::now());
+                        return Some(AsyncAction::LoadGitStatus);
+                    }
+                }
+                None
+            }
+            None => None,
         }
     }
 
@@ -2840,7 +2878,13 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     None => std::future::pending().await,
                 }
             } => {
-                app.handle_daemon_event(event);
+                if let Some(action) = app.handle_daemon_event(event) {
+                    // If already have a pending action, execute it immediately
+                    if let Some(old_action) = pending_action.take() {
+                        let _ = app.execute_async_action(old_action).await;
+                    }
+                    pending_action = Some(action);
+                }
             }
 
             // 4. Render tick - ALWAYS RENDER (tuitest pattern)

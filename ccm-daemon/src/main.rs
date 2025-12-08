@@ -4,6 +4,7 @@ mod claude_session;
 mod diff;
 pub mod error;
 mod events;
+mod file_watcher;
 mod git;
 mod handlers;
 mod persistence;
@@ -164,6 +165,11 @@ async fn main() -> Result<()> {
 
     // Create gRPC service
     let service = CcmDaemonService::new(state, events);
+
+    // Initialize file watchers for all existing worktrees
+    if let Err(e) = service.initialize_watchers().await {
+        tracing::warn!("Failed to initialize file watchers: {}", e);
+    }
 
     // Start server
     Server::builder()
