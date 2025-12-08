@@ -16,7 +16,6 @@ use crossterm::{
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -465,7 +464,6 @@ impl App {
 
                         self.terminal.active_session_id = Some(new_id);
                         self.terminal.scroll_offset = 0;
-                        self.dirty.terminal = true;
                     }
                 }
             }
@@ -498,7 +496,6 @@ impl App {
                 if self.session_idx > 0 {
                     self.session_idx -= 1;
                     self.dirty.sidebar = true;
-                    self.dirty.terminal = true;
                     self.update_active_session_sync();
                 }
             }
@@ -530,7 +527,6 @@ impl App {
                 if !self.sessions.is_empty() && self.session_idx < self.sessions.len() - 1 {
                     self.session_idx += 1;
                     self.dirty.sidebar = true;
-                    self.dirty.terminal = true;
                     self.update_active_session_sync();
                 }
             }
@@ -582,7 +578,6 @@ impl App {
 
             self.terminal.scroll_offset = 0;
             self.terminal.active_session_id = new_session_id;
-            self.dirty.terminal = true;
             // Note: Stream connection is deferred - will happen when user enters terminal
         }
     }
@@ -672,7 +667,6 @@ impl App {
 
             self.terminal.scroll_offset = 0;
             self.terminal.active_session_id = Some(new_id);
-            self.dirty.terminal = true;
 
             self.enter_terminal().await?;
             self.status_message = Some("Switched to shell session".to_string());
@@ -724,7 +718,6 @@ impl App {
 
                     self.terminal.scroll_offset = 0;
                     self.terminal.active_session_id = Some(new_id);
-                    self.dirty.terminal = true;
 
                     self.enter_terminal().await?;
                     self.status_message = Some("Created shell session".to_string());
@@ -1912,119 +1905,6 @@ impl App {
         Ok(())
     }
 
-    /// Calculate a hash of visible terminal content for change detection
-    /// Returns true if terminal content has changed since last call
-    pub fn update_terminal_hash(&mut self) -> bool {
-        let new_hash = self.calculate_terminal_hash();
-        if new_hash != self.terminal.last_hash {
-            self.terminal.last_hash = new_hash;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Calculate hash of current terminal content
-    fn calculate_terminal_hash(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        let mut hasher = DefaultHasher::new();
-
-        if let Ok(parser) = self.terminal.parser.lock() {
-            let screen = parser.screen();
-            // Hash the terminal contents as a simple string
-            // This is lightweight since we only need to detect changes
-            screen.contents().hash(&mut hasher);
-            // Also hash cursor position as it affects rendering
-            let (cursor_row, cursor_col) = screen.cursor_position();
-            cursor_row.hash(&mut hasher);
-            cursor_col.hash(&mut hasher);
-        }
-
-        hasher.finish()
-    }
-
-    /// Get terminal lines for rendering (uses cache when available)
-    pub fn get_terminal_lines(&self, height: u16, width: u16) -> Vec<ratatui::text::Line<'static>> {
-        // Use cached lines if available and size matches
-        if self.terminal.cached_size == (height, width) && !self.terminal.cached_lines.is_empty() {
-            return self.terminal.cached_lines.clone();
-        }
-
-        // Generate lines from vt100 parser
-        self.generate_terminal_lines(height, width)
-    }
-
-    /// Generate terminal lines from vt100 parser (internal, always regenerates)
-    fn generate_terminal_lines(
-        &self,
-        height: u16,
-        width: u16,
-    ) -> Vec<ratatui::text::Line<'static>> {
-        let mut lines = Vec::new();
-
-        if let Ok(parser) = self.terminal.parser.lock() {
-            let screen = parser.screen();
-
-            for row in 0..height {
-                let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
-                let mut col = 0u16;
-
-                while col < width {
-                    if let Some(cell) = screen.cell(row, col) {
-                        let ch = cell.contents();
-                        if ch.is_empty() {
-                            spans.push(ratatui::text::Span::raw(" "));
-                            col += 1;
-                        } else {
-                            // Build style from cell attributes
-                            let mut style = ratatui::style::Style::default();
-
-                            // Apply foreground color
-                            let fg = cell.fgcolor();
-                            if fg != vt100::Color::Default {
-                                style = style.fg(vt100_color_to_ratatui(fg));
-                            }
-
-                            // Apply background color
-                            let bg = cell.bgcolor();
-                            if bg != vt100::Color::Default {
-                                style = style.bg(vt100_color_to_ratatui(bg));
-                            }
-
-                            // Apply attributes
-                            if cell.bold() {
-                                style = style.add_modifier(ratatui::style::Modifier::BOLD);
-                            }
-                            if cell.italic() {
-                                style = style.add_modifier(ratatui::style::Modifier::ITALIC);
-                            }
-                            if cell.underline() {
-                                style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
-                            }
-                            if cell.inverse() {
-                                style = style.add_modifier(ratatui::style::Modifier::REVERSED);
-                            }
-
-                            spans.push(ratatui::text::Span::styled(ch.to_owned(), style));
-
-                            // Skip columns for wide characters
-                            use unicode_width::UnicodeWidthStr;
-                            let w = UnicodeWidthStr::width(ch);
-                            col += w.max(1) as u16;
-                        }
-                    } else {
-                        spans.push(ratatui::text::Span::raw(" "));
-                        col += 1;
-                    }
-                }
-
-                lines.push(ratatui::text::Line::from(spans));
-            }
-        }
-
-        lines
-    }
-
     // ========== Diff View ==========
 
     /// Switch to diff view
@@ -2676,15 +2556,6 @@ impl App {
     }
 }
 
-/// Convert vt100 color to ratatui color
-fn vt100_color_to_ratatui(color: vt100::Color) -> ratatui::style::Color {
-    match color {
-        vt100::Color::Default => ratatui::style::Color::Reset,
-        vt100::Color::Idx(idx) => ratatui::style::Color::Indexed(idx),
-        vt100::Color::Rgb(r, g, b) => ratatui::style::Color::Rgb(r, g, b),
-    }
-}
-
 /// Result of TUI run
 pub enum RunResult {
     /// User quit (q)
@@ -2721,25 +2592,17 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
     // Spawn input reader thread (crossterm events are blocking)
     let mut input_rx = spawn_input_reader();
 
-    // Render interval (~30fps for smoother rendering, reduces flicker)
-    let mut render_interval = tokio::time::interval(std::time::Duration::from_millis(33));
+    // Fixed 16ms render interval (~60fps) - always render on every tick (tuitest pattern)
+    let mut render_interval = tokio::time::interval(std::time::Duration::from_millis(16));
     render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // Minimum time between renders to prevent flicker during high-frequency updates
-    // 100ms (10fps) provides stable rendering during plan mode while still feeling responsive
-    let min_render_interval = std::time::Duration::from_millis(100);
-    let mut last_render = std::time::Instant::now();
-
-    // Fallback timers
+    // Fallback timers for daemon reconnection
     let mut last_refresh = std::time::Instant::now();
     let mut last_resubscribe_attempt = std::time::Instant::now();
     let refresh_interval = std::time::Duration::from_secs(5);
     let resubscribe_interval = std::time::Duration::from_secs(10);
 
-    // State
-    let mut dirty = true;
-    let mut force_render = false; // Force immediate render (for user input)
-    let mut pty_received = false; // Track if PTY data was received (needs hash check)
+    // Only need pending_action for async operations
     let mut pending_action: Option<AsyncAction> = None;
 
     // Main loop with tokio::select!
@@ -2747,7 +2610,7 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
         tokio::select! {
             biased; // Check branches in priority order
 
-            // 1. Highest priority: keyboard input (immediate response)
+            // 1. Highest priority: keyboard input
             Some(event) = input_rx.recv() => {
                 match event {
                     Event::Key(key) => {
@@ -2759,27 +2622,18 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                             }
                             pending_action = Some(action);
                         }
-                        dirty = true;
-                        force_render = true; // User input needs immediate feedback
                     }
                     Event::Resize(cols, rows) => {
                         let _ = app.resize_terminal(rows, cols).await;
-                        // Invalidate cache when resize happens
-                        app.terminal.cached_lines.clear();
-                        app.terminal.cached_size = (0, 0);
-                        dirty = true;
-                        // Don't force render on resize - let it be throttled to reduce flicker
                     }
                     Event::Mouse(mouse) => {
                         handle_mouse_sync(&mut app, mouse);
-                        dirty = true;
-                        force_render = true;
                     }
                     _ => {}
                 }
             }
 
-            // 2. Terminal PTY output
+            // 2. Terminal PTY output - just process data, no flags needed
             Some(data) = async {
                 match app.terminal_stream.as_mut() {
                     Some(stream) => stream.output_rx.recv().await,
@@ -2789,45 +2643,25 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                 if let Ok(mut parser) = app.terminal.parser.lock() {
                     parser.process(&data);
                 }
-                // Don't set dirty immediately - mark for hash check on render tick
-                // This prevents excessive redraws when content hasn't visually changed
-                pty_received = true;
             }
 
-            // 3. Daemon events
+            // 3. Daemon events - update state
             Some(event) = async {
                 match app.event_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                // Only mark dirty if the event actually changed something visible
-                if app.handle_daemon_event(event) {
-                    dirty = true;
-                }
+                app.handle_daemon_event(event);
             }
 
-            // 4. Render tick + execute pending async actions
+            // 4. Render tick - ALWAYS RENDER (tuitest pattern)
             _ = render_interval.tick() => {
                 // Execute pending async action
                 if let Some(action) = pending_action.take() {
                     if let Err(e) = app.execute_async_action(action).await {
                         app.error_message = Some(format!("{}", e));
                     }
-                    dirty = true;
-                    // Also check app.dirty to catch updates from async action
-                    if app.dirty.any() {
-                        dirty = true;
-                        app.dirty.clear();
-                    }
-                }
-
-                // Check if terminal content actually changed (only if PTY data was received)
-                if pty_received {
-                    if app.update_terminal_hash() {
-                        dirty = true;
-                    }
-                    pty_received = false;
                 }
 
                 // Check if we need to resubscribe (event channel disconnected)
@@ -2836,7 +2670,6 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     if last_refresh.elapsed() >= refresh_interval {
                         let _ = app.refresh_sessions().await;
                         last_refresh = std::time::Instant::now();
-                        dirty = true;
                     }
 
                     // Periodically attempt to resubscribe
@@ -2846,23 +2679,13 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
                     }
                 }
 
-                // Render if:
-                // 1. force_render is set (user input - needs immediate feedback), OR
-                // 2. dirty and minimum interval has passed (background updates - throttled)
-                if dirty && (force_render || last_render.elapsed() >= min_render_interval) {
-                    // Use synchronized update to prevent flicker
-                    // Terminal will buffer all output until EndSynchronizedUpdate
-                    execute!(terminal.backend_mut(), BeginSynchronizedUpdate)
-                        .map_err(TuiError::Render)?;
-                    terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
-                    execute!(terminal.backend_mut(), EndSynchronizedUpdate)
-                        .map_err(TuiError::Render)?;
-                    dirty = false;
-                    force_render = false;
-                    // Clear app dirty flags after render
-                    app.dirty.clear();
-                    last_render = std::time::Instant::now();
-                }
+                // Always render - no dirty checks needed (tuitest pattern)
+                // Use synchronized update to prevent flicker
+                execute!(terminal.backend_mut(), BeginSynchronizedUpdate)
+                    .map_err(TuiError::Render)?;
+                terminal.draw(|f| draw(f, &app)).map_err(TuiError::Render)?;
+                execute!(terminal.backend_mut(), EndSynchronizedUpdate)
+                    .map_err(TuiError::Render)?;
             }
         }
 

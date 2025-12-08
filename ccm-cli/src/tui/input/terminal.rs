@@ -68,7 +68,6 @@ fn execute_terminal_insert_action(app: &mut App, action: Action) -> Option<Async
         // Exit insert mode
         Action::NormalMode => {
             app.terminal.mode = super::super::state::TerminalMode::Normal;
-            app.dirty.terminal = true;
             None
         }
 

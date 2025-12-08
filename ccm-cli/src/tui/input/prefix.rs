@@ -95,7 +95,6 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         Action::NormalMode => {
             if app.focus == Focus::Terminal && app.terminal.mode == TerminalMode::Insert {
                 app.terminal.mode = TerminalMode::Normal;
-                app.dirty.terminal = true;
             }
             None
         }

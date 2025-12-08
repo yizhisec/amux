@@ -139,15 +139,16 @@ pub enum PrefixMode {
 /// Tracks which UI components need redrawing
 #[derive(Default, Clone)]
 pub struct DirtyFlags {
-    pub sidebar: bool,  // repo/branch/session list changed
-    pub terminal: bool, // terminal content changed
+    pub sidebar: bool, // repo/branch/session list changed
 }
 
 impl DirtyFlags {
+    #[allow(dead_code)]
     pub fn any(&self) -> bool {
-        self.sidebar || self.terminal
+        self.sidebar
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         *self = Self::default();
     }
@@ -161,70 +162,37 @@ mod dirty_flags_tests {
     fn test_dirty_flags_default() {
         let flags = DirtyFlags::default();
         assert!(!flags.sidebar);
-        assert!(!flags.terminal);
         assert!(!flags.any());
     }
 
     #[test]
     fn test_dirty_flags_any_sidebar() {
-        let flags = DirtyFlags {
-            sidebar: true,
-            terminal: false,
-        };
-        assert!(flags.any());
-    }
-
-    #[test]
-    fn test_dirty_flags_any_terminal() {
-        let flags = DirtyFlags {
-            sidebar: false,
-            terminal: true,
-        };
-        assert!(flags.any());
-    }
-
-    #[test]
-    fn test_dirty_flags_any_both() {
-        let flags = DirtyFlags {
-            sidebar: true,
-            terminal: true,
-        };
+        let flags = DirtyFlags { sidebar: true };
         assert!(flags.any());
     }
 
     #[test]
     fn test_dirty_flags_any_none() {
-        let flags = DirtyFlags {
-            sidebar: false,
-            terminal: false,
-        };
+        let flags = DirtyFlags { sidebar: false };
         assert!(!flags.any());
     }
 
     #[test]
     fn test_dirty_flags_clear() {
-        let mut flags = DirtyFlags {
-            sidebar: true,
-            terminal: true,
-        };
+        let mut flags = DirtyFlags { sidebar: true };
         assert!(flags.any());
 
         flags.clear();
         assert!(!flags.sidebar);
-        assert!(!flags.terminal);
         assert!(!flags.any());
     }
 
     #[test]
     fn test_dirty_flags_clone() {
-        let flags1 = DirtyFlags {
-            sidebar: true,
-            terminal: false,
-        };
+        let flags1 = DirtyFlags { sidebar: true };
         let flags2 = flags1.clone();
 
         assert_eq!(flags1.sidebar, flags2.sidebar);
-        assert_eq!(flags1.terminal, flags2.terminal);
     }
 }
 
@@ -341,12 +309,6 @@ pub struct TerminalState {
     pub scroll_offset: usize,
     /// Whether terminal is fullscreen
     pub fullscreen: bool,
-    /// Hash of terminal content for change detection
-    pub last_hash: u64,
-    /// Cached terminal lines for rendering
-    pub cached_lines: Vec<ratatui::text::Line<'static>>,
-    /// Cached terminal size (height, width)
-    pub cached_size: (u16, u16),
     /// Terminal columns
     pub cols: Option<u16>,
     /// Terminal rows
@@ -363,9 +325,6 @@ impl Default for TerminalState {
             mode: TerminalMode::Normal,
             scroll_offset: 0,
             fullscreen: false,
-            last_hash: 0,
-            cached_lines: Vec::new(),
-            cached_size: (0, 0),
             cols: None,
             rows: None,
         }

@@ -279,22 +279,4 @@ mod tests {
             _ => panic!("Expected Unhandled"),
         }
     }
-
-    #[test]
-    fn test_is_prefix_key_ctrl_s() {
-        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
-        assert!(is_prefix_key(&key));
-    }
-
-    #[test]
-    fn test_is_prefix_key_not_ctrl_s() {
-        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
-        assert!(!is_prefix_key(&key));
-    }
-
-    #[test]
-    fn test_is_prefix_key_s_without_ctrl() {
-        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty());
-        assert!(!is_prefix_key(&key));
-    }
 }

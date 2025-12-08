@@ -43,13 +43,11 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
                     RightPanelView::Terminal => {
                         // Always allow scroll in terminal preview (Normal mode or not)
                         app.scroll_up(3);
-                        app.dirty.terminal = true;
                     }
                     RightPanelView::Diff => {
                         for _ in 0..3 {
                             app.diff_move_up();
                         }
-                        app.dirty.terminal = true;
                     }
                 }
             }
@@ -80,13 +78,11 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
                 match app.right_panel_view {
                     RightPanelView::Terminal => {
                         app.scroll_down(3);
-                        app.dirty.terminal = true;
                     }
                     RightPanelView::Diff => {
                         for _ in 0..3 {
                             app.diff_move_down();
                         }
-                        app.dirty.terminal = true;
                     }
                 }
             }
@@ -114,7 +110,6 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
                 }
             }
             app.dirty.sidebar = true;
-            app.dirty.terminal = true;
         }
         _ => {}
     }
