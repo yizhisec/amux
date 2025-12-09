@@ -117,16 +117,27 @@ impl CcmDaemon for CcmDaemonService {
         &self,
         request: Request<CreateWorktreeRequest>,
     ) -> Result<Response<WorktreeInfo>, Status> {
-        let result = handlers::worktree::create_worktree(&self.state, &self.events, request.into_inner()).await?;
+        let result =
+            handlers::worktree::create_worktree(&self.state, &self.events, request.into_inner())
+                .await?;
 
         // Start watching the newly created worktree
         let info = result.get_ref();
-        if let Err(e) = self.watcher_manager.watch_worktree(
-            info.repo_id.clone(),
-            info.branch.clone(),
-            std::path::PathBuf::from(&info.path),
-        ).await {
-            tracing::warn!("Failed to start watcher for {}/{}: {}", info.repo_id, info.branch, e);
+        if let Err(e) = self
+            .watcher_manager
+            .watch_worktree(
+                info.repo_id.clone(),
+                info.branch.clone(),
+                std::path::PathBuf::from(&info.path),
+            )
+            .await
+        {
+            tracing::warn!(
+                "Failed to start watcher for {}/{}: {}",
+                info.repo_id,
+                info.branch,
+                e
+            );
         }
 
         Ok(result)
@@ -139,7 +150,9 @@ impl CcmDaemon for CcmDaemonService {
         let req = request.into_inner();
 
         // Stop watching the worktree before removing it
-        self.watcher_manager.unwatch_worktree(&req.repo_id, &req.branch).await;
+        self.watcher_manager
+            .unwatch_worktree(&req.repo_id, &req.branch)
+            .await;
 
         handlers::worktree::remove_worktree(&self.state, &self.events, req).await
     }

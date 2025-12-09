@@ -84,7 +84,7 @@ impl PtyProcess {
 
                 // Set controlling terminal
                 unsafe {
-                    libc::ioctl(slave_raw, libc::TIOCSCTTY, 0);
+                    libc::ioctl(slave_raw, libc::TIOCSCTTY as libc::c_ulong, 0);
                 }
 
                 // Redirect stdio to slave

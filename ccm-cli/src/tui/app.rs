@@ -1572,7 +1572,10 @@ impl App {
                         // Client-side debounce: avoid refreshing too frequently
                         if let Some(last) = self.last_git_refresh {
                             if last.elapsed() < std::time::Duration::from_millis(500) {
-                                debug!("Skipping refresh: debounced (last refresh was {}ms ago)", last.elapsed().as_millis());
+                                debug!(
+                                    "Skipping refresh: debounced (last refresh was {}ms ago)",
+                                    last.elapsed().as_millis()
+                                );
                                 return None; // Skip if refreshed <500ms ago
                             }
                         }
