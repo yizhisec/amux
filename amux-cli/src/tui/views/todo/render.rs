@@ -8,7 +8,6 @@ use amux_proto::daemon::TodoItem;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
@@ -27,6 +26,25 @@ fn calculate_depth(items: &[TodoItem], item_idx: usize) -> usize {
         }
     }
     0
+}
+
+/// Check if we're in a TODO input mode
+fn is_todo_input_mode(app: &App) -> bool {
+    matches!(
+        app.input_mode,
+        InputMode::AddTodo { .. } | InputMode::EditTodo { .. } | InputMode::EditTodoDescription { .. }
+    )
+}
+
+/// Get the input mode title
+fn get_input_title(app: &App) -> &'static str {
+    match app.input_mode {
+        InputMode::AddTodo { parent_id: Some(_) } => "Add Child TODO:",
+        InputMode::AddTodo { parent_id: None } => "Add TODO:",
+        InputMode::EditTodo { .. } => "Edit Title:",
+        InputMode::EditTodoDescription { .. } => "Edit Description:",
+        _ => "",
+    }
 }
 
 /// Draw TODO popup (main TODO list)
@@ -70,11 +88,27 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         height: popup_area.height.saturating_sub(2),
     };
 
-    // Split into list area and help area
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(3)])
-        .split(inner);
+    // Determine if we need an input area
+    let in_input_mode = is_todo_input_mode(app);
+
+    // Split into list area, input area (if needed), and help area
+    let chunks = if in_input_mode {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),    // TODO list
+                Constraint::Length(3), // Input area
+            ])
+            .split(inner)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),    // TODO list
+                Constraint::Length(3), // Help text
+            ])
+            .split(inner)
+    };
 
     // Draw TODO list with tree structure using pre-computed display order
     let items: Vec<ListItem> = app
@@ -115,190 +149,92 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     let list = List::new(items).block(Block::default());
     f.render_widget(list, chunks[0]);
 
-    // Draw help text
-    let help_text = format!(
-        "{} Nav | {} Toggle | {} Add | {} Add child | {} Edit | {} Desc | {} Delete | {} Close",
-        format!("{}/{}", key(app, Action::MoveUp), key(app, Action::MoveDown)).replace("[]", ""),
-        key(app, Action::ToggleTodoComplete),
-        key(app, Action::AddTodo),
-        key(app, Action::AddChildTodo),
-        key(app, Action::EditTodoTitle),
-        key(app, Action::EditTodoDescription),
-        key(app, Action::DeleteTodo),
-        key(app, Action::ClosePopup),
-    );
-    let help = Paragraph::new(help_text)
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::ALL).title(" Help "));
-    f.render_widget(help, chunks[1]);
-}
+    // Draw input area or help text
+    if in_input_mode {
+        // Draw input box
+        let input_title = get_input_title(app);
+        let input_block = Block::default()
+            .title(input_title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
 
-/// Draw add TODO overlay
-pub fn draw_add_todo_overlay(f: &mut Frame, area: Rect, app: &App) {
-    // Small centered input box
-    let popup_width = 60;
-    let popup_height = 5;
-    let popup_x = (area.width - popup_width) / 2;
-    let popup_y = (area.height - popup_height) / 2;
-    let popup_area = Rect {
-        x: area.x + popup_x,
-        y: area.y + popup_y,
-        width: popup_width,
-        height: popup_height,
-    };
+        let input_inner = input_block.inner(chunks[1]);
+        f.render_widget(input_block, chunks[1]);
 
-    // Clear background
-    let background = Block::default()
-        .style(Style::default().bg(Color::Black))
-        .borders(Borders::NONE);
-    f.render_widget(background, area);
+        // Input text
+        let input = Paragraph::new(app.text_input.content())
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(input, input_inner);
 
-    // Draw input box
-    let title = if matches!(app.input_mode, InputMode::AddTodo { parent_id: Some(_) }) {
-        " Add Child TODO "
+        // Cursor
+        f.set_cursor_position((
+            input_inner.x + app.text_input.cursor_display_offset() as u16,
+            input_inner.y,
+        ));
     } else {
-        " Add TODO "
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    // Input text
-    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
-    f.render_widget(input, inner);
-
-    // Cursor
-    f.set_cursor_position((
-        inner.x + app.text_input.cursor_display_offset() as u16,
-        inner.y,
-    ));
+        // Draw help text
+        let help_text = format!(
+            "{} Nav | {} Toggle | {} Add | {} Add child | {} Edit | {} Desc | {} Delete | {} Close",
+            format!("{}/{}", key(app, Action::MoveUp), key(app, Action::MoveDown)).replace("[]", ""),
+            key(app, Action::ToggleTodoComplete),
+            key(app, Action::AddTodo),
+            key(app, Action::AddChildTodo),
+            key(app, Action::EditTodoTitle),
+            key(app, Action::EditTodoDescription),
+            key(app, Action::DeleteTodo),
+            key(app, Action::ClosePopup),
+        );
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL).title(" Help "));
+        f.render_widget(help, chunks[1]);
+    }
 }
 
-/// Draw edit TODO overlay
+/// Draw add TODO overlay - now just redirects to main popup with input mode
+pub fn draw_add_todo_overlay(f: &mut Frame, area: Rect, app: &App) {
+    // This is now handled within draw_todo_popup when in AddTodo input mode
+    draw_todo_popup(f, area, app);
+}
+
+/// Draw edit TODO overlay - now just redirects to main popup with input mode
 pub fn draw_edit_todo_overlay(f: &mut Frame, area: Rect, app: &App) {
-    // Small centered input box
-    let popup_width = 60;
-    let popup_height = 5;
-    let popup_x = (area.width - popup_width) / 2;
-    let popup_y = (area.height - popup_height) / 2;
-    let popup_area = Rect {
-        x: area.x + popup_x,
-        y: area.y + popup_y,
-        width: popup_width,
-        height: popup_height,
-    };
-
-    // Clear background
-    let background = Block::default()
-        .style(Style::default().bg(Color::Black))
-        .borders(Borders::NONE);
-    f.render_widget(background, area);
-
-    // Draw input box
-    let block = Block::default()
-        .title(" Edit TODO Title ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    // Input text
-    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
-    f.render_widget(input, inner);
-
-    // Cursor
-    f.set_cursor_position((
-        inner.x + app.text_input.cursor_display_offset() as u16,
-        inner.y,
-    ));
+    // This is now handled within draw_todo_popup when in EditTodo input mode
+    draw_todo_popup(f, area, app);
 }
 
-/// Draw edit TODO description overlay
-pub fn draw_edit_todo_description_overlay(f: &mut Frame, area: Rect, app: &App) {
-    // Small centered input box
-    let popup_width = 60;
-    let popup_height = 5;
-    let popup_x = (area.width - popup_width) / 2;
-    let popup_y = (area.height - popup_height) / 2;
-    let popup_area = Rect {
-        x: area.x + popup_x,
-        y: area.y + popup_y,
-        width: popup_width,
-        height: popup_height,
-    };
-
-    // Clear background
-    let background = Block::default()
-        .style(Style::default().bg(Color::Black))
-        .borders(Borders::NONE);
-    f.render_widget(background, area);
-
-    // Draw input box
-    let block = Block::default()
-        .title(" Edit TODO Description ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    // Input text
-    let input = Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::White));
-    f.render_widget(input, inner);
-
-    // Cursor
-    f.set_cursor_position((
-        inner.x + app.text_input.cursor_display_offset() as u16,
-        inner.y,
-    ));
+/// Draw edit description overlay - now just redirects to main popup with input mode
+pub fn draw_edit_description_overlay(f: &mut Frame, area: Rect, app: &App) {
+    // This is now handled within draw_todo_popup when in EditTodoDescription input mode
+    draw_todo_popup(f, area, app);
 }
 
 /// Draw confirm delete TODO overlay
 pub fn draw_confirm_delete_todo_overlay(f: &mut Frame, area: Rect, title: &str) {
-    // Small centered confirmation box
-    let popup_width = 60.min(area.width.saturating_sub(4));
-    let popup_height = 7;
-    let popup_x = (area.width - popup_width) / 2;
-    let popup_y = (area.height - popup_height) / 2;
-    let popup_area = Rect {
-        x: area.x + popup_x,
-        y: area.y + popup_y,
-        width: popup_width,
-        height: popup_height,
-    };
+    let popup_width = 50.min(area.width.saturating_sub(4));
+    let popup_height = 5;
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-    // Clear background
-    let background = Block::default()
+    let text = format!(
+        "Delete \"{}\"?\n\n[y] Yes  [n] No",
+        if title.len() > 30 {
+            format!("{}...", &title[..27])
+        } else {
+            title.to_string()
+        }
+    );
+
+    let confirm = Paragraph::new(text)
         .style(Style::default().bg(Color::Black))
-        .borders(Borders::NONE);
-    f.render_widget(background, area);
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red).bg(Color::Black))
+                .style(Style::default().bg(Color::Black))
+                .title(" Confirm Delete "),
+        );
 
-    // Draw confirmation box
-    let block = Block::default()
-        .title(" Confirm Delete ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red));
-
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    // Confirmation message
-    let message = vec![
-        Line::from(""),
-        Line::from(format!("Delete TODO: {}", title)).style(Style::default().fg(Color::White)),
-        Line::from(""),
-        Line::from("This will also delete all child TODOs.")
-            .style(Style::default().fg(Color::Yellow)),
-        Line::from(""),
-        Line::from("[y] Yes    [n] No").style(Style::default().fg(Color::DarkGray)),
-    ];
-
-    let paragraph = Paragraph::new(message).alignment(ratatui::layout::Alignment::Center);
-    f.render_widget(paragraph, inner);
+    f.render_widget(confirm, popup_area);
 }

@@ -126,10 +126,17 @@ pub enum InputMode {
 }
 
 /// Terminal mode (vim-style)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TerminalMode {
     Normal, // View/scroll mode
     Insert, // Interactive input mode
+}
+
+/// Saved focus state for restoration
+#[derive(Debug, Clone)]
+pub struct SavedFocusState {
+    pub focus: Focus,
+    pub terminal_mode: Option<TerminalMode>,
 }
 
 /// Prefix key mode state

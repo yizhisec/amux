@@ -26,7 +26,11 @@ pub fn load_or_default() -> Result<Config> {
         Ok(content) => {
             // Try to parse the user's config
             match parser::parse_toml(&content) {
-                Ok(config) => Ok(config),
+                Ok(mut config) => {
+                    // Merge with defaults to fill in missing bindings
+                    config.merge_with_defaults();
+                    Ok(config)
+                }
                 Err(e) => {
                     eprintln!("Warning: Failed to parse config file: {}", e);
                     eprintln!("Using default configuration");

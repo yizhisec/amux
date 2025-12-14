@@ -1,7 +1,7 @@
 //! Input form handling
 
 use super::super::state::{
-    AsyncAction, DeleteTarget, ExitCleanupAction, Focus, InputMode, SidebarItem,
+    AsyncAction, DeleteTarget, ExitCleanupAction, Focus, InputMode, SavedFocusState, SidebarItem,
 };
 use super::super::widgets::VirtualList;
 use super::super::App;
@@ -13,14 +13,26 @@ type Result<T> = std::result::Result<T, TuiError>;
 impl App {
     /// Save current focus before opening a dialog/popup
     pub fn save_focus(&mut self) {
-        self.saved_focus_stack.push(self.focus.clone());
+        let terminal_mode = if self.focus == Focus::Terminal {
+            Some(self.terminal.mode)
+        } else {
+            None
+        };
+        self.saved_focus_stack.push(SavedFocusState {
+            focus: self.focus.clone(),
+            terminal_mode,
+        });
     }
 
     /// Restore focus after closing a dialog/popup
     /// Returns true if focus was restored, false if stack was empty
     pub fn restore_focus(&mut self) -> bool {
         if let Some(saved) = self.saved_focus_stack.pop() {
-            self.focus = saved;
+            self.focus = saved.focus;
+            // When restoring to Terminal, restore the saved terminal mode
+            if let Some(mode) = saved.terminal_mode {
+                self.terminal.mode = mode;
+            }
             true
         } else {
             // Stack empty - graceful degradation
@@ -346,8 +358,8 @@ impl App {
     }
 
     /// Request deletion (enters confirm mode)
+    /// Note: Caller should call save_focus() before this if needed
     pub fn request_delete(&mut self) {
-        self.save_focus();
         match self.focus {
             Focus::Sidebar => {
                 // In tree view: delete based on current selection

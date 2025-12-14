@@ -134,6 +134,7 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
         }
 
         Action::DeleteCurrent => {
+            app.save_focus();
             app.request_delete();
             None
         }
