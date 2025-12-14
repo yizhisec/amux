@@ -13,35 +13,19 @@ use ratatui::{
 
 /// Draw sidebar with worktrees and sessions
 pub fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.sidebar.tree_view_enabled {
-        // Tree view with git status panel
-        if app.sidebar.git_panel_enabled {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(60), // Worktrees
-                    Constraint::Percentage(40), // Git Status
-                ])
-                .split(area);
-
-            draw_sidebar_tree(f, chunks[0], app);
-            draw_git_status_panel(f, chunks[1], app);
-        } else {
-            // Tree view: single list with worktrees and nested sessions
-            draw_sidebar_tree(f, area, app);
-        }
-    } else {
-        // Legacy view: split sidebar into worktrees and sessions
+    if app.sidebar.git_panel_enabled {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(50), // Worktrees
-                Constraint::Percentage(50), // Sessions
+                Constraint::Percentage(60), // Worktrees
+                Constraint::Percentage(40), // Git Status
             ])
             .split(area);
 
-        draw_worktrees(f, chunks[0], app);
-        draw_sessions(f, chunks[1], app);
+        draw_sidebar_tree(f, chunks[0], app);
+        draw_git_status_panel(f, chunks[1], app);
+    } else {
+        draw_sidebar_tree(f, area, app);
     }
 }
 
@@ -58,6 +42,7 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
     let mut cursor_pos = 0;
 
     let repo = app.current_repo();
+    let sidebar_cursor = repo.map(|r| r.sidebar_cursor).unwrap_or(0);
     let expanded_worktrees = repo.map(|r| &r.expanded_worktrees);
     let sessions_by_worktree = repo.map(|r| &r.sessions_by_worktree);
 
@@ -65,7 +50,7 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
         let is_expanded = expanded_worktrees
             .map(|e| e.contains(&wt_idx))
             .unwrap_or(false);
-        let is_cursor = cursor_pos == app.sidebar.cursor;
+        let is_cursor = cursor_pos == sidebar_cursor;
 
         // Worktree row style
         let wt_style = if is_cursor && is_focused {
@@ -114,7 +99,7 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
         if is_expanded {
             if let Some(sessions) = sessions_by_worktree.and_then(|sbw| sbw.get(&wt_idx)) {
                 for session in sessions.iter() {
-                    let is_session_cursor = cursor_pos == app.sidebar.cursor;
+                    let is_session_cursor = cursor_pos == sidebar_cursor;
                     let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
 
                     let s_style = if is_session_cursor && is_focused {
@@ -161,128 +146,6 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
     } else {
         " Worktrees "
     };
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(title),
-    );
-
-    f.render_widget(list, area);
-}
-
-/// Draw worktrees list (only branches with worktrees)
-pub fn draw_worktrees(f: &mut Frame, area: Rect, app: &App) {
-    let is_focused = app.focus == Focus::Branches;
-    let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let items: Vec<ListItem> = app
-        .worktrees()
-        .iter()
-        .enumerate()
-        .map(|(i, wt)| {
-            let is_selected = i == app.branch_idx();
-            let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(Color::White)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-
-            // Worktree indicator: ◆ for main, ● for others
-            let indicator = if wt.is_main { "◆" } else { "●" };
-
-            // Session count indicator
-            let session_indicator = if wt.session_count > 0 {
-                format!(" ({})", wt.session_count)
-            } else {
-                String::new()
-            };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(if is_selected { ">" } else { " " }, style),
-                Span::styled(format!(" {} ", indicator), Style::default().fg(Color::Cyan)),
-                Span::styled(&wt.branch, style),
-                Span::styled(session_indicator, Style::default().fg(Color::Green)),
-            ]))
-        })
-        .collect();
-
-    let title = if is_focused {
-        " Worktrees [*] "
-    } else {
-        " Worktrees "
-    };
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(title),
-    );
-
-    f.render_widget(list, area);
-}
-
-/// Draw sessions list
-pub fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
-    let is_focused = app.focus == Focus::Sessions;
-    let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let current_branch = app
-        .worktrees()
-        .get(app.branch_idx())
-        .map(|b| b.branch.as_str())
-        .unwrap_or("?");
-
-    let items: Vec<ListItem> = app
-        .sessions()
-        .iter()
-        .enumerate()
-        .map(|(i, session)| {
-            let is_selected = i == app.session_idx();
-            let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
-
-            let style = if is_selected && is_focused {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(Color::White)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-
-            // Active indicator
-            let active_indicator = if is_active { "▶" } else { " " };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(if is_selected { ">" } else { " " }, style),
-                Span::styled(
-                    format!(" {} ", active_indicator),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled(&session.name, style),
-            ]))
-        })
-        .collect();
-
-    let title = if is_focused {
-        format!(" Sessions ({}) [*] ", current_branch)
-    } else {
-        format!(" Sessions ({}) ", current_branch)
-    };
-
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)

@@ -17,31 +17,15 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             if in_sidebar {
-                // Scroll sidebar (tree view or legacy lists)
-                match app.focus {
-                    Focus::Sidebar => {
-                        for _ in 0..3 {
-                            let _ = app.sidebar_move_up();
-                        }
-                    }
-                    Focus::Branches | Focus::Sessions => {
-                        for _ in 0..3 {
-                            let _ = app.select_prev_sync();
-                        }
-                    }
-                    _ => {
-                        // Even if focus is elsewhere, scroll sidebar when mouse is there
-                        for _ in 0..3 {
-                            let _ = app.sidebar_move_up();
-                        }
-                    }
+                // Scroll sidebar
+                for _ in 0..3 {
+                    let _ = app.sidebar_move_up();
                 }
                 app.dirty.sidebar = true;
             } else {
                 // Scroll main content area (terminal or diff)
                 match app.right_panel_view {
                     RightPanelView::Terminal => {
-                        // Always allow scroll in terminal preview (Normal mode or not)
                         app.scroll_up(3);
                     }
                     RightPanelView::Diff => {
@@ -55,22 +39,8 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::ScrollDown => {
             if in_sidebar {
                 // Scroll sidebar
-                match app.focus {
-                    Focus::Sidebar => {
-                        for _ in 0..3 {
-                            let _ = app.sidebar_move_down();
-                        }
-                    }
-                    Focus::Branches | Focus::Sessions => {
-                        for _ in 0..3 {
-                            let _ = app.select_next_sync();
-                        }
-                    }
-                    _ => {
-                        for _ in 0..3 {
-                            let _ = app.sidebar_move_down();
-                        }
-                    }
+                for _ in 0..3 {
+                    let _ = app.sidebar_move_down();
                 }
                 app.dirty.sidebar = true;
             } else {
@@ -90,14 +60,7 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             // Click to focus: left side = sidebar, right side = terminal/diff
             if in_sidebar {
-                if app.sidebar.tree_view_enabled {
-                    app.focus = Focus::Sidebar;
-                } else {
-                    // In legacy mode, keep current sidebar focus
-                    if app.focus != Focus::Branches && app.focus != Focus::Sessions {
-                        app.focus = Focus::Branches;
-                    }
-                }
+                app.focus = Focus::Sidebar;
             } else {
                 // Click on right panel
                 match app.right_panel_view {

@@ -235,11 +235,6 @@ impl App {
         self.current_repo().map(|r| r.branch_idx).unwrap_or(0)
     }
 
-    /// Get current session_idx (convenience)
-    pub fn session_idx(&self) -> usize {
-        self.current_repo().map(|r| r.session_idx).unwrap_or(0)
-    }
-
     /// Get current worktree (convenience)
     pub fn current_worktree(&self) -> Option<&WorktreeInfo> {
         self.current_repo().and_then(|r| r.current_worktree())
@@ -413,10 +408,8 @@ impl App {
         // Update sidebar total items count
         self.update_sidebar_total_items();
 
-        // Sync sidebar cursor from repo state
-        if let Some(repo) = self.repo_states.get(&repo_id) {
-            self.sidebar.cursor = repo.sidebar_cursor;
-        }
+        // Sidebar cursor is now stored in repo state directly
+        // No need to sync since rendering uses repo.sidebar_cursor
 
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
@@ -510,13 +503,9 @@ impl App {
     // ========== Tree view helpers ==========
 
     /// Update total_items count in sidebar based on current worktrees and expanded state
+    /// Note: This is now a no-op since total_items is calculated on-demand
     fn update_sidebar_total_items(&mut self) {
-        let count = if let Some(repo) = self.current_repo() {
-            repo.calculate_sidebar_total()
-        } else {
-            1
-        };
-        self.sidebar.total_items = count;
+        // Total items are now calculated on-demand via repo.calculate_sidebar_total()
     }
 
     /// Get the current sidebar item at cursor position
@@ -525,16 +514,17 @@ impl App {
             return SidebarItem::None;
         };
 
+        let cursor = repo.sidebar_cursor;
         let mut pos = 0;
         for (wt_idx, _wt) in repo.worktrees.iter().enumerate() {
-            if pos == self.sidebar.cursor {
+            if pos == cursor {
                 return SidebarItem::Worktree(wt_idx);
             }
             pos += 1;
             if repo.expanded_worktrees.contains(&wt_idx) {
                 if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
                     for (s_idx, _session) in sessions.iter().enumerate() {
-                        if pos == self.sidebar.cursor {
+                        if pos == cursor {
                             return SidebarItem::Session(wt_idx, s_idx);
                         }
                         pos += 1;
@@ -569,10 +559,13 @@ impl App {
 
     /// Move cursor up in sidebar tree view
     pub fn sidebar_move_up(&mut self) -> Option<AsyncAction> {
-        if self.sidebar.move_up() {
+        let moved = self
+            .current_repo_mut()
+            .map(|r| r.move_up())
+            .unwrap_or(false);
+        if moved {
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
-                // Worktree changed, refresh git status
                 return Some(AsyncAction::LoadGitStatus);
             }
         }
@@ -581,39 +574,17 @@ impl App {
 
     /// Move cursor down in sidebar tree view
     pub fn sidebar_move_down(&mut self) -> Option<AsyncAction> {
-        if self.sidebar.move_down() {
+        let moved = self
+            .current_repo_mut()
+            .map(|r| r.move_down())
+            .unwrap_or(false);
+        if moved {
             self.dirty.sidebar = true;
             if self.update_selection_from_sidebar() {
-                // Worktree changed, refresh git status
                 return Some(AsyncAction::LoadGitStatus);
             }
         }
         None
-    }
-
-    /// Toggle between tree view and legacy split view
-    pub fn toggle_tree_view(&mut self) {
-        self.sidebar.tree_view_enabled = !self.sidebar.tree_view_enabled;
-        self.dirty.sidebar = true;
-
-        // Update focus based on mode
-        if self.sidebar.tree_view_enabled {
-            // Switch to tree view: change Focus::Branches/Sessions to Focus::Sidebar
-            if self.focus == Focus::Branches || self.focus == Focus::Sessions {
-                self.focus = Focus::Sidebar;
-            }
-        } else {
-            // Switch to legacy view: change Focus::Sidebar to Focus::Branches
-            if self.focus == Focus::Sidebar {
-                self.focus = Focus::Branches;
-            }
-        }
-
-        self.status_message = Some(if self.sidebar.tree_view_enabled {
-            "Tree view enabled (T to toggle)".to_string()
-        } else {
-            "Legacy view enabled (T to toggle)".to_string()
-        });
     }
 
     /// Update branch_idx and session_idx based on sidebar cursor
@@ -631,11 +602,10 @@ impl App {
             SidebarItem::Session(wt_idx, s_idx) => {
                 self.set_branch_idx(wt_idx);
                 self.set_session_idx(s_idx);
-                // Get session id first to avoid borrow issues
+                // Get session id from the correct source (RepoState, not SidebarState)
                 let session_id = self
-                    .sidebar
-                    .sessions_by_worktree
-                    .get(&wt_idx)
+                    .current_repo()
+                    .and_then(|repo| repo.sessions_by_worktree.get(&wt_idx))
                     .and_then(|sessions| sessions.get(s_idx))
                     .map(|s| s.id.clone());
 
@@ -683,20 +653,6 @@ impl App {
             Focus::GitStatus => {
                 self.git_status_move_up();
             }
-            Focus::Branches => {
-                if self.branch_idx() > 0 {
-                    self.set_branch_idx(self.branch_idx() - 1);
-                    self.dirty.sidebar = true;
-                    return Some(AsyncAction::RefreshSessions);
-                }
-            }
-            Focus::Sessions => {
-                if self.session_idx() > 0 {
-                    self.set_session_idx(self.session_idx() - 1);
-                    self.dirty.sidebar = true;
-                    self.update_active_session_sync();
-                }
-            }
             Focus::Terminal => {}
             Focus::DiffFiles => {
                 self.diff_move_up();
@@ -714,20 +670,6 @@ impl App {
             Focus::GitStatus => {
                 self.git_status_move_down();
             }
-            Focus::Branches => {
-                if !self.worktrees().is_empty() && self.branch_idx() < self.worktrees().len() - 1 {
-                    self.set_branch_idx(self.branch_idx() + 1);
-                    self.dirty.sidebar = true;
-                    return Some(AsyncAction::RefreshSessions);
-                }
-            }
-            Focus::Sessions => {
-                if !self.sessions().is_empty() && self.session_idx() < self.sessions().len() - 1 {
-                    self.set_session_idx(self.session_idx() + 1);
-                    self.dirty.sidebar = true;
-                    self.update_active_session_sync();
-                }
-            }
             Focus::Terminal => {}
             Focus::DiffFiles => {
                 self.diff_move_down();
@@ -744,19 +686,9 @@ impl App {
 
         // Check if we're actually switching to a different repo
         if new_id.is_some() && new_id != self.current_repo_id {
-            // Save current sidebar cursor to current repo before switching
-            let current_cursor = self.sidebar.cursor;
-            if let Some(repo) = self.current_repo_mut() {
-                repo.sidebar_cursor = current_cursor;
-            }
-
             // Switch to new repo - state is already preserved in repo_states!
+            // Sidebar cursor is stored per-repo, no need to sync
             self.current_repo_id = new_id;
-
-            // Sync sidebar cursor from new repo state
-            if let Some(repo) = self.current_repo() {
-                self.sidebar.cursor = repo.sidebar_cursor;
-            }
 
             // Update sidebar total items
             self.update_sidebar_total_items();
@@ -766,38 +698,6 @@ impl App {
             return Some(AsyncAction::RefreshBranches);
         }
         None
-    }
-
-    /// Update active session state (sync version - no stream connection)
-    fn update_active_session_sync(&mut self) {
-        let new_session_id = self.current_session().map(|s| s.id.clone());
-
-        if self.terminal.active_session_id != new_session_id {
-            self.disconnect_stream();
-
-            // Save current parser to map if there's an active session
-            if let Some(old_id) = &self.terminal.active_session_id {
-                self.terminal
-                    .session_parsers
-                    .insert(old_id.clone(), self.terminal.parser.clone());
-            }
-
-            // Get or create parser for new session
-            if let Some(new_id) = &new_session_id {
-                self.terminal.parser = self
-                    .terminal
-                    .session_parsers
-                    .entry(new_id.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
-                    .clone();
-            } else {
-                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
-            }
-
-            self.terminal.scroll_offset = 0;
-            self.terminal.active_session_id = new_session_id;
-            // Note: Stream connection is deferred - will happen when user enters terminal
-        }
     }
 
     /// Enter terminal Insert mode (from Sessions)
@@ -826,12 +726,7 @@ impl App {
         if self.terminal.fullscreen {
             self.terminal.fullscreen = false;
         } else {
-            // Return to appropriate sidebar focus based on tree view mode
-            self.focus = if self.sidebar.tree_view_enabled {
-                Focus::Sidebar
-            } else {
-                Focus::Sessions
-            };
+            self.focus = Focus::Sidebar;
             self.terminal.mode = TerminalMode::Normal;
             self.terminal.is_interactive = false;
         }
@@ -970,12 +865,9 @@ impl App {
                     .await
                 {
                     Ok(session) => {
-                        // Refresh sessions list (both legacy and tree view)
+                        // Refresh sessions list
                         self.refresh_sessions().await?;
-                        // Also refresh tree view sessions for current worktree
-                        if self.sidebar.tree_view_enabled {
-                            self.load_worktree_sessions(self.branch_idx()).await?;
-                        }
+                        self.load_worktree_sessions(self.branch_idx()).await?;
 
                         let new_id = session.id;
 
@@ -1069,47 +961,16 @@ impl App {
                     {
                         Ok(session) => {
                             // Refresh sessions for this worktree
-                            self.load_worktree_sessions(self.branch_idx()).await?;
+                            let b_idx = self.branch_idx();
+                            self.load_worktree_sessions(b_idx).await?;
                             // Expand worktree
-                            self.sidebar.expanded_worktrees.insert(self.branch_idx());
+                            if let Some(repo) = self.current_repo_mut() {
+                                repo.expanded_worktrees.insert(b_idx);
+                            }
                             self.update_sidebar_total_items();
                             // Set active session before entering terminal
                             self.terminal.active_session_id = Some(session.id.clone());
                             self.enter_terminal().await?;
-                        }
-                        Err(e) => {
-                            self.error_message = Some(e.to_string());
-                        }
-                    }
-                }
-            }
-            Focus::Branches => {
-                // Enter input mode for new branch name
-                self.input_mode = InputMode::NewBranch;
-                self.text_input.clear();
-                self.status_message = Some("Enter branch name:".to_string());
-            }
-            Focus::Sessions => {
-                // Create new session for current branch
-                if let (Some(repo), Some(branch)) = (
-                    self.current_repo().map(|r| r.info.clone()),
-                    self.current_worktree().cloned(),
-                ) {
-                    match self
-                        .client
-                        .create_session(&repo.id, &branch.branch, None, None)
-                        .await
-                    {
-                        Ok(session) => {
-                            self.refresh_sessions().await?;
-                            // Find and select the new session
-                            if let Some(idx) =
-                                self.sessions().iter().position(|s| s.id == session.id)
-                            {
-                                self.set_session_idx(idx);
-                                self.update_active_session().await;
-                                self.enter_terminal().await?;
-                            }
                         }
                         Err(e) => {
                             self.error_message = Some(e.to_string());
@@ -1161,14 +1022,11 @@ impl App {
                             self.update_active_session().await;
                             // Also load sessions for tree view
                             self.load_worktree_sessions(b_idx).await?;
-                            self.sidebar.expanded_worktrees.insert(b_idx);
+                            if let Some(repo) = self.current_repo_mut() {
+                                repo.expanded_worktrees.insert(b_idx);
+                            }
                             self.update_sidebar_total_items();
-                            // Return to appropriate focus before entering terminal
-                            self.focus = if self.sidebar.tree_view_enabled {
-                                Focus::Sidebar
-                            } else {
-                                Focus::Sessions
-                            };
+                            self.focus = Focus::Sidebar;
                             self.enter_terminal().await?;
                         }
                     }
@@ -1318,7 +1176,9 @@ impl App {
                     .position(|w| w.branch == branch_name)
                 {
                     self.set_branch_idx(idx);
-                    self.sidebar.cursor = idx;
+                    if let Some(repo) = self.current_repo_mut() {
+                        repo.sidebar_cursor = idx;
+                    }
                     self.refresh_sessions().await?;
                 }
             }
@@ -1428,48 +1288,19 @@ impl App {
                         }
                     }
                     SidebarItem::Session(wt_idx, s_idx) => {
-                        if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
-                            if let Some(session) = sessions.get(s_idx) {
-                                self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
-                                    session_id: session.id.clone(),
-                                    name: session.name.clone(),
-                                });
+                        if let Some(repo) = self.current_repo() {
+                            if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
+                                if let Some(session) = sessions.get(s_idx) {
+                                    self.input_mode =
+                                        InputMode::ConfirmDelete(DeleteTarget::Session {
+                                            session_id: session.id.clone(),
+                                            name: session.name.clone(),
+                                        });
+                                }
                             }
                         }
                     }
                     SidebarItem::None => {}
-                }
-            }
-            Focus::Branches => {
-                if let (Some(repo), Some(wt)) = (
-                    self.current_repo().map(|r| r.info.clone()),
-                    self.current_worktree().cloned(),
-                ) {
-                    if wt.is_main {
-                        self.error_message = Some("Cannot remove main worktree".to_string());
-                    } else if wt.path.is_empty() {
-                        self.error_message = Some("No worktree to remove".to_string());
-                    } else if wt.session_count > 0 {
-                        // Worktree has sessions, ask to delete them first
-                        self.input_mode = InputMode::ConfirmDeleteWorktreeSessions {
-                            repo_id: repo.id,
-                            branch: wt.branch,
-                            session_count: wt.session_count,
-                        };
-                    } else {
-                        self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Worktree {
-                            repo_id: repo.id,
-                            branch: wt.branch,
-                        });
-                    }
-                }
-            }
-            Focus::Sessions => {
-                if let Some(session) = self.current_session().cloned() {
-                    self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
-                        session_id: session.id,
-                        name: session.name,
-                    });
                 }
             }
             Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => {}
@@ -1705,15 +1536,17 @@ impl App {
                 }
 
                 // Also update in sidebar sessions_by_worktree (for tree view)
-                for sessions in self.sidebar.sessions_by_worktree.values_mut() {
-                    if let Some(session) = sessions.iter_mut().find(|s| s.id == e.session_id) {
-                        debug!(
-                            "Found session in sidebar, updating status from {} to {}",
-                            session.status, e.new_status
-                        );
-                        if session.status != e.new_status {
-                            session.status = e.new_status;
-                            changed = true;
+                if let Some(repo) = self.current_repo_mut() {
+                    for sessions in repo.sessions_by_worktree.values_mut() {
+                        if let Some(session) = sessions.iter_mut().find(|s| s.id == e.session_id) {
+                            debug!(
+                                "Found session in sidebar, updating status from {} to {}",
+                                session.status, e.new_status
+                            );
+                            if session.status != e.new_status {
+                                session.status = e.new_status;
+                                changed = true;
+                            }
                         }
                     }
                 }
@@ -1748,42 +1581,44 @@ impl App {
             Some(daemon_event::Event::WorktreeRemoved(e)) => {
                 debug!("Event: WorktreeRemoved {} {}", e.repo_id, e.branch);
                 // Remove worktree from list if it matches current repo
-                if let Some(repo) = self.current_repo() {
-                    if e.repo_id == repo.info.id {
-                        if let Some(repo) = self.current_repo_mut() {
-                            let old_len = repo.worktrees.len();
-                            repo.worktrees.retain(|w| w.branch != e.branch);
+                let repo_id_matches = self
+                    .current_repo()
+                    .map(|r| r.info.id == e.repo_id)
+                    .unwrap_or(false);
+                if repo_id_matches {
+                    if let Some(repo) = self.current_repo_mut() {
+                        let old_len = repo.worktrees.len();
+                        repo.worktrees.retain(|w| w.branch != e.branch);
 
-                            if repo.worktrees.len() != old_len {
-                                // Worktree was removed, update state
-                                if repo.worktrees.is_empty() {
-                                    // All worktrees removed
-                                    repo.branch_idx = 0;
-                                    self.sidebar.cursor = 0;
-                                    self.sidebar.expanded_worktrees.clear();
-                                    self.sidebar.sessions_by_worktree.clear();
-                                } else {
-                                    // Clamp branch index
-                                    if repo.branch_idx >= repo.worktrees.len() {
-                                        repo.branch_idx = repo.worktrees.len() - 1;
-                                    }
-                                    // Clear session caches (indices may have shifted)
-                                    self.sidebar.sessions_by_worktree.clear();
-                                    self.sidebar.expanded_worktrees.clear();
+                        if repo.worktrees.len() != old_len {
+                            // Worktree was removed, update state
+                            if repo.worktrees.is_empty() {
+                                // All worktrees removed
+                                repo.branch_idx = 0;
+                                repo.sidebar_cursor = 0;
+                                repo.expanded_worktrees.clear();
+                                repo.sessions_by_worktree.clear();
+                            } else {
+                                // Clamp branch index
+                                if repo.branch_idx >= repo.worktrees.len() {
+                                    repo.branch_idx = repo.worktrees.len() - 1;
                                 }
-
-                                // Recalculate sidebar items and clamp cursor
-                                self.update_sidebar_total_items();
-                                let max_cursor = self.sidebar.virtual_len().saturating_sub(1);
-                                if self.sidebar.cursor > max_cursor {
-                                    self.sidebar.cursor = max_cursor;
-                                }
-
-                                self.dirty.sidebar = true;
+                                // Clear session caches (indices may have shifted)
+                                repo.sessions_by_worktree.clear();
+                                repo.expanded_worktrees.clear();
                             }
+
+                            // Recalculate sidebar items and clamp cursor
+                            let max_cursor = repo.calculate_sidebar_total().saturating_sub(1);
+                            if repo.sidebar_cursor > max_cursor {
+                                repo.sidebar_cursor = max_cursor;
+                            }
+
+                            self.dirty.sidebar = true;
                         }
                     }
                 }
+                self.update_sidebar_total_items();
                 None
             }
             Some(daemon_event::Event::GitStatusChanged(e)) => {
@@ -2385,12 +2220,7 @@ impl App {
     /// Switch back to terminal view
     pub fn switch_to_terminal_view(&mut self) {
         self.right_panel_view = RightPanelView::Terminal;
-        // Return to appropriate sidebar focus
-        self.focus = if self.sidebar.tree_view_enabled {
-            Focus::Sidebar
-        } else {
-            Focus::Sessions
-        };
+        self.focus = Focus::Sidebar;
         if let Some(diff) = self.diff_mut() {
             diff.files.clear();
             diff.expanded.clear();

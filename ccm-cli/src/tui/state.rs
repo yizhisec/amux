@@ -9,8 +9,6 @@ use std::collections::HashSet;
 /// Focus position in the TUI
 #[derive(Debug, Clone, PartialEq)]
 pub enum Focus {
-    Branches,  // Branch list in sidebar (legacy, used when tree view disabled)
-    Sessions,  // Session list in sidebar (legacy, used when tree view disabled)
     Sidebar,   // Tree view: worktrees with nested sessions
     GitStatus, // Git status panel
     Terminal,  // Terminal interaction area
@@ -490,31 +488,16 @@ impl Default for GitState {
     }
 }
 
-/// Sidebar state (tree view with worktrees and sessions)
+/// Sidebar state (global UI state only, per-repo state is in RepoState)
 pub struct SidebarState {
-    /// Whether tree view is enabled
-    pub tree_view_enabled: bool,
-    /// Which worktrees are expanded (by index)
-    pub expanded_worktrees: HashSet<usize>,
-    /// Cursor position in virtual list
-    pub cursor: usize,
-    /// Sessions grouped by worktree index
-    pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>,
     /// Whether git panel is enabled
     pub git_panel_enabled: bool,
-    /// Total number of items in the virtual list (worktrees + expanded sessions)
-    pub total_items: usize,
 }
 
 impl Default for SidebarState {
     fn default() -> Self {
         Self {
-            tree_view_enabled: true,
-            expanded_worktrees: HashSet::new(),
-            cursor: 0,
-            sessions_by_worktree: HashMap::new(),
             git_panel_enabled: true,
-            total_items: 0,
         }
     }
 }
@@ -549,19 +532,17 @@ impl TodoState {
 // VirtualList implementations for state types
 use super::widgets::VirtualList;
 
-impl VirtualList for SidebarState {
+impl VirtualList for RepoState {
     fn virtual_len(&self) -> usize {
-        // This needs to be updated by the app when worktrees are loaded
-        // For now, return the stored count
-        self.total_items.max(1)
+        self.calculate_sidebar_total()
     }
 
     fn cursor(&self) -> usize {
-        self.cursor
+        self.sidebar_cursor
     }
 
     fn set_cursor(&mut self, pos: usize) {
-        self.cursor = pos;
+        self.sidebar_cursor = pos;
     }
 }
 

@@ -33,23 +33,11 @@ pub fn handle_prefix_command_sync(app: &mut App, key: KeyEvent) -> Option<AsyncA
 /// Execute a prefix action
 fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
     match action {
-        Action::FocusBranches => {
+        Action::FocusBranches | Action::FocusSessions | Action::FocusSidebar => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.focus = Focus::Branches;
-            None
-        }
-
-        Action::FocusSessions => {
-            if app.focus == Focus::Terminal {
-                app.exit_terminal();
-            }
-            app.focus = if app.sidebar.tree_view_enabled {
-                Focus::Sidebar
-            } else {
-                Focus::Sessions
-            };
+            app.focus = Focus::Sidebar;
             None
         }
 
@@ -73,7 +61,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
                 app.exit_terminal();
             }
             app.save_focus();
-            app.focus = Focus::Branches;
+            app.focus = Focus::Sidebar;
             app.start_add_worktree();
             None
         }
@@ -100,14 +88,6 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             if app.focus == Focus::Terminal && app.terminal.mode == TerminalMode::Insert {
                 app.terminal.mode = TerminalMode::Normal;
             }
-            None
-        }
-
-        Action::FocusSidebar => {
-            if app.focus == Focus::Terminal {
-                app.exit_terminal();
-            }
-            app.focus = Focus::Sidebar;
             None
         }
 

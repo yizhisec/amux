@@ -23,28 +23,13 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
 
     // Fallback to direct key code matching for complex contextual behavior
     match key.code {
-        // Tab: forward navigation (Sidebar/Branches -> Sessions -> Terminal Normal)
+        // Tab: Enter terminal if on a session
         KeyCode::Tab => {
-            match app.focus {
-                Focus::Sidebar => {
-                    // In tree view: Enter terminal if on a session, else do nothing
-                    if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
-                        if app.terminal.active_session_id.is_some() {
-                            return Some(AsyncAction::ConnectStream);
-                        }
-                    }
-                }
-                Focus::Branches => {
-                    app.focus = Focus::Sessions;
-                }
-                Focus::Sessions => {
-                    // Enter terminal Normal mode if session is active
+            if app.focus == Focus::Sidebar {
+                if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
                     if app.terminal.active_session_id.is_some() {
                         return Some(AsyncAction::ConnectStream);
                     }
-                }
-                Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => {
-                    // Shouldn't happen here
                 }
             }
             None
@@ -54,17 +39,11 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
         KeyCode::Esc | KeyCode::BackTab => {
             match app.focus {
                 Focus::Sidebar => {
-                    // Already at the beginning in tree view
+                    // Already at the beginning
                 }
                 Focus::GitStatus => {
                     // Go back to sidebar
                     app.focus = Focus::Sidebar;
-                }
-                Focus::Branches => {
-                    // Already at the beginning
-                }
-                Focus::Sessions => {
-                    app.focus = Focus::Branches;
                 }
                 Focus::Terminal | Focus::DiffFiles => {
                     // Handled in their respective modes
@@ -73,16 +52,12 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             None
         }
 
-        // Enter: forward navigation or toggle expand
-        KeyCode::Enter => match app.focus {
-            Focus::Sidebar => {
+        // Enter: toggle expand or enter terminal
+        KeyCode::Enter => {
+            if app.focus == Focus::Sidebar {
                 match app.current_sidebar_item() {
-                    SidebarItem::Worktree(_) => {
-                        // Toggle expand when on worktree
-                        app.toggle_sidebar_expand()
-                    }
+                    SidebarItem::Worktree(_) => app.toggle_sidebar_expand(),
                     SidebarItem::Session(_, _) => {
-                        // Enter terminal when on session
                         if app.terminal.active_session_id.is_some() {
                             Some(AsyncAction::ConnectStream)
                         } else {
@@ -91,20 +66,10 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
                     }
                     SidebarItem::None => None,
                 }
-            }
-            Focus::Branches => {
-                app.focus = Focus::Sessions;
+            } else {
                 None
             }
-            Focus::Sessions => {
-                if app.terminal.active_session_id.is_some() {
-                    Some(AsyncAction::ConnectStream)
-                } else {
-                    None
-                }
-            }
-            Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => None,
-        },
+        }
 
         _ => None,
     }
@@ -119,45 +84,25 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
         Action::SwitchRepo(idx) => app.switch_repo_sync(idx),
 
         Action::Select => {
-            // Select action: context-aware behavior
-            match app.focus {
-                Focus::Sidebar => {
-                    // In sidebar: toggle expand for worktrees, enter terminal for sessions
-                    match app.current_sidebar_item() {
-                        SidebarItem::Worktree(_) => app.toggle_sidebar_expand(),
-                        SidebarItem::Session(_, _) => {
-                            if app.terminal.active_session_id.is_some() {
-                                Some(AsyncAction::ConnectStream)
-                            } else {
-                                None
-                            }
+            // Select action: toggle expand for worktrees, enter terminal for sessions
+            if app.focus == Focus::Sidebar {
+                match app.current_sidebar_item() {
+                    SidebarItem::Worktree(_) => app.toggle_sidebar_expand(),
+                    SidebarItem::Session(_, _) => {
+                        if app.terminal.active_session_id.is_some() {
+                            Some(AsyncAction::ConnectStream)
+                        } else {
+                            None
                         }
-                        SidebarItem::None => None,
                     }
+                    SidebarItem::None => None,
                 }
-                Focus::Branches => {
-                    // In branches: move to sessions view
-                    app.focus = Focus::Sessions;
-                    None
-                }
-                Focus::Sessions => {
-                    // In sessions: enter terminal
-                    if app.terminal.active_session_id.is_some() {
-                        Some(AsyncAction::ConnectStream)
-                    } else {
-                        None
-                    }
-                }
-                Focus::Terminal | Focus::DiffFiles | Focus::GitStatus => None,
+            } else {
+                None
             }
         }
 
         Action::ToggleExpand => app.toggle_sidebar_expand(),
-
-        Action::ToggleTreeView => {
-            app.toggle_tree_view();
-            None
-        }
 
         Action::FocusGitStatus if app.sidebar.git_panel_enabled => {
             app.focus = Focus::GitStatus;
@@ -167,18 +112,16 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
 
         Action::CreateSession => Some(AsyncAction::CreateSession),
 
-        Action::AddWorktree if app.focus == Focus::Branches || app.focus == Focus::Sidebar => {
+        Action::AddWorktree if app.focus == Focus::Sidebar => {
             app.start_add_worktree();
             None
         }
 
         Action::ToggleDiffView => {
             if app.right_panel_view == RightPanelView::Diff {
-                // Already in diff view, switch back to terminal
                 app.switch_to_terminal_view();
                 None
             } else {
-                // Switch to diff view
                 Some(AsyncAction::SwitchToDiffView)
             }
         }
@@ -188,10 +131,6 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
             None
         }
 
-        Action::RenameSession if app.focus == Focus::Sessions => {
-            app.start_rename_session();
-            None
-        }
         Action::RenameSession if app.focus == Focus::Sidebar => {
             if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
                 app.start_rename_session();
