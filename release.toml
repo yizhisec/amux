@@ -1,0 +1,32 @@
+[workspace]
+shared-version = true
+consolidate-commits = true
+pre-release-commit-message = "chore: release {{version}}"
+tag-message = "v{{version}}"
+tag-name = "v{{version}}"
+
+# Don't publish internal crates to crates.io
+[[package]]
+name = "amux-proto"
+release = false
+publish = false
+
+[[package]]
+name = "amux-config"
+release = false
+publish = false
+
+[[package]]
+name = "xtask"
+release = false
+publish = false
+
+[[package]]
+name = "amux-cli"
+release = true
+publish = false  # Binary only, not a library
+
+[[package]]
+name = "amux-daemon"
+release = true
+publish = false  # Binary only, not a library
