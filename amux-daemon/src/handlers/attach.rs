@@ -33,6 +33,8 @@ pub async fn attach_session(
     // Verify session exists and start if needed (handles restored sessions)
     {
         let mut state = state.write().await;
+        // Clone the registry Arc before getting mutable borrow on session
+        let registry = state.provider_registry.clone();
         let session = state.sessions.get_mut(&session_id).ok_or_else(|| {
             Status::from(DaemonError::Session(SessionError::NotFound(
                 session_id.clone(),
@@ -42,11 +44,11 @@ pub async fn attach_session(
         // Start session if not running
         if session.status() == SessionStatus::Stopped {
             tracing::info!("Starting stopped session: {}", session_id);
-            session.start().map_err(|e| {
+            session.start(&registry).map_err(|e| {
                 Status::from(DaemonError::Session(SessionError::Start(e.to_string())))
             })?;
 
-            // Save updated metadata (in case claude_session_id was auto-generated)
+            // Save updated metadata (in case provider_session_id was auto-generated)
             if let Err(e) = persistence::save_session_meta(session) {
                 tracing::warn!("Failed to persist session metadata: {}", e);
             }
@@ -96,9 +98,9 @@ pub async fn attach_session(
                 name_check_counter = 0;
                 let mut state = state_clone.write().await;
                 if let Some(session) = state.sessions.get_mut(&session_id_clone) {
-                    if !session.name_updated_from_claude {
-                        session.update_name_from_claude();
-                        if session.name_updated_from_claude {
+                    if !session.name_updated_from_provider {
+                        session.update_name_from_provider();
+                        if session.name_updated_from_provider {
                             // Save updated metadata
                             let _ = persistence::save_session_meta(session);
                         }

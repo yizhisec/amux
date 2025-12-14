@@ -56,6 +56,29 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             Some(AsyncAction::CreateSession)
         }
 
+        Action::SelectProviderAndCreate => {
+            app.save_focus();
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::Sidebar;
+
+            // Get current repo and branch
+            let (repo_id, branch) = match (
+                app.current_repo().map(|r| r.info.id.clone()),
+                app.current_worktree().map(|b| b.branch.clone()),
+            ) {
+                (Some(r), Some(b)) => (r, b),
+                _ => {
+                    app.status_message = Some("No worktree selected".to_string());
+                    return None;
+                }
+            };
+
+            app.start_select_provider(repo_id.clone(), branch.clone());
+            Some(AsyncAction::FetchProviders { repo_id, branch })
+        }
+
         Action::AddWorktree => {
             app.save_focus();
             if app.focus == Focus::Terminal {

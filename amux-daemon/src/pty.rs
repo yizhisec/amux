@@ -11,22 +11,6 @@ use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
-/// Claude session mode
-#[derive(Debug, Clone)]
-pub enum ClaudeSessionMode {
-    /// Run plain shell (no Claude)
-    Shell,
-    /// No specific session - just run claude
-    None,
-    /// New session with specific ID
-    New(String),
-    /// Resume existing session
-    Resume(String),
-    /// New session with specific ID and model (e.g., "haiku")
-    NewWithModel { session_id: String, model: String },
-    /// One-shot command with model and prompt (no session management)
-    OneShot { model: String, prompt: String },
-}
 
 /// PTY process handle
 pub struct PtyProcess {
@@ -37,20 +21,25 @@ pub struct PtyProcess {
 }
 
 impl PtyProcess {
-    /// Spawn a new PTY process running `claude` in the given working directory
-    #[allow(dead_code)]
-    pub fn spawn(working_dir: &Path) -> Result<Self, PtyError> {
-        Self::spawn_with_session(working_dir, ClaudeSessionMode::None)
+    /// Spawn a new PTY process running user's shell
+    pub fn spawn_shell(working_dir: &Path, rows: u16, cols: u16) -> Result<Self, PtyError> {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let cmd = CString::new(shell.clone()).unwrap();
+        let args = vec![CString::new(shell).unwrap()];
+        Self::spawn(working_dir, cmd, args, rows, cols)
     }
 
-    /// Spawn a new PTY process running `claude` with optional session ID
-    pub fn spawn_with_session(
+    /// Spawn a new PTY process with a specific command
+    pub fn spawn(
         working_dir: &Path,
-        session_mode: ClaudeSessionMode,
+        cmd: CString,
+        args: Vec<CString>,
+        rows: u16,
+        cols: u16,
     ) -> Result<Self, PtyError> {
         let winsize = Winsize {
-            ws_row: 24,
-            ws_col: 80,
+            ws_row: rows,
+            ws_col: cols,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -80,7 +69,7 @@ impl PtyProcess {
                 })
             }
             ForkResult::Child => {
-                // Child: setup PTY and exec claude
+                // Child: setup PTY and exec command
                 close(master_raw).ok();
 
                 // Create new session
@@ -103,60 +92,9 @@ impl PtyProcess {
                 // Change to working directory
                 std::env::set_current_dir(working_dir).ok();
 
-                // Build command with args based on session mode
-                let (cmd, args): (CString, Vec<CString>) = match session_mode {
-                    ClaudeSessionMode::Shell => {
-                        // Run user's default shell
-                        let shell =
-                            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                        let cmd = CString::new(shell.clone()).unwrap();
-                        let args = vec![CString::new(shell).unwrap()];
-                        (cmd, args)
-                    }
-                    ClaudeSessionMode::None => {
-                        let cmd = CString::new("claude").unwrap();
-                        (cmd.clone(), vec![cmd])
-                    }
-                    ClaudeSessionMode::New(id) => {
-                        let cmd = CString::new("claude").unwrap();
-                        let args = vec![
-                            cmd.clone(),
-                            CString::new("--session-id").unwrap(),
-                            CString::new(id).unwrap(),
-                        ];
-                        (cmd, args)
-                    }
-                    ClaudeSessionMode::Resume(id) => {
-                        let cmd = CString::new("claude").unwrap();
-                        let args = vec![
-                            cmd.clone(),
-                            CString::new("--resume").unwrap(),
-                            CString::new(id).unwrap(),
-                        ];
-                        (cmd, args)
-                    }
-                    ClaudeSessionMode::NewWithModel { session_id, model } => {
-                        let cmd = CString::new("claude").unwrap();
-                        let args = vec![
-                            cmd.clone(),
-                            CString::new("--model").unwrap(),
-                            CString::new(model).unwrap(),
-                            CString::new("--session-id").unwrap(),
-                            CString::new(session_id).unwrap(),
-                        ];
-                        (cmd, args)
-                    }
-                    ClaudeSessionMode::OneShot { model, prompt } => {
-                        let cmd = CString::new("claude").unwrap();
-                        let args = vec![
-                            cmd.clone(),
-                            CString::new("--model").unwrap(),
-                            CString::new(model).unwrap(),
-                            CString::new(prompt).unwrap(),
-                        ];
-                        (cmd, args)
-                    }
-                };
+                // Set TERM environment variable for proper TTY detection
+                std::env::set_var("TERM", "xterm-256color");
+
                 execvp(&cmd, &args).ok();
 
                 // If exec fails, exit
@@ -231,5 +169,111 @@ impl PtyProcess {
 impl Drop for PtyProcess {
     fn drop(&mut self) {
         self.kill().ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use amux_config::{DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
+    use std::ffi::CString;
+
+    #[test]
+    fn test_pty_codex_version() {
+        // Test that codex --version works in a PTY
+        let cmd = CString::new("codex").unwrap();
+        let args = vec![
+            CString::new("codex").unwrap(),
+            CString::new("--version").unwrap(),
+        ];
+
+        let result = PtyProcess::spawn(
+            std::path::Path::new("/tmp"),
+            cmd,
+            args,
+            DEFAULT_TERMINAL_ROWS,
+            DEFAULT_TERMINAL_COLS,
+        );
+
+        match result {
+            Ok(pty) => {
+                // Wait a bit for the process to produce output
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
+                // Try to read output
+                let mut buf = [0u8; 1024];
+                match pty.read(&mut buf) {
+                    Ok(n) if n > 0 => {
+                        let output = String::from_utf8_lossy(&buf[..n]);
+                        println!("Got output from codex: {}", output);
+                        assert!(output.contains("codex"));
+                    }
+                    Ok(_) => {
+                        println!(
+                            "No output yet, checking if process is running: {}",
+                            pty.is_running()
+                        );
+                    }
+                    Err(e) => {
+                        println!("Read error: {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                panic!("Failed to spawn PTY: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_pty_codex_interactive() {
+        // Test that interactive codex starts in a PTY (not --version)
+        let cmd = CString::new("codex").unwrap();
+        let args = vec![CString::new("codex").unwrap()];
+
+        let result = PtyProcess::spawn(
+            std::path::Path::new("/tmp"),
+            cmd,
+            args,
+            DEFAULT_TERMINAL_ROWS,
+            DEFAULT_TERMINAL_COLS,
+        );
+
+        match result {
+            Ok(pty) => {
+                // Wait a bit for the process to start
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+
+                // Check if process is still running (interactive mode should stay alive)
+                let is_running = pty.is_running();
+                println!("Codex interactive is_running: {}", is_running);
+
+                // Try to read any output
+                let mut buf = [0u8; 4096];
+                match pty.read(&mut buf) {
+                    Ok(n) if n > 0 => {
+                        let output = String::from_utf8_lossy(&buf[..n]);
+                        println!("Got output from codex interactive: {}", output);
+                        // Should get some UI output, not error
+                        assert!(
+                            !output.contains("stdin is not a terminal"),
+                            "Codex should not complain about terminal"
+                        );
+                    }
+                    Ok(_) => {
+                        println!("No output yet");
+                    }
+                    Err(e) => {
+                        println!("Read error: {:?}", e);
+                    }
+                }
+
+                // Interactive codex should be running
+                assert!(is_running, "Codex interactive should be running");
+            }
+            Err(e) => {
+                panic!("Failed to spawn PTY: {:?}", e);
+            }
+        }
     }
 }

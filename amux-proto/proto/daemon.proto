@@ -3,6 +3,9 @@ syntax = "proto3";
 package ccm.daemon;
 
 service CcmDaemon {
+    // Provider management
+    rpc ListProviders(Empty) returns (ListProvidersResponse);
+
     // Repo management
     rpc AddRepo(AddRepoRequest) returns (RepoInfo);
     rpc ListRepos(Empty) returns (ListReposResponse);
@@ -56,6 +59,19 @@ service CcmDaemon {
 }
 
 message Empty {}
+
+// ============ Provider ============
+
+message ProviderInfo {
+    string name = 1;            // Provider identifier (e.g., "claude", "codex")
+    string display_name = 2;    // Display name for UI (e.g., "Claude", "OpenAI Codex")
+    repeated string models = 3; // Available models
+    string default_model = 4;   // Default model name
+}
+
+message ListProvidersResponse {
+    repeated ProviderInfo providers = 1;
+}
 
 // ============ Repo ============
 
@@ -127,9 +143,12 @@ message CreateSessionRequest {
     string repo_id = 1;
     string branch = 2;
     optional string name = 3;  // Custom name (optional)
-    optional bool is_shell = 4;  // true to create shell-only session (no Claude)
-    optional string model = 5;  // Claude model to use (e.g., "haiku")
-    optional string prompt = 6; // Initial prompt for Claude (only used on first start)
+    optional bool is_shell = 4;  // true to create shell-only session (no AI)
+    optional string model = 5;  // AI model to use (e.g., "haiku", "sonnet")
+    optional string prompt = 6; // Initial prompt for AI (only used on first start)
+    optional string provider = 7; // AI provider to use (e.g., "claude", "codex"), default: "claude"
+    optional uint32 rows = 8;  // Terminal rows (optional, default: 24)
+    optional uint32 cols = 9;  // Terminal columns (optional, default: 80)
 }
 
 message RenameSessionRequest {
@@ -152,8 +171,9 @@ message SessionInfo {
     string branch = 4;
     string worktree_path = 5;
     SessionStatus status = 6;
-    optional string claude_session_id = 7;  // Associated Claude Code session ID
+    optional string provider_session_id = 7;  // Associated AI provider session ID
     optional bool is_shell = 8;  // true if this is a shell-only session
+    optional string provider = 9;  // AI provider name (e.g., "claude", "codex")
 }
 
 enum SessionStatus {

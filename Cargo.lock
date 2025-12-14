@@ -68,6 +68,7 @@ dependencies = [
 name = "amux-daemon"
 version = "0.1.0"
 dependencies = [
+ "amux-config",
  "amux-proto",
  "anyhow",
  "async-stream",

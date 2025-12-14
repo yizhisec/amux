@@ -28,10 +28,15 @@ pub mod writer;
 // Re-export commonly used types
 pub use keybind::{BindingContext, KeyPattern, KeybindMap};
 pub use types::Config;
-pub use types::{Bindings, Options};
+pub use types::{Bindings, Options, UiConfig};
 
 pub use actions::Action;
 pub use commands::RuntimeCommand;
+
+// Terminal size defaults (for use outside config context)
+pub const DEFAULT_TERMINAL_ROWS: u16 = 24;
+pub const DEFAULT_TERMINAL_COLS: u16 = 80;
+pub const DEFAULT_SCROLLBACK: usize = 10000;
 
 /// Errors that can occur during config operations
 #[derive(thiserror::Error, Debug)]

@@ -119,6 +119,23 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
 
         Action::CreateSession => Some(AsyncAction::CreateSession),
 
+        Action::SelectProviderAndCreate => {
+            // Get current repo and branch
+            let (repo_id, branch) = match (
+                app.current_repo().map(|r| r.info.id.clone()),
+                app.current_worktree().map(|b| b.branch.clone()),
+            ) {
+                (Some(r), Some(b)) => (r, b),
+                _ => {
+                    app.status_message = Some("No worktree selected".to_string());
+                    return None;
+                }
+            };
+
+            app.start_select_provider(repo_id.clone(), branch.clone());
+            Some(AsyncAction::FetchProviders { repo_id, branch })
+        }
+
         Action::AddWorktree if app.focus == Focus::Sidebar => {
             app.start_add_worktree();
             None

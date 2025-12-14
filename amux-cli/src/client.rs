@@ -102,6 +102,13 @@ impl Client {
             .join("daemon.sock"))
     }
 
+    // ============ Provider ============
+
+    pub async fn list_providers(&mut self) -> Result<Vec<ProviderInfo>> {
+        let response = self.inner.list_providers(Empty {}).await?;
+        Ok(response.into_inner().providers)
+    }
+
     // ============ Repo ============
 
     pub async fn add_repo(&mut self, path: &str) -> Result<RepoInfo> {
@@ -193,6 +200,7 @@ impl Client {
         Ok(response.into_inner().sessions)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &mut self,
         repo_id: &str,
@@ -201,6 +209,9 @@ impl Client {
         is_shell: Option<bool>,
         model: Option<&str>,
         prompt: Option<&str>,
+        provider: Option<&str>,
+        rows: Option<u32>,
+        cols: Option<u32>,
     ) -> Result<SessionInfo> {
         let response = self
             .inner
@@ -211,6 +222,9 @@ impl Client {
                 is_shell,
                 model: model.map(String::from),
                 prompt: prompt.map(String::from),
+                provider: provider.map(String::from),
+                rows,
+                cols,
             })
             .await?;
         Ok(response.into_inner())

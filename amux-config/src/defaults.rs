@@ -1,6 +1,6 @@
 //! Default configuration that matches current hardcoded behavior
 
-use crate::types::{Bindings, Config, Options, PrefixConfig, UiConfig};
+use crate::types::{Bindings, ClaudeConfig, CodexConfig, Config, Options, PrefixConfig, ProvidersConfig, UiConfig};
 use std::collections::HashMap;
 
 /// Get default configuration matching current amux keybindings
@@ -19,9 +19,24 @@ pub fn default_config() -> Config {
         ui: UiConfig {
             show_borders: true,
             sidebar_width: 30,
+            terminal_rows: 24,
+            terminal_cols: 80,
             terminal_scrollback: 10000,
         },
         bindings: default_bindings(),
+        providers: ProvidersConfig {
+            default: "claude".to_string(),
+            claude: ClaudeConfig {
+                enabled: true,
+                command: "claude".to_string(),
+                model: "sonnet".to_string(),
+            },
+            codex: CodexConfig {
+                enabled: true,
+                command: "codex".to_string(),
+                model: "o4-mini".to_string(),
+            },
+        },
         source: Vec::new(),
     }
 }
@@ -54,6 +69,7 @@ fn default_prefix_bindings() -> HashMap<String, String> {
     map.insert("s".to_string(), "focus-sessions".to_string());
     map.insert("t".to_string(), "focus-terminal".to_string());
     map.insert("n".to_string(), "create-session".to_string());
+    map.insert("N".to_string(), "select-provider-and-create".to_string());
     map.insert("a".to_string(), "add-worktree".to_string());
     map.insert("d".to_string(), "delete-current".to_string());
     map.insert("r".to_string(), "refresh-all".to_string());
@@ -103,6 +119,7 @@ fn default_sidebar_bindings() -> HashMap<String, String> {
     map.insert("T".to_string(), "toggle-tree-view".to_string());
     map.insert("g".to_string(), "focus-git-status".to_string());
     map.insert("n".to_string(), "create-session".to_string());
+    map.insert("N".to_string(), "select-provider-and-create".to_string());
     map.insert("a".to_string(), "add-worktree".to_string());
     map.insert("d".to_string(), "delete-current".to_string());
     map.insert("x".to_string(), "delete-current".to_string());

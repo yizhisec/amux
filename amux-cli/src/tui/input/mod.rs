@@ -89,6 +89,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         return overlay_input::handle_confirm_delete_worktree_sessions_sync(app, key);
     }
 
+    // Handle select provider mode
+    if matches!(app.input_mode, InputMode::SelectProvider { .. }) {
+        return overlay_input::handle_select_provider_mode_sync(app, key);
+    }
+
     // Handle add line comment mode
     if matches!(app.input_mode, InputMode::AddLineComment { .. }) {
         return overlay_input::handle_add_line_comment_mode_sync(app, key);

@@ -99,7 +99,8 @@ pub fn detect_context(app: &App) -> BindingContext {
         InputMode::ConfirmDelete(_)
         | InputMode::ConfirmDeleteBranch(_)
         | InputMode::ConfirmDeleteWorktreeSessions { .. }
-        | InputMode::ConfirmDeleteTodo { .. } => return BindingContext::DialogConfirm,
+        | InputMode::ConfirmDeleteTodo { .. }
+        | InputMode::SelectProvider { .. } => return BindingContext::DialogConfirm,
 
         InputMode::TodoPopup => return BindingContext::Todo,
 

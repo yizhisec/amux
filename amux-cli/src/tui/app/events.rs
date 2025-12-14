@@ -274,7 +274,18 @@ impl App {
                 self.client.destroy_session(&session_id).await?;
                 let _ = self.refresh_sessions().await;
                 // Also refresh worktree sessions for tree view
-                let _ = self.load_worktree_sessions(self.branch_idx()).await;
+                let wt_idx = self.branch_idx();
+                let _ = self.load_worktree_sessions(wt_idx).await;
+                // Adjust sidebar cursor if it's now out of bounds
+                if let Some(repo) = self.current_repo_mut() {
+                    let max_cursor = repo.calculate_sidebar_total().saturating_sub(1);
+                    if repo.sidebar_cursor > max_cursor {
+                        repo.sidebar_cursor = max_cursor;
+                    }
+                }
+                // Sync selection from updated cursor position
+                self.update_selection_from_sidebar();
+                self.dirty.sidebar = true;
             }
             AsyncAction::RenameSession {
                 session_id,
@@ -372,6 +383,12 @@ impl App {
             } => {
                 self.reorder_todo(&todo_id, new_order, new_parent_id)
                     .await?;
+            }
+            AsyncAction::FetchProviders { repo_id, branch } => {
+                self.fetch_providers(&repo_id, &branch).await?;
+            }
+            AsyncAction::SubmitProviderSelection => {
+                self.submit_provider_selection().await?;
             }
         }
         Ok(())

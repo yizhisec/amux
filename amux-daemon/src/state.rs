@@ -1,5 +1,6 @@
 //! Application state management
 
+use crate::providers::ProviderRegistry;
 use crate::repo::Repo;
 use crate::session::Session;
 use std::collections::HashMap;
@@ -11,17 +12,28 @@ use tokio::sync::RwLock;
 pub type SharedState = Arc<RwLock<AppState>>;
 
 /// Application state containing repos and sessions
-#[derive(Default)]
 pub struct AppState {
     /// Repos indexed by ID
     pub repos: HashMap<String, Repo>,
     /// Sessions indexed by ID
     pub sessions: HashMap<String, Session>,
+    /// Cached provider registry (created once, shared across handlers)
+    pub provider_registry: Arc<ProviderRegistry>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppState {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            repos: HashMap::new(),
+            sessions: HashMap::new(),
+            provider_registry: Arc::new(ProviderRegistry::new()),
+        }
     }
 
     /// Get Amux data directory (~/.amux/)

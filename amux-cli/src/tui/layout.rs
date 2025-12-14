@@ -10,6 +10,7 @@ use crate::tui::overlays::dialogs::{
     draw_add_line_comment_overlay, draw_add_worktree_overlay, draw_confirm_delete_branch_overlay,
     draw_confirm_delete_overlay, draw_confirm_delete_worktree_sessions_overlay,
     draw_edit_line_comment_overlay, draw_input_overlay, draw_rename_session_overlay,
+    draw_select_provider_overlay,
 };
 use crate::tui::state::{Focus, InputMode, RightPanelView};
 use crate::tui::views::tab_bar::{draw_status_bar, draw_tab_bar};
@@ -80,6 +81,18 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     } = app.input_mode
     {
         draw_confirm_delete_worktree_sessions_overlay(f, area, branch, session_count);
+        return;
+    }
+
+    // Check for select provider overlay
+    if let InputMode::SelectProvider {
+        ref providers,
+        selected_index,
+        loading,
+        ..
+    } = app.input_mode
+    {
+        draw_select_provider_overlay(f, area, providers, selected_index, loading);
         return;
     }
 

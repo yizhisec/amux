@@ -1,9 +1,11 @@
 //! Session management
 
-use crate::claude_session;
 use crate::persistence::{self, SessionMeta};
-use crate::pty::{ClaudeSessionMode, PtyProcess};
+use crate::providers::{AiProvider, ClaudeProvider, ProviderConfig, ProviderRegistry, SessionMode};
+use crate::pty::PtyProcess;
+use amux_config::{DEFAULT_SCROLLBACK, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -17,35 +19,96 @@ pub enum SessionStatus {
     Stopped,
 }
 
-/// A Claude Code session
+/// Session kind - distinguishes interactive, one-shot, and shell sessions
+///
+/// This enum replaces the previous combination of:
+/// - `provider_session_id: Option<String>`
+/// - `provider_session_started: bool`
+/// - `is_shell: bool`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionKind {
+    /// Interactive AI session that can be resumed
+    Interactive {
+        /// Provider-specific session ID for resume functionality
+        provider_session_id: String,
+        /// Whether this session has been started before (for resume vs new)
+        started: bool,
+    },
+    /// One-shot session with a prompt (not persisted, not resumable)
+    OneShot,
+    /// Plain shell session (no AI provider)
+    Shell,
+}
+
+impl SessionKind {
+    /// Check if this session should be persisted
+    pub fn should_persist(&self) -> bool {
+        matches!(self, SessionKind::Interactive { .. } | SessionKind::Shell)
+    }
+
+    /// Check if this is a shell session
+    pub fn is_shell(&self) -> bool {
+        matches!(self, SessionKind::Shell)
+    }
+
+    /// Get provider session ID if interactive
+    pub fn provider_session_id(&self) -> Option<&str> {
+        match self {
+            SessionKind::Interactive { provider_session_id, .. } => Some(provider_session_id),
+            _ => None,
+        }
+    }
+
+    /// Mark as started (for interactive sessions)
+    pub fn mark_started(&mut self) {
+        if let SessionKind::Interactive { started, .. } = self {
+            *started = true;
+        }
+    }
+}
+
+/// An AI coding session
 pub struct Session {
     pub id: String,
     pub name: String,
     pub repo_id: String,
     pub branch: String,
     pub worktree_path: PathBuf,
-    pub claude_session_id: Option<String>, // Associated Claude Code session ID
-    pub claude_session_started: bool,      // Whether Claude session has been started before
-    pub name_updated_from_claude: bool,    // Whether name was updated from Claude's first message
-    pub is_shell: bool,                    // Whether this is a shell-only session (no Claude)
-    pub model: Option<String>,             // Claude model to use (e.g., "haiku")
-    pub prompt: Option<String>,            // Initial prompt for Claude (only used on first start)
+    pub provider: String,                 // AI provider name (e.g., "claude", "codex")
+    pub kind: SessionKind,                // Session type (Interactive/OneShot/Shell)
+    pub name_updated_from_provider: bool, // Whether name was updated from provider's first message
+    pub model: Option<String>,            // Model to use (e.g., "haiku", "sonnet")
+    pub prompt: Option<String>,           // Initial prompt (only used on first start)
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Session {
-    /// Create a new session
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    // ============ Compatibility Methods ============
+    // These methods provide backward compatibility for code using old field names
+
+    /// Check if this is a shell session
+    pub fn is_shell(&self) -> bool {
+        self.kind.is_shell()
+    }
+
+    /// Get provider session ID if this is an interactive session
+    pub fn provider_session_id(&self) -> Option<&str> {
+        self.kind.provider_session_id()
+    }
+}
+
+impl Session {
+    /// Create a new session with explicit SessionKind
+    pub fn with_kind(
         id: String,
         name: String,
         repo_id: String,
         branch: String,
         worktree_path: PathBuf,
-        claude_session_id: Option<String>,
-        is_shell: bool,
+        provider: String,
+        kind: SessionKind,
         model: Option<String>,
         prompt: Option<String>,
     ) -> Self {
@@ -55,36 +118,97 @@ impl Session {
             repo_id,
             branch,
             worktree_path,
-            claude_session_id,
-            claude_session_started: false, // New session, not started yet
-            name_updated_from_claude: false, // Name not yet updated from Claude
-            is_shell,
+            provider,
+            kind,
+            name_updated_from_provider: false,
             model,
             prompt,
             pty: None,
-            screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(
+                DEFAULT_TERMINAL_ROWS,
+                DEFAULT_TERMINAL_COLS,
+                DEFAULT_SCROLLBACK,
+            ))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
+    /// Create a new session (backward compatible API)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
+        name: String,
+        repo_id: String,
+        branch: String,
+        worktree_path: PathBuf,
+        provider: String,
+        provider_session_id: Option<String>,
+        is_shell: bool,
+        model: Option<String>,
+        prompt: Option<String>,
+    ) -> Self {
+        // Convert old API to SessionKind
+        let kind = if is_shell {
+            SessionKind::Shell
+        } else if let Some(session_id) = provider_session_id {
+            SessionKind::Interactive {
+                provider_session_id: session_id,
+                started: false,
+            }
+        } else {
+            // No provider_session_id and not shell - treat as one-shot
+            SessionKind::OneShot
+        };
+
+        Self::with_kind(
+            id,
+            name,
+            repo_id,
+            branch,
+            worktree_path,
+            provider,
+            kind,
+            model,
+            prompt,
+        )
+    }
+
     /// Restore a session from persisted metadata
     pub fn from_meta(meta: SessionMeta) -> Self {
-        // If session has claude_session_id, assume it was started before (restored session)
-        let claude_session_started = meta.claude_session_id.is_some();
+        // Convert persisted metadata to SessionKind
+        let kind = if let Some(kind) = meta.kind {
+            kind
+        } else {
+            // Backward compatibility: convert old format
+            if meta.is_shell {
+                SessionKind::Shell
+            } else if let Some(session_id) = meta.provider_session_id {
+                SessionKind::Interactive {
+                    provider_session_id: session_id,
+                    started: true, // Restored sessions were already started
+                }
+            } else {
+                SessionKind::OneShot
+            }
+        };
+
         Self {
             id: meta.id,
             name: meta.name,
             repo_id: meta.repo_id,
             branch: meta.branch,
             worktree_path: meta.worktree_path,
-            claude_session_id: meta.claude_session_id,
-            claude_session_started, // Restored session was likely started before
-            name_updated_from_claude: meta.name_updated_from_claude,
-            is_shell: meta.is_shell,
+            provider: meta.provider,
+            kind,
+            name_updated_from_provider: meta.name_updated_from_provider,
             model: meta.model,
             prompt: None, // Prompt is only used on first start, not restored
             pty: None,    // PTY will be started on demand
-            screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(
+                DEFAULT_TERMINAL_ROWS,
+                DEFAULT_TERMINAL_COLS,
+                DEFAULT_SCROLLBACK,
+            ))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -111,56 +235,103 @@ impl Session {
         Ok(persistence::save_session(self)?)
     }
 
-    /// Start the session (spawn PTY)
-    pub fn start(&mut self) -> Result<()> {
+    /// Start the session (spawn PTY) with default size
+    pub fn start(&mut self, registry: &ProviderRegistry) -> Result<()> {
+        self.start_with_size(registry, DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS)
+    }
+
+    /// Start the session (spawn PTY) with specific terminal size
+    pub fn start_with_size(
+        &mut self,
+        registry: &ProviderRegistry,
+        rows: u16,
+        cols: u16,
+    ) -> Result<()> {
         if self.pty.is_some() {
             return Ok(()); // Already running
         }
 
-        // Determine session mode
-        let session_mode = if self.is_shell {
-            // Shell session - run plain shell
-            ClaudeSessionMode::Shell
-        } else {
-            // Claude session - auto-generate claude_session_id if not set
-            if self.claude_session_id.is_none() {
-                self.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
+        // Determine session mode and spawn PTY based on SessionKind
+        let pty = match &self.kind {
+            SessionKind::Shell => {
+                // Shell session - run plain shell (no provider)
+                PtyProcess::spawn_shell(&self.worktree_path, rows, cols)?
             }
+            SessionKind::OneShot => {
+                // One-shot session with prompt
+                let prompt = self.prompt.take();
+                let config = ProviderConfig {
+                    session_mode: SessionMode::OneShot,
+                    model: self.model.clone(),
+                    prompt,
+                };
 
-            // Determine mode based on started flag, model, and prompt
-            match (&self.claude_session_id, &self.model, self.prompt.take()) {
-                // One-shot mode: model + prompt, no session management
-                (_, Some(model), Some(prompt)) => ClaudeSessionMode::OneShot {
-                    model: model.clone(),
-                    prompt,
-                },
-                // Prompt without model - use default model
-                (_, None, Some(prompt)) => ClaudeSessionMode::OneShot {
-                    model: "sonnet".to_string(),
-                    prompt,
-                },
-                // New session with specific model
-                (Some(id), Some(model), None) if !self.claude_session_started => {
-                    ClaudeSessionMode::NewWithModel {
-                        session_id: id.clone(),
-                        model: model.clone(),
+                // Get provider and build command
+                let provider = registry
+                    .get(&self.provider)
+                    .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", self.provider))?;
+                let (cmd, args) = provider.build_command(&config)?;
+
+                tracing::info!(
+                    "Spawning PTY with provider '{}': cmd={:?}, size={}x{}",
+                    self.provider,
+                    cmd,
+                    rows,
+                    cols
+                );
+
+                PtyProcess::spawn(&self.worktree_path, cmd, args, rows, cols)?
+            }
+            SessionKind::Interactive { provider_session_id, started } => {
+                // Take prompt if set (only used on first start)
+                let prompt = self.prompt.take();
+
+                // Determine session mode
+                let session_mode = if prompt.is_some() {
+                    // New session with prompt
+                    SessionMode::New {
+                        session_id: Some(provider_session_id.clone()),
                     }
-                }
-                // Resume existing session
-                (Some(id), _, None) if self.claude_session_started => {
-                    ClaudeSessionMode::Resume(id.clone())
-                }
-                // New session without model
-                (Some(id), _, None) => ClaudeSessionMode::New(id.clone()),
-                (None, _, _) => unreachable!(), // We just set it above
+                } else if *started {
+                    // Resume existing session
+                    SessionMode::Resume {
+                        session_id: provider_session_id.clone(),
+                    }
+                } else {
+                    // New session without prompt
+                    SessionMode::New {
+                        session_id: Some(provider_session_id.clone()),
+                    }
+                };
+
+                let config = ProviderConfig {
+                    session_mode,
+                    model: self.model.clone(),
+                    prompt,
+                };
+
+                // Get provider and build command
+                let provider = registry
+                    .get(&self.provider)
+                    .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", self.provider))?;
+                let (cmd, args) = provider.build_command(&config)?;
+
+                tracing::info!(
+                    "Spawning PTY with provider '{}': cmd={:?}, size={}x{}",
+                    self.provider,
+                    cmd,
+                    rows,
+                    cols
+                );
+
+                PtyProcess::spawn(&self.worktree_path, cmd, args, rows, cols)?
             }
         };
 
-        let pty = PtyProcess::spawn_with_session(&self.worktree_path, session_mode)?;
         self.pty = Some(pty);
 
-        // Mark as started for next time
-        self.claude_session_started = true;
+        // Mark interactive session as started for next time
+        self.kind.mark_started();
 
         Ok(())
     }
@@ -242,17 +413,22 @@ impl Session {
         }
     }
 
-    /// Update session name from Claude's first user message
-    pub fn update_name_from_claude(&mut self) {
-        if self.name_updated_from_claude {
+    /// Update session name from provider's first user message
+    pub fn update_name_from_provider(&mut self) {
+        if self.name_updated_from_provider {
             return; // Already updated
         }
-        if let Some(ref claude_id) = self.claude_session_id {
-            if let Some(msg) =
-                claude_session::get_first_user_message(&self.worktree_path, claude_id)
-            {
-                self.name = msg;
-                self.name_updated_from_claude = true;
+        if let Some(session_id) = self.kind.provider_session_id() {
+            // Currently only Claude provider supports reading session info
+            // TODO: Use ProviderRegistry to get appropriate provider
+            if self.provider == "claude" {
+                let claude_provider = ClaudeProvider::new();
+                if let Ok(Some(info)) = claude_provider.read_session_info(session_id, &self.worktree_path) {
+                    if let Some(description) = info.description {
+                        self.name = description;
+                        self.name_updated_from_provider = true;
+                    }
+                }
             }
         }
     }
@@ -263,17 +439,13 @@ pub fn generate_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Generate a session name based on branch and existing sessions
-pub fn generate_session_name(branch: &str, existing_names: &[String]) -> String {
-    // First session: just branch name
-    if !existing_names.contains(&branch.to_string()) {
-        return branch.to_string();
-    }
-
-    // Find next available number
-    let mut n = 2;
+/// Generate a session name based on provider and existing sessions
+/// Format: provider-N (e.g., claude-1, codex-2)
+pub fn generate_session_name(provider: &str, existing_names: &[String]) -> String {
+    // Find next available number for this provider
+    let mut n = 1;
     loop {
-        let name = format!("{}-{}", branch, n);
+        let name = format!("{}-{}", provider, n);
         if !existing_names.contains(&name) {
             return name;
         }
@@ -301,36 +473,36 @@ mod tests {
     #[test]
     fn test_generate_session_name_first_session() {
         let existing: Vec<String> = vec![];
-        let name = generate_session_name("main", &existing);
-        assert_eq!(name, "main");
+        let name = generate_session_name("claude", &existing);
+        assert_eq!(name, "claude-1");
     }
 
     #[test]
     fn test_generate_session_name_second_session() {
-        let existing = vec!["main".to_string()];
-        let name = generate_session_name("main", &existing);
-        assert_eq!(name, "main-2");
+        let existing = vec!["claude-1".to_string()];
+        let name = generate_session_name("claude", &existing);
+        assert_eq!(name, "claude-2");
     }
 
     #[test]
     fn test_generate_session_name_third_session() {
-        let existing = vec!["main".to_string(), "main-2".to_string()];
-        let name = generate_session_name("main", &existing);
-        assert_eq!(name, "main-3");
+        let existing = vec!["claude-1".to_string(), "claude-2".to_string()];
+        let name = generate_session_name("claude", &existing);
+        assert_eq!(name, "claude-3");
     }
 
     #[test]
     fn test_generate_session_name_with_gap() {
-        // If main-2 is missing, should still use main-2
-        let existing = vec!["main".to_string(), "main-3".to_string()];
-        let name = generate_session_name("main", &existing);
-        assert_eq!(name, "main-2");
+        // If claude-2 is missing, should still use claude-2
+        let existing = vec!["claude-1".to_string(), "claude-3".to_string()];
+        let name = generate_session_name("claude", &existing);
+        assert_eq!(name, "claude-2");
     }
 
     #[test]
-    fn test_generate_session_name_different_branch() {
-        let existing = vec!["main".to_string()];
-        let name = generate_session_name("feature", &existing);
-        assert_eq!(name, "feature");
+    fn test_generate_session_name_different_provider() {
+        let existing = vec!["claude-1".to_string()];
+        let name = generate_session_name("codex", &existing);
+        assert_eq!(name, "codex-1");
     }
 }

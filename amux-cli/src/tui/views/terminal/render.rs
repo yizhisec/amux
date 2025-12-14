@@ -26,6 +26,10 @@ impl<'a> PseudoTerminal<'a> {
 
 impl Widget for PseudoTerminal<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // Get cursor position
+        let (cursor_row, cursor_col) = self.screen.cursor_position();
+        let cursor_visible = !self.screen.hide_cursor();
+
         for row in 0..area.height {
             for col in 0..area.width {
                 if let Some(cell) = self.screen.cell(row, col) {
@@ -57,6 +61,11 @@ impl Widget for PseudoTerminal<'_> {
                         style = style.add_modifier(Modifier::UNDERLINED);
                     }
                     if cell.inverse() {
+                        style = style.add_modifier(Modifier::REVERSED);
+                    }
+
+                    // Render cursor with reversed style
+                    if cursor_visible && row == cursor_row && col == cursor_col {
                         style = style.add_modifier(Modifier::REVERSED);
                     }
 
