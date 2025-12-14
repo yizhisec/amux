@@ -24,6 +24,22 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut cursor_pos = 0;
 
+    let Some(git) = app.git() else {
+        // No git state
+        let list = List::new(vec![ListItem::new(Line::from(vec![Span::styled(
+            "  No git state",
+            Style::default().fg(Color::DarkGray),
+        )]))])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(" Git Status "),
+        );
+        f.render_widget(list, area);
+        return;
+    };
+
     let sections = [
         (GitSection::Staged, "◆ Staged", Color::Green),
         (GitSection::Unstaged, "◇ Unstaged", Color::Yellow),
@@ -31,8 +47,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     ];
 
     for (section, section_name, section_color) in sections {
-        let files: Vec<_> = app
-            .git
+        let files: Vec<_> = git
             .files
             .iter()
             .enumerate()
@@ -43,8 +58,8 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
             continue;
         }
 
-        let is_expanded = app.git.expanded_sections.contains(&section);
-        let is_cursor = cursor_pos == app.git.cursor;
+        let is_expanded = git.expanded_sections.contains(&section);
+        let is_cursor = cursor_pos == git.cursor;
 
         // Section header style
         let section_style = if is_cursor && is_focused {
@@ -72,7 +87,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
         // Files in section (if expanded)
         if is_expanded {
             for (_file_idx, file) in files {
-                let is_file_cursor = cursor_pos == app.git.cursor;
+                let is_file_cursor = cursor_pos == git.cursor;
 
                 let file_style = if is_file_cursor && is_focused {
                     Style::default()
@@ -131,7 +146,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
         )])));
     }
 
-    let total_files = app.git.files.len();
+    let total_files = git.files.len();
     let title = if is_focused {
         format!(" Git Status ({}) [*] ", total_files)
     } else {

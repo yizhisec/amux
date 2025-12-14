@@ -142,7 +142,7 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     }
 
     // Fullscreen diff mode
-    if app.diff.fullscreen && app.focus == Focus::DiffFiles {
+    if app.diff().map(|d| d.fullscreen).unwrap_or(false) && app.focus == Focus::DiffFiles {
         diff::draw_diff_fullscreen(f, area, app);
         return;
     }

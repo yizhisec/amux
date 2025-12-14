@@ -124,6 +124,28 @@ async fn main() -> Result<(), CliError> {
                 let _ = app.client.add_repo(repo_path.to_str().unwrap()).await;
                 // Refresh to pick up the newly added repo
                 let _ = app.refresh_all().await;
+
+                // Auto-select the current repo
+                if let Ok(canonical_path) = repo_path.canonicalize() {
+                    let path_str = canonical_path.to_string_lossy();
+                    let found_repo_id = app
+                        .repo_order
+                        .iter()
+                        .find(|id| {
+                            app.repo_states
+                                .get(*id)
+                                .map(|state| state.info.path == path_str)
+                                .unwrap_or(false)
+                        })
+                        .cloned();
+
+                    if let Some(repo_id) = found_repo_id {
+                        app.current_repo_id = Some(repo_id.clone());
+                        // Refresh branches for the selected repo
+                        let _ = app.refresh_branches().await;
+                        debug!("Auto-selected repo: {}", repo_id);
+                    }
+                }
             }
         }
     }

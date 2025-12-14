@@ -57,8 +57,14 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut cursor_pos = 0;
 
-    for (wt_idx, wt) in app.worktrees.iter().enumerate() {
-        let is_expanded = app.sidebar.expanded_worktrees.contains(&wt_idx);
+    let repo = app.current_repo();
+    let expanded_worktrees = repo.map(|r| &r.expanded_worktrees);
+    let sessions_by_worktree = repo.map(|r| &r.sessions_by_worktree);
+
+    for (wt_idx, wt) in app.worktrees().iter().enumerate() {
+        let is_expanded = expanded_worktrees
+            .map(|e| e.contains(&wt_idx))
+            .unwrap_or(false);
         let is_cursor = cursor_pos == app.sidebar.cursor;
 
         // Worktree row style
@@ -79,10 +85,8 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
         let wt_indicator = if wt.is_main { "◆" } else { "●" };
 
         // Session count indicator
-        let session_count = app
-            .sidebar
-            .sessions_by_worktree
-            .get(&wt_idx)
+        let session_count = sessions_by_worktree
+            .and_then(|sbw| sbw.get(&wt_idx))
             .map(|s| s.len())
             .unwrap_or(wt.session_count as usize);
         let session_indicator = if session_count > 0 {
@@ -108,7 +112,7 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
 
         // Render sessions if expanded
         if is_expanded {
-            if let Some(sessions) = app.sidebar.sessions_by_worktree.get(&wt_idx) {
+            if let Some(sessions) = sessions_by_worktree.and_then(|sbw| sbw.get(&wt_idx)) {
                 for session in sessions.iter() {
                     let is_session_cursor = cursor_pos == app.sidebar.cursor;
                     let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
@@ -177,11 +181,11 @@ pub fn draw_worktrees(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let items: Vec<ListItem> = app
-        .worktrees
+        .worktrees()
         .iter()
         .enumerate()
         .map(|(i, wt)| {
-            let is_selected = i == app.branch_idx;
+            let is_selected = i == app.branch_idx();
             let style = if is_selected && is_focused {
                 Style::default()
                     .fg(Color::Yellow)
@@ -236,17 +240,17 @@ pub fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let current_branch = app
-        .worktrees
-        .get(app.branch_idx)
+        .worktrees()
+        .get(app.branch_idx())
         .map(|b| b.branch.as_str())
         .unwrap_or("?");
 
     let items: Vec<ListItem> = app
-        .sessions
+        .sessions()
         .iter()
         .enumerate()
         .map(|(i, session)| {
-            let is_selected = i == app.session_idx;
+            let is_selected = i == app.session_idx();
             let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
 
             let style = if is_selected && is_focused {

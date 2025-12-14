@@ -1,7 +1,9 @@
 //! Prefix key command handling (Ctrl+s + ?)
 
 use super::super::app::App;
-use super::super::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
+use super::super::state::{
+    AsyncAction, Focus, InputMode, PrefixMode, RightPanelView, TerminalMode,
+};
 use super::resolver;
 use ccm_config::Action;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -109,6 +111,23 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             None
         }
 
+        Action::FocusGitStatus => {
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::GitStatus;
+            Some(AsyncAction::LoadGitStatus)
+        }
+
+        Action::FocusDiff => {
+            if app.focus == Focus::Terminal {
+                app.exit_terminal();
+            }
+            app.focus = Focus::DiffFiles;
+            app.right_panel_view = RightPanelView::Diff;
+            Some(AsyncAction::LoadDiffFiles)
+        }
+
         Action::OpenTodo => {
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
@@ -133,7 +152,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         // Unknown or unhandled action in prefix context
         _ => {
             app.status_message = Some(
-                "Prefix: w=worktree s=sessions t=terminal [=normal n=new d=delete r=refresh q=quit"
+                "Prefix: w=sidebar g=git v=diff t=terminal n=new d=delete r=refresh q=quit"
                     .to_string(),
             );
             None

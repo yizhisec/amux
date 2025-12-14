@@ -123,15 +123,15 @@ pub fn handle_add_worktree_mode_sync(app: &mut App, key: KeyEvent) -> Option<Asy
         KeyCode::Enter => Some(AsyncAction::SubmitAddWorktree),
         // Navigate up in branch list (clear input buffer if typing)
         KeyCode::Up | KeyCode::Char('k') if app.text_input.is_empty() => {
-            if app.add_worktree_idx > 0 {
-                app.add_worktree_idx -= 1;
+            if app.add_worktree_idx() > 0 {
+                app.set_add_worktree_idx(app.add_worktree_idx() - 1);
             }
             None
         }
         // Navigate down in branch list
         KeyCode::Down | KeyCode::Char('j') if app.text_input.is_empty() => {
-            if app.add_worktree_idx + 1 < app.available_branches.len() {
-                app.add_worktree_idx += 1;
+            if app.add_worktree_idx() + 1 < app.available_branches().len() {
+                app.set_add_worktree_idx(app.add_worktree_idx() + 1);
             }
             None
         }

@@ -61,6 +61,8 @@ fn default_prefix_bindings() -> HashMap<String, String> {
     map.insert("z".to_string(), "toggle-fullscreen".to_string()); // Alias
     map.insert("[".to_string(), "terminal-normal-mode".to_string());
     map.insert("w".to_string(), "focus-sidebar".to_string());
+    map.insert("g".to_string(), "focus-git-status".to_string());
+    map.insert("v".to_string(), "focus-diff".to_string());
     map.insert("o".to_string(), "open-todo".to_string());
     map.insert("q".to_string(), "quit".to_string());
 

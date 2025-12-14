@@ -299,9 +299,115 @@ pub fn default_expanded_git_sections() -> HashSet<GitSection> {
 // These types group related fields from App for better organization.
 // They are designed to be used as embedded structs within App.
 
-use ccm_proto::daemon::{DiffFileInfo, DiffLine, SessionInfo, TodoItem};
+use ccm_proto::daemon::{
+    DiffFileInfo, DiffLine, LineCommentInfo, RepoInfo, SessionInfo, TodoItem, WorktreeInfo,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+/// Per-repository state containing all repo-specific data and UI state.
+/// This structure encapsulates all state that should be preserved when switching
+/// between repositories, eliminating the need for save/restore logic.
+pub struct RepoState {
+    /// Basic repo info (id, path, name) from daemon
+    pub info: RepoInfo,
+
+    // ============ Data ============
+    /// Worktrees with paths (branches that have been checked out)
+    pub worktrees: Vec<WorktreeInfo>,
+    /// Branches without worktrees (available for checkout)
+    pub available_branches: Vec<WorktreeInfo>,
+    /// Sessions for the current worktree
+    pub sessions: Vec<SessionInfo>,
+
+    // ============ Selection Indices ============
+    /// Currently selected worktree/branch index
+    pub branch_idx: usize,
+    /// Currently selected session index within branch
+    pub session_idx: usize,
+    /// Selection index in add worktree popup
+    pub add_worktree_idx: usize,
+
+    // ============ Sidebar State (per-repo) ============
+    /// Cursor position in sidebar virtual list
+    pub sidebar_cursor: usize,
+    /// Which worktrees are expanded (by index)
+    pub expanded_worktrees: HashSet<usize>,
+    /// Sessions grouped by worktree index (cache for tree view)
+    pub sessions_by_worktree: HashMap<usize, Vec<SessionInfo>>,
+
+    // ============ View State ============
+    /// Git status panel state
+    pub git: GitState,
+    /// Diff view state
+    pub diff: DiffState,
+    /// Line comments for current branch
+    pub line_comments: Vec<LineCommentInfo>,
+}
+
+impl RepoState {
+    /// Create a new RepoState from repo info
+    pub fn new(info: RepoInfo) -> Self {
+        Self {
+            info,
+            worktrees: Vec::new(),
+            available_branches: Vec::new(),
+            sessions: Vec::new(),
+            branch_idx: 0,
+            session_idx: 0,
+            add_worktree_idx: 0,
+            sidebar_cursor: 0,
+            expanded_worktrees: HashSet::new(),
+            sessions_by_worktree: HashMap::new(),
+            git: GitState::default(),
+            diff: DiffState::default(),
+            line_comments: Vec::new(),
+        }
+    }
+
+    /// Get the currently selected worktree
+    pub fn current_worktree(&self) -> Option<&WorktreeInfo> {
+        self.worktrees.get(self.branch_idx)
+    }
+
+    /// Get the currently selected session
+    pub fn current_session(&self) -> Option<&SessionInfo> {
+        self.sessions.get(self.session_idx)
+    }
+
+    /// Calculate total sidebar items count (worktrees + expanded sessions)
+    pub fn calculate_sidebar_total(&self) -> usize {
+        let mut count = self.worktrees.len();
+        for &wt_idx in &self.expanded_worktrees {
+            if let Some(sessions) = self.sessions_by_worktree.get(&wt_idx) {
+                count += sessions.len();
+            }
+        }
+        count.max(1)
+    }
+
+    /// Clamp all indices to valid ranges
+    pub fn clamp_indices(&mut self) {
+        if self.worktrees.is_empty() {
+            self.branch_idx = 0;
+            self.session_idx = 0;
+            self.sidebar_cursor = 0;
+        } else {
+            if self.branch_idx >= self.worktrees.len() {
+                self.branch_idx = self.worktrees.len() - 1;
+            }
+            if self.sessions.is_empty() {
+                self.session_idx = 0;
+            } else if self.session_idx >= self.sessions.len() {
+                self.session_idx = self.sessions.len() - 1;
+            }
+            let max_cursor = self.calculate_sidebar_total().saturating_sub(1);
+            if self.sidebar_cursor > max_cursor {
+                self.sidebar_cursor = max_cursor;
+            }
+        }
+    }
+}
 
 /// Terminal-related state
 pub struct TerminalState {

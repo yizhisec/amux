@@ -170,7 +170,7 @@ pub fn draw_confirm_delete_overlay(f: &mut Frame, area: Rect, app: &App, target:
 /// Draw add worktree overlay (select branch or type new name)
 pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_branch: Option<&str>) {
     // Calculate popup size based on content
-    let branch_count = app.available_branches.len();
+    let branch_count = app.available_branches().len();
     let popup_height = (branch_count + 7).min(20) as u16; // +7 for borders, title, input, instructions, base info
     let popup_width = 60.min(area.width.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
@@ -217,13 +217,13 @@ pub fn draw_add_worktree_overlay(f: &mut Frame, area: Rect, app: &App, base_bran
     f.render_widget(base_paragraph, chunks[1]);
 
     // Branch list
-    if !app.available_branches.is_empty() {
+    if !app.available_branches().is_empty() {
         let items: Vec<ListItem> = app
-            .available_branches
+            .available_branches()
             .iter()
             .enumerate()
             .map(|(i, branch)| {
-                let is_selected = i == app.add_worktree_idx && app.text_input.is_empty();
+                let is_selected = i == app.add_worktree_idx() && app.text_input.is_empty();
                 let style = if is_selected {
                     Style::default()
                         .fg(Color::Yellow)

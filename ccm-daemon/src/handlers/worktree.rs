@@ -5,6 +5,7 @@ use crate::events::EventBroadcaster;
 use crate::git::GitOps;
 use crate::state::SharedState;
 use ccm_proto::daemon::*;
+use std::collections::HashSet;
 use tonic::{Response, Status};
 
 /// List all worktrees for a repository
@@ -29,26 +30,45 @@ pub async fn list_worktrees(
     let branches =
         GitOps::list_branches(&git_repo).map_err(|e| Status::from(DaemonError::from(e)))?;
 
-    // Build response: include all branches, mark those with worktrees
+    // Build response: first include all worktrees (including main), then other branches
     let mut worktrees: Vec<WorktreeInfo> = Vec::new();
+    let mut seen_branches: HashSet<String> = HashSet::new();
 
-    for branch in branches {
-        let wt = git_worktrees.iter().find(|w| w.branch == branch);
+    // First: add all branches that have worktrees (this ensures main worktree is always included)
+    for wt in &git_worktrees {
         let session_count = state
             .sessions
             .values()
-            .filter(|s| s.repo_id == req.repo_id && s.branch == branch)
+            .filter(|s| s.repo_id == req.repo_id && s.branch == wt.branch)
             .count() as i32;
 
         worktrees.push(WorktreeInfo {
             repo_id: req.repo_id.clone(),
-            branch: branch.clone(),
-            path: wt
-                .map(|w| w.path.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            is_main: wt.map(|w| w.is_main).unwrap_or(false),
+            branch: wt.branch.clone(),
+            path: wt.path.to_string_lossy().to_string(),
+            is_main: wt.is_main,
             session_count,
         });
+        seen_branches.insert(wt.branch.clone());
+    }
+
+    // Second: add branches that don't have worktrees yet
+    for branch in branches {
+        if !seen_branches.contains(&branch) {
+            let session_count = state
+                .sessions
+                .values()
+                .filter(|s| s.repo_id == req.repo_id && s.branch == branch)
+                .count() as i32;
+
+            worktrees.push(WorktreeInfo {
+                repo_id: req.repo_id.clone(),
+                branch,
+                path: String::new(), // No worktree path
+                is_main: false,
+                session_count,
+            });
+        }
     }
 
     Ok(Response::new(ListWorktreesResponse { worktrees }))

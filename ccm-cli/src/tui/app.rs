@@ -28,11 +28,12 @@ type Result<T> = std::result::Result<T, TuiError>;
 use super::input::{handle_input_sync, handle_mouse_sync, TextInput};
 use super::layout::draw;
 use super::state::{
-    AsyncAction, DeleteTarget, DiffItem, DiffState, DirtyFlags, ExitCleanupAction, Focus,
-    GitPanelItem, GitSection, GitState, GitStatusFile, InputMode, PrefixMode, RightPanelView,
-    SidebarItem, SidebarState, TerminalMode, TerminalState, TodoState,
+    AsyncAction, DeleteTarget, DiffItem, DirtyFlags, ExitCleanupAction, Focus, GitPanelItem,
+    GitSection, GitStatusFile, InputMode, PrefixMode, RepoState, RightPanelView, SidebarItem,
+    SidebarState, TerminalMode, TerminalState, TodoState,
 };
 use super::widgets::VirtualList;
+use std::collections::HashMap;
 
 /// Terminal stream state for a session
 pub struct TerminalStream {
@@ -59,61 +60,57 @@ fn activate_ime() {
 pub struct App {
     pub client: Client,
 
-    // Selection indices
-    pub repo_idx: usize,
-    pub branch_idx: usize,
-    pub session_idx: usize,
+    // ============ Repo Management ============
+    /// Per-repo state keyed by repo_id (contains all repo-specific data)
+    pub repo_states: HashMap<String, RepoState>,
+    /// Order of repos for display (list of repo_ids)
+    pub repo_order: Vec<String>,
+    /// Currently selected repo ID
+    pub current_repo_id: Option<String>,
 
-    // Focus position
+    // ============ Global UI State ============
+    /// Focus position
     pub focus: Focus,
-
-    // Focus restoration stack for popups/dialogs
+    /// Focus restoration stack for popups/dialogs
     pub saved_focus_stack: Vec<Focus>,
 
-    // Data
-    pub repos: Vec<RepoInfo>,
-    pub worktrees: Vec<WorktreeInfo>, // Only branches with worktrees
-    pub available_branches: Vec<WorktreeInfo>, // Branches without worktrees (for add worktree)
-    pub add_worktree_idx: usize,      // Selection index in add worktree popup
-    pub sessions: Vec<SessionInfo>,
+    // ============ Terminal State (global, shared across repos) ============
+    pub terminal: TerminalState,
+    pub terminal_stream: Option<TerminalStream>,
 
-    // Grouped state components
-    pub terminal: TerminalState,                 // Terminal-related state
-    pub terminal_stream: Option<TerminalStream>, // Keep separate (has mpsc channels)
-    pub diff: DiffState,                         // Diff view state
-    pub git: GitState,                           // Git status panel state
-    pub sidebar: SidebarState,                   // Sidebar/tree view state
-    pub todo: TodoState,                         // TODO state
+    // ============ Sidebar State (global parts only) ============
+    pub sidebar: SidebarState,
 
-    // Right panel view mode (shared between terminal and diff)
+    // ============ TODO State (global) ============
+    pub todo: TodoState,
+
+    // ============ View State ============
+    /// Right panel view mode (shared between terminal and diff)
     pub right_panel_view: RightPanelView,
 
-    // Comment state
-    pub line_comments: Vec<LineCommentInfo>, // All comments for current branch
-
-    // UI state
+    // ============ UI State ============
     pub should_quit: bool,
     pub error_message: Option<String>,
     pub status_message: Option<String>,
     pub input_mode: InputMode,
     pub text_input: TextInput,
-    pub session_delete_action: ExitCleanupAction, // Session deletion selection (Destroy/Stop)
+    pub session_delete_action: ExitCleanupAction,
 
-    // Event subscription
+    // ============ Event Subscription ============
     pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
 
-    // Git refresh debounce
+    // ============ Git Refresh Debounce ============
     pub last_git_refresh: Option<std::time::Instant>,
 
-    // Prefix key mode
+    // ============ Prefix Key Mode ============
     pub prefix_mode: PrefixMode,
 
-    // Configuration system
+    // ============ Configuration ============
     #[allow(dead_code)]
     pub config: Config,
     pub keybinds: KeybindMap,
 
-    // Dirty flags for optimized rendering
+    // ============ Dirty Flags ============
     pub dirty: DirtyFlags,
 }
 
@@ -128,35 +125,39 @@ impl App {
 
         let mut app = Self {
             client,
-            repo_idx: 0,
-            branch_idx: 0,
-            session_idx: 0,
+            // Repo management
+            repo_states: HashMap::new(),
+            repo_order: Vec::new(),
+            current_repo_id: None,
+            // Global UI
             focus: Focus::Sidebar,
             saved_focus_stack: Vec::new(),
-            repos: Vec::new(),
-            worktrees: Vec::new(),
-            available_branches: Vec::new(),
-            add_worktree_idx: 0,
-            sessions: Vec::new(),
+            // Terminal
             terminal: TerminalState::default(),
             terminal_stream: None,
-            diff: DiffState::default(),
-            git: GitState::default(),
+            // Sidebar (global parts)
             sidebar: SidebarState::default(),
+            // TODO
             todo: TodoState::new(),
+            // View
             right_panel_view: RightPanelView::Terminal,
-            line_comments: Vec::new(),
+            // UI state
             should_quit: false,
             error_message: None,
             status_message: None,
             input_mode: InputMode::Normal,
             text_input: TextInput::new(),
-            session_delete_action: ExitCleanupAction::Destroy, // Default to destroy
+            session_delete_action: ExitCleanupAction::Destroy,
+            // Event subscription
             event_rx: None,
+            // Debounce
             last_git_refresh: None,
+            // Prefix mode
             prefix_mode: PrefixMode::None,
+            // Config
             config,
             keybinds,
+            // Dirty flags
             dirty: DirtyFlags::default(),
         };
 
@@ -170,6 +171,138 @@ impl App {
         app.subscribe_events().await;
 
         Ok(app)
+    }
+
+    // ============ Repo Access Helpers ============
+
+    /// Get current repo state (immutable)
+    pub fn current_repo(&self) -> Option<&RepoState> {
+        self.current_repo_id
+            .as_ref()
+            .and_then(|id| self.repo_states.get(id))
+    }
+
+    /// Get current repo state (mutable)
+    pub fn current_repo_mut(&mut self) -> Option<&mut RepoState> {
+        // Need to clone the id to avoid borrow issues
+        let id = self.current_repo_id.clone()?;
+        self.repo_states.get_mut(&id)
+    }
+
+    /// Get current repo index in repo_order
+    pub fn repo_idx(&self) -> usize {
+        self.current_repo_id
+            .as_ref()
+            .and_then(|id| self.repo_order.iter().position(|r| r == id))
+            .unwrap_or(0)
+    }
+
+    /// Get repos in display order
+    pub fn repos_ordered(&self) -> impl Iterator<Item = &RepoState> {
+        self.repo_order
+            .iter()
+            .filter_map(|id| self.repo_states.get(id))
+    }
+
+    /// Get repos as RepoInfo list (for compatibility)
+    pub fn repos(&self) -> Vec<RepoInfo> {
+        self.repos_ordered().map(|r| r.info.clone()).collect()
+    }
+
+    /// Get current worktrees (convenience)
+    pub fn worktrees(&self) -> &[WorktreeInfo] {
+        self.current_repo()
+            .map(|r| r.worktrees.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get current available branches (convenience)
+    pub fn available_branches(&self) -> &[WorktreeInfo] {
+        self.current_repo()
+            .map(|r| r.available_branches.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get current sessions (convenience)
+    pub fn sessions(&self) -> &[SessionInfo] {
+        self.current_repo()
+            .map(|r| r.sessions.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get current branch_idx (convenience)
+    pub fn branch_idx(&self) -> usize {
+        self.current_repo().map(|r| r.branch_idx).unwrap_or(0)
+    }
+
+    /// Get current session_idx (convenience)
+    pub fn session_idx(&self) -> usize {
+        self.current_repo().map(|r| r.session_idx).unwrap_or(0)
+    }
+
+    /// Get current worktree (convenience)
+    pub fn current_worktree(&self) -> Option<&WorktreeInfo> {
+        self.current_repo().and_then(|r| r.current_worktree())
+    }
+
+    /// Get current session (convenience)
+    pub fn current_session(&self) -> Option<&SessionInfo> {
+        self.current_repo().and_then(|r| r.current_session())
+    }
+
+    /// Get current line comments (convenience)
+    pub fn line_comments(&self) -> &[LineCommentInfo] {
+        self.current_repo()
+            .map(|r| r.line_comments.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get current git state (convenience)
+    pub fn git(&self) -> Option<&super::state::GitState> {
+        self.current_repo().map(|r| &r.git)
+    }
+
+    /// Get current git state (mutable, convenience)
+    pub fn git_mut(&mut self) -> Option<&mut super::state::GitState> {
+        self.current_repo_mut().map(|r| &mut r.git)
+    }
+
+    /// Get current diff state (convenience)
+    pub fn diff(&self) -> Option<&super::state::DiffState> {
+        self.current_repo().map(|r| &r.diff)
+    }
+
+    /// Get current diff state (mutable, convenience)
+    pub fn diff_mut(&mut self) -> Option<&mut super::state::DiffState> {
+        self.current_repo_mut().map(|r| &mut r.diff)
+    }
+
+    /// Get add_worktree_idx (convenience)
+    pub fn add_worktree_idx(&self) -> usize {
+        self.current_repo().map(|r| r.add_worktree_idx).unwrap_or(0)
+    }
+
+    // ============ Repo State Mutation Helpers ============
+
+    /// Set branch_idx in current repo
+    pub fn set_branch_idx(&mut self, idx: usize) {
+        if let Some(repo) = self.current_repo_mut() {
+            repo.branch_idx = idx;
+        }
+    }
+
+    /// Set session_idx in current repo
+    pub fn set_session_idx(&mut self, idx: usize) {
+        if let Some(repo) = self.current_repo_mut() {
+            repo.session_idx = idx;
+        }
+    }
+
+    /// Set add_worktree_idx in current repo
+    pub fn set_add_worktree_idx(&mut self, idx: usize) {
+        if let Some(repo) = self.current_repo_mut() {
+            repo.add_worktree_idx = idx;
+        }
     }
 
     /// Subscribe to daemon events
@@ -203,22 +336,34 @@ impl App {
     pub async fn refresh_all(&mut self) -> Result<()> {
         self.error_message = None;
 
-        // Load repos
-        self.repos = self.client.list_repos().await?;
+        // Load repos from daemon
+        let repos = self.client.list_repos().await?;
+
+        // Update repo_order
+        self.repo_order = repos.iter().map(|r| r.id.clone()).collect();
+
+        // Add new repos, keep existing state for known repos
+        for repo_info in repos {
+            self.repo_states
+                .entry(repo_info.id.clone())
+                .and_modify(|r| r.info = repo_info.clone())
+                .or_insert_with(|| RepoState::new(repo_info));
+        }
+
+        // Remove deleted repos
+        self.repo_states
+            .retain(|id, _| self.repo_order.contains(id));
 
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
 
-        // Clamp repo index
-        if self.repos.is_empty() {
-            self.repo_idx = 0;
-            self.worktrees.clear();
-            self.available_branches.clear();
-            self.sessions.clear();
-            return Ok(());
-        }
-        if self.repo_idx >= self.repos.len() {
-            self.repo_idx = self.repos.len() - 1;
+        // Set current repo if not set or if current is no longer valid
+        if self.current_repo_id.is_none()
+            || !self
+                .repo_order
+                .contains(self.current_repo_id.as_ref().unwrap_or(&String::new()))
+        {
+            self.current_repo_id = self.repo_order.first().cloned();
         }
 
         // Load branches for current repo
@@ -229,40 +374,52 @@ impl App {
 
     /// Refresh worktrees for current repo
     pub async fn refresh_branches(&mut self) -> Result<()> {
-        if let Some(repo) = self.repos.get(self.repo_idx) {
-            let all_branches = self.client.list_worktrees(&repo.id).await?;
+        // Get repo_id first to avoid borrow issues
+        let repo_id = match self.current_repo_id.clone() {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        // Fetch worktrees from daemon
+        let all_branches = self.client.list_worktrees(&repo_id).await?;
+
+        // Update the repo state
+        if let Some(repo) = self.repo_states.get_mut(&repo_id) {
             // Split into worktrees (has path) and available branches (no path)
-            self.worktrees = all_branches
+            repo.worktrees = all_branches
                 .iter()
                 .filter(|b| !b.path.is_empty())
                 .cloned()
                 .collect();
-            self.available_branches = all_branches
+            repo.available_branches = all_branches
                 .into_iter()
                 .filter(|b| b.path.is_empty())
                 .collect();
-        } else {
-            self.worktrees.clear();
-            self.available_branches.clear();
+
+            // Clamp indices to valid ranges
+            repo.clamp_indices();
+
+            // Filter expanded worktrees to only include valid indices
+            repo.expanded_worktrees
+                .retain(|&idx| idx < repo.worktrees.len());
+
+            // Load sessions for expanded worktrees
+            let expanded_to_load: Vec<usize> = repo.expanded_worktrees.iter().cloned().collect();
+            for wt_idx in expanded_to_load {
+                let _ = self.load_worktree_sessions(wt_idx).await;
+            }
         }
 
-        // Clear worktree-related caches when refreshing
-        self.sidebar.sessions_by_worktree.clear();
-        self.sidebar.expanded_worktrees.clear();
+        // Update sidebar total items count
         self.update_sidebar_total_items();
+
+        // Sync sidebar cursor from repo state
+        if let Some(repo) = self.repo_states.get(&repo_id) {
+            self.sidebar.cursor = repo.sidebar_cursor;
+        }
 
         // Mark sidebar as dirty to trigger redraw
         self.dirty.sidebar = true;
-
-        // Clamp branch index
-        if self.worktrees.is_empty() {
-            self.branch_idx = 0;
-            self.sessions.clear();
-            return Ok(());
-        }
-        if self.branch_idx >= self.worktrees.len() {
-            self.branch_idx = self.worktrees.len() - 1;
-        }
 
         // Load sessions for current branch
         self.refresh_sessions().await?;
@@ -275,21 +432,32 @@ impl App {
 
     /// Refresh sessions for current branch
     pub async fn refresh_sessions(&mut self) -> Result<()> {
-        if let (Some(repo), Some(branch)) = (
-            self.repos.get(self.repo_idx),
-            self.worktrees.get(self.branch_idx),
-        ) {
-            self.sessions = self
-                .client
-                .list_sessions(Some(&repo.id), Some(&branch.branch))
-                .await?;
-        } else {
-            self.sessions.clear();
-        }
+        // Get repo_id and branch info first to avoid borrow issues
+        let (repo_id, branch_name) = {
+            if let Some(repo) = self.current_repo() {
+                if let Some(wt) = repo.current_worktree() {
+                    (repo.info.id.clone(), wt.branch.clone())
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Ok(());
+            }
+        };
 
-        // Clamp session index
-        if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
-            self.session_idx = self.sessions.len() - 1;
+        // Fetch sessions from daemon
+        let sessions = self
+            .client
+            .list_sessions(Some(&repo_id), Some(&branch_name))
+            .await?;
+
+        // Update repo state
+        if let Some(repo) = self.repo_states.get_mut(&repo_id) {
+            repo.sessions = sessions;
+            // Clamp session index
+            if !repo.sessions.is_empty() && repo.session_idx >= repo.sessions.len() {
+                repo.session_idx = repo.sessions.len() - 1;
+            }
         }
 
         // Mark sidebar as dirty to trigger redraw
@@ -303,7 +471,7 @@ impl App {
 
     /// Update active session based on current selection
     async fn update_active_session(&mut self) {
-        let new_session_id = self.sessions.get(self.session_idx).map(|s| s.id.clone());
+        let new_session_id = self.current_session().map(|s| s.id.clone());
 
         // If session changed, disconnect old stream and connect new one
         if self.terminal.active_session_id != new_session_id {
@@ -341,30 +509,30 @@ impl App {
 
     // ========== Tree view helpers ==========
 
-    /// Get the current sidebar item at cursor position
     /// Update total_items count in sidebar based on current worktrees and expanded state
     fn update_sidebar_total_items(&mut self) {
-        let mut count = 0;
-        for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
-            count += 1; // Worktree itself
-            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
-                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
-                    count += sessions.len(); // Sessions if expanded
-                }
-            }
-        }
+        let count = if let Some(repo) = self.current_repo() {
+            repo.calculate_sidebar_total()
+        } else {
+            1
+        };
         self.sidebar.total_items = count;
     }
 
+    /// Get the current sidebar item at cursor position
     pub fn current_sidebar_item(&self) -> SidebarItem {
+        let Some(repo) = self.current_repo() else {
+            return SidebarItem::None;
+        };
+
         let mut pos = 0;
-        for (wt_idx, _wt) in self.worktrees.iter().enumerate() {
+        for (wt_idx, _wt) in repo.worktrees.iter().enumerate() {
             if pos == self.sidebar.cursor {
                 return SidebarItem::Worktree(wt_idx);
             }
             pos += 1;
-            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
-                if let Some(sessions) = self.sidebar.sessions_by_worktree.get(&wt_idx) {
+            if repo.expanded_worktrees.contains(&wt_idx) {
+                if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
                     for (s_idx, _session) in sessions.iter().enumerate() {
                         if pos == self.sidebar.cursor {
                             return SidebarItem::Session(wt_idx, s_idx);
@@ -379,15 +547,18 @@ impl App {
 
     /// Toggle expansion of current worktree
     pub fn toggle_sidebar_expand(&mut self) -> Option<AsyncAction> {
-        if let SidebarItem::Worktree(wt_idx) = self.current_sidebar_item() {
-            if self.sidebar.expanded_worktrees.contains(&wt_idx) {
-                self.sidebar.expanded_worktrees.remove(&wt_idx);
-            } else {
-                self.sidebar.expanded_worktrees.insert(wt_idx);
-                // Load sessions for this worktree if not loaded
-                if !self.sidebar.sessions_by_worktree.contains_key(&wt_idx) {
-                    self.update_sidebar_total_items();
-                    return Some(AsyncAction::LoadWorktreeSessions { wt_idx });
+        let item = self.current_sidebar_item();
+        if let SidebarItem::Worktree(wt_idx) = item {
+            if let Some(repo) = self.current_repo_mut() {
+                if repo.expanded_worktrees.contains(&wt_idx) {
+                    repo.expanded_worktrees.remove(&wt_idx);
+                } else {
+                    repo.expanded_worktrees.insert(wt_idx);
+                    // Load sessions for this worktree if not loaded
+                    if !repo.sessions_by_worktree.contains_key(&wt_idx) {
+                        self.update_sidebar_total_items();
+                        return Some(AsyncAction::LoadWorktreeSessions { wt_idx });
+                    }
                 }
             }
             self.update_sidebar_total_items();
@@ -448,18 +619,18 @@ impl App {
     /// Update branch_idx and session_idx based on sidebar cursor
     /// Returns true if the worktree changed (needs git status refresh)
     fn update_selection_from_sidebar(&mut self) -> bool {
-        let old_branch_idx = self.branch_idx;
+        let old_branch_idx = self.branch_idx();
 
         match self.current_sidebar_item() {
             SidebarItem::Worktree(wt_idx) => {
-                self.branch_idx = wt_idx;
-                self.session_idx = 0;
+                self.set_branch_idx(wt_idx);
+                self.set_session_idx(0);
                 // Don't clear active session when navigating to worktree
                 // Keep showing the current terminal content
             }
             SidebarItem::Session(wt_idx, s_idx) => {
-                self.branch_idx = wt_idx;
-                self.session_idx = s_idx;
+                self.set_branch_idx(wt_idx);
+                self.set_session_idx(s_idx);
                 // Get session id first to avoid borrow issues
                 let session_id = self
                     .sidebar
@@ -498,7 +669,7 @@ impl App {
         }
 
         // Return true if worktree changed
-        self.branch_idx != old_branch_idx
+        self.branch_idx() != old_branch_idx
     }
 
     // ========== Sync versions for responsive input handling ==========
@@ -513,15 +684,15 @@ impl App {
                 self.git_status_move_up();
             }
             Focus::Branches => {
-                if self.branch_idx > 0 {
-                    self.branch_idx -= 1;
+                if self.branch_idx() > 0 {
+                    self.set_branch_idx(self.branch_idx() - 1);
                     self.dirty.sidebar = true;
                     return Some(AsyncAction::RefreshSessions);
                 }
             }
             Focus::Sessions => {
-                if self.session_idx > 0 {
-                    self.session_idx -= 1;
+                if self.session_idx() > 0 {
+                    self.set_session_idx(self.session_idx() - 1);
                     self.dirty.sidebar = true;
                     self.update_active_session_sync();
                 }
@@ -544,15 +715,15 @@ impl App {
                 self.git_status_move_down();
             }
             Focus::Branches => {
-                if !self.worktrees.is_empty() && self.branch_idx < self.worktrees.len() - 1 {
-                    self.branch_idx += 1;
+                if !self.worktrees().is_empty() && self.branch_idx() < self.worktrees().len() - 1 {
+                    self.set_branch_idx(self.branch_idx() + 1);
                     self.dirty.sidebar = true;
                     return Some(AsyncAction::RefreshSessions);
                 }
             }
             Focus::Sessions => {
-                if !self.sessions.is_empty() && self.session_idx < self.sessions.len() - 1 {
-                    self.session_idx += 1;
+                if !self.sessions().is_empty() && self.session_idx() < self.sessions().len() - 1 {
+                    self.set_session_idx(self.session_idx() + 1);
                     self.dirty.sidebar = true;
                     self.update_active_session_sync();
                 }
@@ -566,12 +737,32 @@ impl App {
     }
 
     /// Switch to repo by index (sync version)
+    /// Saves current repo's view state and restores the target repo's state
     pub fn switch_repo_sync(&mut self, idx: usize) -> Option<AsyncAction> {
-        if idx < self.repos.len() {
-            self.repo_idx = idx;
-            self.branch_idx = 0;
-            self.session_idx = 0;
+        // Get new repo ID from repo_order
+        let new_id = self.repo_order.get(idx).cloned();
+
+        // Check if we're actually switching to a different repo
+        if new_id.is_some() && new_id != self.current_repo_id {
+            // Save current sidebar cursor to current repo before switching
+            let current_cursor = self.sidebar.cursor;
+            if let Some(repo) = self.current_repo_mut() {
+                repo.sidebar_cursor = current_cursor;
+            }
+
+            // Switch to new repo - state is already preserved in repo_states!
+            self.current_repo_id = new_id;
+
+            // Sync sidebar cursor from new repo state
+            if let Some(repo) = self.current_repo() {
+                self.sidebar.cursor = repo.sidebar_cursor;
+            }
+
+            // Update sidebar total items
+            self.update_sidebar_total_items();
             self.dirty.sidebar = true;
+
+            // Refresh branches to ensure data is fresh
             return Some(AsyncAction::RefreshBranches);
         }
         None
@@ -579,7 +770,7 @@ impl App {
 
     /// Update active session state (sync version - no stream connection)
     fn update_active_session_sync(&mut self) {
-        let new_session_id = self.sessions.get(self.session_idx).map(|s| s.id.clone());
+        let new_session_id = self.current_session().map(|s| s.id.clone());
 
         if self.terminal.active_session_id != new_session_id {
             self.disconnect_stream();
@@ -651,7 +842,7 @@ impl App {
         const SHELL_SESSION_NAME: &str = "__shell__";
 
         // Get current worktree
-        let current_worktree = match self.worktrees.get(self.branch_idx) {
+        let current_worktree = match self.current_worktree() {
             Some(wt) => wt.clone(),
             None => {
                 self.status_message = Some("No worktree selected".to_string());
@@ -661,7 +852,7 @@ impl App {
 
         // Find shell session in current worktree
         let shell_session = self
-            .sessions
+            .sessions()
             .iter()
             .find(|s| {
                 s.name == SHELL_SESSION_NAME
@@ -683,7 +874,7 @@ impl App {
             if let Some(previous_session_id) = &self.terminal.session_before_shell {
                 // Verify previous session still exists
                 let previous_session_exists =
-                    self.sessions.iter().any(|s| &s.id == previous_session_id);
+                    self.sessions().iter().any(|s| &s.id == previous_session_id);
 
                 if previous_session_exists {
                     let target_id = previous_session_id.clone();
@@ -760,8 +951,8 @@ impl App {
                 self.status_message = Some("Switched to shell session".to_string());
             } else {
                 // Create new shell session
-                let repo = match self.repos.get(self.repo_idx) {
-                    Some(r) => r.clone(),
+                let repo = match self.current_repo() {
+                    Some(r) => r.info.clone(),
                     None => {
                         self.status_message = Some("No repository selected".to_string());
                         return Ok(());
@@ -783,7 +974,7 @@ impl App {
                         self.refresh_sessions().await?;
                         // Also refresh tree view sessions for current worktree
                         if self.sidebar.tree_view_enabled {
-                            self.load_worktree_sessions(self.branch_idx).await?;
+                            self.load_worktree_sessions(self.branch_idx()).await?;
                         }
 
                         let new_id = session.id;
@@ -868,8 +1059,8 @@ impl App {
             Focus::Sidebar => {
                 // In tree view: create session for currently selected worktree
                 if let (Some(repo), Some(branch)) = (
-                    self.repos.get(self.repo_idx).cloned(),
-                    self.worktrees.get(self.branch_idx).cloned(),
+                    self.current_repo().map(|r| r.info.clone()),
+                    self.current_worktree().cloned(),
                 ) {
                     match self
                         .client
@@ -878,9 +1069,9 @@ impl App {
                     {
                         Ok(session) => {
                             // Refresh sessions for this worktree
-                            self.load_worktree_sessions(self.branch_idx).await?;
+                            self.load_worktree_sessions(self.branch_idx()).await?;
                             // Expand worktree
-                            self.sidebar.expanded_worktrees.insert(self.branch_idx);
+                            self.sidebar.expanded_worktrees.insert(self.branch_idx());
                             self.update_sidebar_total_items();
                             // Set active session before entering terminal
                             self.terminal.active_session_id = Some(session.id.clone());
@@ -901,8 +1092,8 @@ impl App {
             Focus::Sessions => {
                 // Create new session for current branch
                 if let (Some(repo), Some(branch)) = (
-                    self.repos.get(self.repo_idx).cloned(),
-                    self.worktrees.get(self.branch_idx).cloned(),
+                    self.current_repo().map(|r| r.info.clone()),
+                    self.current_worktree().cloned(),
                 ) {
                     match self
                         .client
@@ -912,9 +1103,10 @@ impl App {
                         Ok(session) => {
                             self.refresh_sessions().await?;
                             // Find and select the new session
-                            if let Some(idx) = self.sessions.iter().position(|s| s.id == session.id)
+                            if let Some(idx) =
+                                self.sessions().iter().position(|s| s.id == session.id)
                             {
-                                self.session_idx = idx;
+                                self.set_session_idx(idx);
                                 self.update_active_session().await;
                                 self.enter_terminal().await?;
                             }
@@ -947,7 +1139,7 @@ impl App {
         }
 
         // Create session (will auto-create worktree if needed)
-        if let Some(repo) = self.repos.get(self.repo_idx).cloned() {
+        if let Some(repo) = self.current_repo().map(|r| r.info.clone()) {
             match self
                 .client
                 .create_session(&repo.id, &branch_name, None, None)
@@ -956,12 +1148,16 @@ impl App {
                 Ok(session) => {
                     self.refresh_branches().await?;
                     // Find the branch and session
-                    if let Some(b_idx) = self.worktrees.iter().position(|b| b.branch == branch_name)
+                    if let Some(b_idx) = self
+                        .worktrees()
+                        .iter()
+                        .position(|b| b.branch == branch_name)
                     {
-                        self.branch_idx = b_idx;
+                        self.set_branch_idx(b_idx);
                         self.refresh_sessions().await?;
-                        if let Some(s_idx) = self.sessions.iter().position(|s| s.id == session.id) {
-                            self.session_idx = s_idx;
+                        if let Some(s_idx) = self.sessions().iter().position(|s| s.id == session.id)
+                        {
+                            self.set_session_idx(s_idx);
                             self.update_active_session().await;
                             // Also load sessions for tree view
                             self.load_worktree_sessions(b_idx).await?;
@@ -1017,19 +1213,16 @@ impl App {
     /// Start add worktree mode
     pub fn start_add_worktree(&mut self) {
         // Get current selected branch as base (None = use HEAD)
-        let base_branch = self
-            .worktrees
-            .get(self.branch_idx)
-            .map(|w| w.branch.clone());
+        let base_branch = self.current_worktree().map(|w| w.branch.clone());
 
         self.input_mode = InputMode::AddWorktree { base_branch };
         self.text_input.clear();
-        self.add_worktree_idx = 0;
+        self.set_add_worktree_idx(0);
     }
 
     /// Start rename session mode
     pub fn start_rename_session(&mut self) {
-        if let Some(session) = self.sessions.get(self.session_idx).cloned() {
+        if let Some(session) = self.current_session().cloned() {
             self.save_focus();
             self.input_mode = InputMode::RenameSession {
                 session_id: session.id.clone(),
@@ -1061,7 +1254,7 @@ impl App {
                 // Refresh sessions from server to ensure UI is updated
                 self.refresh_sessions().await?;
                 // Also refresh worktree sessions for tree view
-                self.load_worktree_sessions(self.branch_idx).await?;
+                self.load_worktree_sessions(self.branch_idx()).await?;
             }
             Err(e) => {
                 self.error_message = Some(e.to_string());
@@ -1084,7 +1277,7 @@ impl App {
         let (branch_name, use_base) = if !self.text_input.is_empty() {
             // Creating new branch - use base_branch
             (self.text_input.trim().to_string(), true)
-        } else if let Some(branch) = self.available_branches.get(self.add_worktree_idx) {
+        } else if let Some(branch) = self.available_branches().get(self.add_worktree_idx()) {
             // Selecting existing branch - no need for base
             (branch.branch.clone(), false)
         } else {
@@ -1092,8 +1285,8 @@ impl App {
             return Ok(());
         };
 
-        let repo_id = match self.repos.get(self.repo_idx) {
-            Some(repo) => repo.id.clone(),
+        let repo_id = match self.current_repo() {
+            Some(repo) => repo.info.id.clone(),
             None => {
                 self.cancel_input();
                 return Ok(());
@@ -1119,8 +1312,12 @@ impl App {
                 self.status_message = Some(format!("Created worktree for: {}", branch_name));
                 self.refresh_branches().await?;
                 // Select the new worktree
-                if let Some(idx) = self.worktrees.iter().position(|w| w.branch == branch_name) {
-                    self.branch_idx = idx;
+                if let Some(idx) = self
+                    .worktrees()
+                    .iter()
+                    .position(|w| w.branch == branch_name)
+                {
+                    self.set_branch_idx(idx);
                     self.sidebar.cursor = idx;
                     self.refresh_sessions().await?;
                 }
@@ -1163,7 +1360,7 @@ impl App {
         // Refresh sessions to update the UI
         self.refresh_sessions().await?;
         // Also refresh worktree sessions for tree view
-        self.load_worktree_sessions(self.branch_idx).await?;
+        self.load_worktree_sessions(self.branch_idx()).await?;
 
         Ok(())
     }
@@ -1179,8 +1376,8 @@ impl App {
         self.restore_focus();
 
         // Get repo_id
-        let repo_id = match self.repos.get(self.repo_idx) {
-            Some(repo) => repo.id.clone(),
+        let repo_id = match self.current_repo() {
+            Some(repo) => repo.info.id.clone(),
             None => return Ok(()),
         };
 
@@ -1207,8 +1404,8 @@ impl App {
                 match self.current_sidebar_item() {
                     SidebarItem::Worktree(wt_idx) => {
                         if let (Some(repo), Some(wt)) = (
-                            self.repos.get(self.repo_idx).cloned(),
-                            self.worktrees.get(wt_idx).cloned(),
+                            self.current_repo().map(|r| r.info.clone()),
+                            self.worktrees().get(wt_idx).cloned(),
                         ) {
                             if wt.is_main {
                                 self.error_message =
@@ -1245,8 +1442,8 @@ impl App {
             }
             Focus::Branches => {
                 if let (Some(repo), Some(wt)) = (
-                    self.repos.get(self.repo_idx).cloned(),
-                    self.worktrees.get(self.branch_idx).cloned(),
+                    self.current_repo().map(|r| r.info.clone()),
+                    self.current_worktree().cloned(),
                 ) {
                     if wt.is_main {
                         self.error_message = Some("Cannot remove main worktree".to_string());
@@ -1268,7 +1465,7 @@ impl App {
                 }
             }
             Focus::Sessions => {
-                if let Some(session) = self.sessions.get(self.session_idx).cloned() {
+                if let Some(session) = self.current_session().cloned() {
                     self.input_mode = InputMode::ConfirmDelete(DeleteTarget::Session {
                         session_id: session.id,
                         name: session.name,
@@ -1327,7 +1524,7 @@ impl App {
                         self.status_message = Some(msg);
                         self.refresh_sessions().await?;
                         // Also refresh worktree sessions for tree view
-                        self.load_worktree_sessions(self.branch_idx).await?;
+                        self.load_worktree_sessions(self.branch_idx()).await?;
                         self.restore_focus();
                     }
                     Err(e) => {
@@ -1432,12 +1629,13 @@ impl App {
                 );
                 if let Some(session) = e.session {
                     // Only add if it matches current repo/branch filter
-                    if let (Some(repo), Some(branch)) = (
-                        self.repos.get(self.repo_idx),
-                        self.worktrees.get(self.branch_idx),
-                    ) {
-                        if session.repo_id == repo.id && session.branch == branch.branch {
-                            self.sessions.push(session);
+                    if let (Some(repo), Some(branch)) =
+                        (self.current_repo(), self.current_worktree())
+                    {
+                        if session.repo_id == repo.info.id && session.branch == branch.branch {
+                            if let Some(repo) = self.current_repo_mut() {
+                                repo.sessions.push(session);
+                            }
                             self.dirty.sidebar = true;
                             return None; // Session list changed, will redraw
                         }
@@ -1447,16 +1645,18 @@ impl App {
             }
             Some(daemon_event::Event::SessionDestroyed(e)) => {
                 debug!("Event: SessionDestroyed {}", e.session_id);
-                let old_len = self.sessions.len();
-                // Remove session from list
-                self.sessions.retain(|s| s.id != e.session_id);
-                // Clamp session index
-                if !self.sessions.is_empty() && self.session_idx >= self.sessions.len() {
-                    self.session_idx = self.sessions.len() - 1;
-                }
-                // Only redraw if session was actually removed
-                if self.sessions.len() != old_len {
-                    self.dirty.sidebar = true;
+                if let Some(repo) = self.current_repo_mut() {
+                    let old_len = repo.sessions.len();
+                    // Remove session from list
+                    repo.sessions.retain(|s| s.id != e.session_id);
+                    // Clamp session index
+                    if !repo.sessions.is_empty() && repo.session_idx >= repo.sessions.len() {
+                        repo.session_idx = repo.sessions.len() - 1;
+                    }
+                    // Only redraw if session was actually removed
+                    if repo.sessions.len() != old_len {
+                        self.dirty.sidebar = true;
+                    }
                 }
                 None
             }
@@ -1466,11 +1666,13 @@ impl App {
                     e.session_id, e.new_name
                 );
                 // Update session name in list
-                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
-                    if session.name != e.new_name {
-                        session.name = e.new_name;
-                        self.dirty.sidebar = true;
-                        return None; // Name changed
+                if let Some(repo) = self.current_repo_mut() {
+                    if let Some(session) = repo.sessions.iter_mut().find(|s| s.id == e.session_id) {
+                        if session.name != e.new_name {
+                            session.name = e.new_name;
+                            self.dirty.sidebar = true;
+                            return None; // Name changed
+                        }
                     }
                 }
                 None
@@ -1483,21 +1685,23 @@ impl App {
                 let mut changed = false;
 
                 // Update session status in main sessions list
-                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == e.session_id) {
-                    debug!(
-                        "Found session in sessions list, current status: {}, new status: {}",
-                        session.status, e.new_status
-                    );
-                    if session.status != e.new_status {
+                if let Some(repo) = self.current_repo_mut() {
+                    if let Some(session) = repo.sessions.iter_mut().find(|s| s.id == e.session_id) {
                         debug!(
-                            "Status changed! Updating from {} to {}",
+                            "Found session in sessions list, current status: {}, new status: {}",
                             session.status, e.new_status
                         );
-                        session.status = e.new_status;
-                        changed = true;
+                        if session.status != e.new_status {
+                            debug!(
+                                "Status changed! Updating from {} to {}",
+                                session.status, e.new_status
+                            );
+                            session.status = e.new_status;
+                            changed = true;
+                        }
+                    } else {
+                        debug!("Session {} not found in sessions list", e.session_id);
                     }
-                } else {
-                    debug!("Session {} not found in sessions list", e.session_id);
                 }
 
                 // Also update in sidebar sessions_by_worktree (for tree view)
@@ -1526,13 +1730,15 @@ impl App {
                 );
                 if let Some(worktree) = e.worktree {
                     // Only add if it matches current repo
-                    if let Some(repo) = self.repos.get(self.repo_idx) {
-                        if worktree.repo_id == repo.id {
+                    if let Some(repo) = self.current_repo() {
+                        if worktree.repo_id == repo.info.id {
                             // Check if worktree already exists to avoid duplicates
-                            if !self.worktrees.iter().any(|w| w.branch == worktree.branch) {
-                                self.worktrees.push(worktree);
-                                self.dirty.sidebar = true;
-                                return None;
+                            if let Some(repo) = self.current_repo_mut() {
+                                if !repo.worktrees.iter().any(|w| w.branch == worktree.branch) {
+                                    repo.worktrees.push(worktree);
+                                    self.dirty.sidebar = true;
+                                    return None;
+                                }
                             }
                         }
                     }
@@ -1542,17 +1748,39 @@ impl App {
             Some(daemon_event::Event::WorktreeRemoved(e)) => {
                 debug!("Event: WorktreeRemoved {} {}", e.repo_id, e.branch);
                 // Remove worktree from list if it matches current repo
-                if let Some(repo) = self.repos.get(self.repo_idx) {
-                    if e.repo_id == repo.id {
-                        let old_len = self.worktrees.len();
-                        self.worktrees.retain(|w| w.branch != e.branch);
-                        // Clamp branch index
-                        if !self.worktrees.is_empty() && self.branch_idx >= self.worktrees.len() {
-                            self.branch_idx = self.worktrees.len() - 1;
-                        }
-                        if self.worktrees.len() != old_len {
-                            self.dirty.sidebar = true;
-                            return None;
+                if let Some(repo) = self.current_repo() {
+                    if e.repo_id == repo.info.id {
+                        if let Some(repo) = self.current_repo_mut() {
+                            let old_len = repo.worktrees.len();
+                            repo.worktrees.retain(|w| w.branch != e.branch);
+
+                            if repo.worktrees.len() != old_len {
+                                // Worktree was removed, update state
+                                if repo.worktrees.is_empty() {
+                                    // All worktrees removed
+                                    repo.branch_idx = 0;
+                                    self.sidebar.cursor = 0;
+                                    self.sidebar.expanded_worktrees.clear();
+                                    self.sidebar.sessions_by_worktree.clear();
+                                } else {
+                                    // Clamp branch index
+                                    if repo.branch_idx >= repo.worktrees.len() {
+                                        repo.branch_idx = repo.worktrees.len() - 1;
+                                    }
+                                    // Clear session caches (indices may have shifted)
+                                    self.sidebar.sessions_by_worktree.clear();
+                                    self.sidebar.expanded_worktrees.clear();
+                                }
+
+                                // Recalculate sidebar items and clamp cursor
+                                self.update_sidebar_total_items();
+                                let max_cursor = self.sidebar.virtual_len().saturating_sub(1);
+                                if self.sidebar.cursor > max_cursor {
+                                    self.sidebar.cursor = max_cursor;
+                                }
+
+                                self.dirty.sidebar = true;
+                            }
                         }
                     }
                 }
@@ -1562,11 +1790,9 @@ impl App {
                 debug!("Event: GitStatusChanged {}/{}", e.repo_id, e.branch);
 
                 // Only refresh if event is for current worktree
-                if let (Some(repo), Some(worktree)) = (
-                    self.repos.get(self.repo_idx),
-                    self.worktrees.get(self.branch_idx),
-                ) {
-                    if e.repo_id == repo.id && e.branch == worktree.branch {
+                if let (Some(repo), Some(worktree)) = (self.current_repo(), self.current_worktree())
+                {
+                    if e.repo_id == repo.info.id && e.branch == worktree.branch {
                         debug!("Auto-refreshing git status for {}/{}", e.repo_id, e.branch);
 
                         // Client-side debounce: avoid refreshing too frequently
@@ -1627,7 +1853,7 @@ impl App {
                 self.client.destroy_session(&session_id).await?;
                 let _ = self.refresh_sessions().await;
                 // Also refresh worktree sessions for tree view
-                let _ = self.load_worktree_sessions(self.branch_idx).await;
+                let _ = self.load_worktree_sessions(self.branch_idx()).await;
             }
             AsyncAction::RenameSession {
                 session_id,
@@ -1726,17 +1952,30 @@ impl App {
 
     /// Load sessions for a specific worktree (for tree view)
     pub async fn load_worktree_sessions(&mut self, wt_idx: usize) -> Result<()> {
-        if let (Some(repo), Some(worktree)) =
-            (self.repos.get(self.repo_idx), self.worktrees.get(wt_idx))
-        {
-            let sessions = self
-                .client
-                .list_sessions(Some(&repo.id), Some(&worktree.branch))
-                .await?;
-            self.sidebar.sessions_by_worktree.insert(wt_idx, sessions);
-            self.update_sidebar_total_items();
-            self.dirty.sidebar = true;
+        // Get repo_id and branch first to avoid borrow issues
+        let (repo_id, branch) = {
+            if let Some(repo) = self.current_repo() {
+                if let Some(wt) = repo.worktrees.get(wt_idx) {
+                    (repo.info.id.clone(), wt.branch.clone())
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Ok(());
+            }
+        };
+
+        let sessions = self
+            .client
+            .list_sessions(Some(&repo_id), Some(&branch))
+            .await?;
+
+        // Store sessions in repo state
+        if let Some(repo) = self.current_repo_mut() {
+            repo.sessions_by_worktree.insert(wt_idx, sessions);
         }
+        self.update_sidebar_total_items();
+        self.dirty.sidebar = true;
         Ok(())
     }
 
@@ -1744,55 +1983,64 @@ impl App {
 
     /// Load git status for current worktree
     pub async fn load_git_status(&mut self) -> Result<()> {
-        if let (Some(repo), Some(worktree)) = (
-            self.repos.get(self.repo_idx).cloned(),
-            self.worktrees.get(self.branch_idx).cloned(),
-        ) {
-            let response = self
-                .client
-                .get_git_status(&repo.id, &worktree.branch)
-                .await?;
+        // Get repo_id and branch first to avoid borrow issues
+        let (repo_id, branch) = {
+            if let Some(repo) = self.current_repo() {
+                if let Some(wt) = repo.current_worktree() {
+                    (repo.info.id.clone(), wt.branch.clone())
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Ok(());
+            }
+        };
 
-            // Convert proto files to local representation
-            self.git.files.clear();
+        let response = self.client.get_git_status(&repo_id, &branch).await?;
+
+        // Update git state in repo
+        if let Some(repo) = self.current_repo_mut() {
+            repo.git.files.clear();
 
             for f in response.staged {
-                self.git.files.push(GitStatusFile {
+                repo.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Staged,
                 });
             }
             for f in response.unstaged {
-                self.git.files.push(GitStatusFile {
+                repo.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Unstaged,
                 });
             }
             for f in response.untracked {
-                self.git.files.push(GitStatusFile {
+                repo.git.files.push(GitStatusFile {
                     path: f.path,
                     status: f.status,
                     section: GitSection::Untracked,
                 });
             }
 
-            self.git.cursor = 0;
-            self.dirty.sidebar = true;
+            repo.git.cursor = 0;
+        }
+        self.dirty.sidebar = true;
 
-            // Also load comments for this branch
-            match self
-                .client
-                .list_line_comments(&repo.id, &worktree.branch, None)
-                .await
-            {
-                Ok(comments) => {
-                    self.line_comments = comments;
+        // Also load comments for this branch
+        match self
+            .client
+            .list_line_comments(&repo_id, &branch, None)
+            .await
+        {
+            Ok(comments) => {
+                if let Some(repo) = self.current_repo_mut() {
+                    repo.line_comments = comments;
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load comments: {}", e);
-                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load comments: {}", e);
             }
         }
         Ok(())
@@ -1800,14 +2048,14 @@ impl App {
 
     /// Stage a single file
     pub async fn stage_file(&mut self, file_path: &str) -> Result<()> {
-        if let (Some(repo), Some(worktree)) = (
-            self.repos.get(self.repo_idx),
-            self.worktrees.get(self.branch_idx),
-        ) {
-            self.client
-                .stage_file(&repo.id, &worktree.branch, file_path)
-                .await?;
-            // Reload git status after staging
+        // Extract data before borrowing client
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
+            self.client.stage_file(&repo_id, &branch, file_path).await?;
             self.load_git_status().await?;
         }
         Ok(())
@@ -1815,14 +2063,16 @@ impl App {
 
     /// Unstage a single file
     pub async fn unstage_file(&mut self, file_path: &str) -> Result<()> {
-        if let (Some(repo), Some(worktree)) = (
-            self.repos.get(self.repo_idx),
-            self.worktrees.get(self.branch_idx),
-        ) {
+        // Extract data before borrowing client
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
             self.client
-                .unstage_file(&repo.id, &worktree.branch, file_path)
+                .unstage_file(&repo_id, &branch, file_path)
                 .await?;
-            // Reload git status after unstaging
             self.load_git_status().await?;
         }
         Ok(())
@@ -1830,11 +2080,14 @@ impl App {
 
     /// Stage all files
     pub async fn stage_all(&mut self) -> Result<()> {
-        if let (Some(repo), Some(worktree)) = (
-            self.repos.get(self.repo_idx),
-            self.worktrees.get(self.branch_idx),
-        ) {
-            self.client.stage_all(&repo.id, &worktree.branch).await?;
+        // Extract data before borrowing client
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
+            self.client.stage_all(&repo_id, &branch).await?;
             self.load_git_status().await?;
         }
         Ok(())
@@ -1842,11 +2095,14 @@ impl App {
 
     /// Unstage all files
     pub async fn unstage_all(&mut self) -> Result<()> {
-        if let (Some(repo), Some(worktree)) = (
-            self.repos.get(self.repo_idx),
-            self.worktrees.get(self.branch_idx),
-        ) {
-            self.client.unstage_all(&repo.id, &worktree.branch).await?;
+        // Extract data before borrowing client
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
+            self.client.unstage_all(&repo_id, &branch).await?;
             self.load_git_status().await?;
         }
         Ok(())
@@ -1856,11 +2112,10 @@ impl App {
 
     /// Load TODO items for current repository
     pub async fn load_todos(&mut self) -> Result<()> {
-        if let Some(repo) = self.repos.get(self.repo_idx) {
-            self.todo.items = self
-                .client
-                .list_todos(&repo.id, self.todo.show_completed)
-                .await?;
+        let repo_id = self.current_repo().map(|r| r.info.id.clone());
+        if let Some(repo_id) = repo_id {
+            let show_completed = self.todo.show_completed;
+            self.todo.items = self.client.list_todos(&repo_id, show_completed).await?;
             self.rebuild_todo_display_order();
         }
         Ok(())
@@ -1914,9 +2169,10 @@ impl App {
         description: Option<String>,
         parent_id: Option<String>,
     ) -> Result<()> {
-        if let Some(repo) = self.repos.get(self.repo_idx) {
+        let repo_id = self.current_repo().map(|r| r.info.id.clone());
+        if let Some(repo_id) = repo_id {
             self.client
-                .create_todo(&repo.id, title, description, parent_id)
+                .create_todo(&repo_id, title, description, parent_id)
                 .await?;
             self.load_todos().await?;
         }
@@ -1967,6 +2223,11 @@ impl App {
 
     /// Get current git panel item at cursor position
     pub fn current_git_panel_item(&self) -> GitPanelItem {
+        let git = match self.git() {
+            Some(g) => g,
+            None => return GitPanelItem::None,
+        };
+
         let mut pos = 0;
         let sections = [
             GitSection::Staged,
@@ -1975,8 +2236,7 @@ impl App {
         ];
 
         for section in sections {
-            let files: Vec<_> = self
-                .git
+            let files: Vec<_> = git
                 .files
                 .iter()
                 .enumerate()
@@ -1988,15 +2248,15 @@ impl App {
             }
 
             // Section header
-            if pos == self.git.cursor {
+            if pos == git.cursor {
                 return GitPanelItem::Section(section);
             }
             pos += 1;
 
             // Files in section (if expanded)
-            if self.git.expanded_sections.contains(&section) {
+            if git.expanded_sections.contains(&section) {
                 for (file_idx, _) in files {
-                    if pos == self.git.cursor {
+                    if pos == git.cursor {
                         return GitPanelItem::File(file_idx);
                     }
                     pos += 1;
@@ -2010,33 +2270,39 @@ impl App {
     /// Toggle git section expansion
     pub fn toggle_git_section_expand(&mut self) {
         if let GitPanelItem::Section(section) = self.current_git_panel_item() {
-            if self.git.expanded_sections.contains(&section) {
-                self.git.expanded_sections.remove(&section);
-            } else {
-                self.git.expanded_sections.insert(section);
+            if let Some(git) = self.git_mut() {
+                if git.expanded_sections.contains(&section) {
+                    git.expanded_sections.remove(&section);
+                } else {
+                    git.expanded_sections.insert(section);
+                }
+                self.dirty.sidebar = true;
             }
-            self.dirty.sidebar = true;
         }
     }
 
     /// Move cursor up in git status panel
     pub fn git_status_move_up(&mut self) {
-        if self.git.move_up() {
-            self.dirty.sidebar = true;
+        if let Some(git) = self.git_mut() {
+            if git.move_up() {
+                self.dirty.sidebar = true;
+            }
         }
     }
 
     /// Move cursor down in git status panel
     pub fn git_status_move_down(&mut self) {
-        if self.git.move_down() {
-            self.dirty.sidebar = true;
+        if let Some(git) = self.git_mut() {
+            if git.move_down() {
+                self.dirty.sidebar = true;
+            }
         }
     }
 
     /// Get file path of currently selected git status file
     pub fn current_git_file_path(&self) -> Option<String> {
         if let GitPanelItem::File(idx) = self.current_git_panel_item() {
-            self.git.files.get(idx).map(|f| f.path.clone())
+            self.git()?.files.get(idx).map(|f| f.path.clone())
         } else {
             None
         }
@@ -2045,9 +2311,8 @@ impl App {
     /// Check if current git item is staged
     pub fn is_current_git_item_staged(&self) -> bool {
         if let GitPanelItem::File(idx) = self.current_git_panel_item() {
-            self.git
-                .files
-                .get(idx)
+            self.git()
+                .and_then(|git| git.files.get(idx))
                 .map(|f| f.section == GitSection::Staged)
                 .unwrap_or(false)
         } else if let GitPanelItem::Section(section) = self.current_git_panel_item() {
@@ -2126,38 +2391,49 @@ impl App {
         } else {
             Focus::Sessions
         };
-        self.diff.files.clear();
-        self.diff.expanded.clear();
-        self.diff.file_lines.clear();
-        self.diff.cursor = 0;
-        self.diff.scroll_offset = 0;
+        if let Some(diff) = self.diff_mut() {
+            diff.files.clear();
+            diff.expanded.clear();
+            diff.file_lines.clear();
+            diff.cursor = 0;
+            diff.scroll_offset = 0;
+        }
     }
 
     /// Load diff files for current worktree
     pub async fn load_diff_files(&mut self) -> Result<()> {
-        if let (Some(repo), Some(branch)) = (
-            self.repos.get(self.repo_idx).cloned(),
-            self.worktrees.get(self.branch_idx).cloned(),
-        ) {
-            match self.client.get_diff_files(&repo.id, &branch.branch).await {
-                Ok(files) => {
-                    self.diff.files = files;
-                    self.diff.expanded.clear();
-                    self.diff.file_lines.clear();
-                    self.diff.cursor = 0;
-                    self.diff.scroll_offset = 0;
+        // Extract data before borrowing client
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
 
-                    // If there's a pending file to expand, find and expand it
-                    if let Some(pending_file) = self.git.pending_diff_file.take() {
-                        if let Some(idx) =
-                            self.diff.files.iter().position(|f| f.path == pending_file)
-                        {
-                            self.diff.cursor = idx;
-                            self.diff.expanded.insert(idx);
-                            // Load the file's diff content
-                            self.load_file_diff().await?;
+        if let Some((repo_id, branch)) = ids {
+            match self.client.get_diff_files(&repo_id, &branch).await {
+                Ok(files) => {
+                    // Get pending file before modifying state
+                    let pending_file = self.git_mut().and_then(|g| g.pending_diff_file.take());
+
+                    if let Some(diff) = self.diff_mut() {
+                        diff.files = files;
+                        diff.expanded.clear();
+                        diff.file_lines.clear();
+                        diff.cursor = 0;
+                        diff.scroll_offset = 0;
+
+                        // If there's a pending file to expand, find and expand it
+                        if let Some(pending_file) = pending_file {
+                            if let Some(idx) =
+                                diff.files.iter().position(|f| f.path == pending_file)
+                            {
+                                diff.cursor = idx;
+                                diff.expanded.insert(idx);
+                            }
                         }
                     }
+
+                    // Load the file's diff content if we just expanded one
+                    self.load_file_diff().await?;
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Failed to load diff: {}", e));
@@ -2167,11 +2443,13 @@ impl App {
             // Also load comments for this branch
             match self
                 .client
-                .list_line_comments(&repo.id, &branch.branch, None)
+                .list_line_comments(&repo_id, &branch, None)
                 .await
             {
                 Ok(comments) => {
-                    self.line_comments = comments;
+                    if let Some(repo) = self.current_repo_mut() {
+                        repo.line_comments = comments;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load comments: {}", e);
@@ -2184,31 +2462,34 @@ impl App {
     /// Load diff content for the file that is being expanded
     pub async fn load_file_diff(&mut self) -> Result<()> {
         // Find which file needs loading (the one that's expanded but has no lines)
-        let file_idx = self
-            .diff
-            .expanded
-            .iter()
-            .find(|&&idx| !self.diff.file_lines.contains_key(&idx))
-            .copied();
+        let file_info = self.diff().and_then(|diff| {
+            diff.expanded
+                .iter()
+                .find(|&&idx| !diff.file_lines.contains_key(&idx))
+                .copied()
+                .and_then(|idx| diff.files.get(idx).map(|f| (idx, f.path.clone())))
+        });
 
-        if let Some(file_idx) = file_idx {
-            if let (Some(repo), Some(branch), Some(file)) = (
-                self.repos.get(self.repo_idx).cloned(),
-                self.worktrees.get(self.branch_idx).cloned(),
-                self.diff.files.get(file_idx).cloned(),
-            ) {
-                match self
-                    .client
-                    .get_file_diff(&repo.id, &branch.branch, &file.path)
-                    .await
-                {
-                    Ok(response) => {
-                        self.diff.file_lines.insert(file_idx, response.lines);
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let (Some((file_idx, file_path)), Some((repo_id, branch))) = (file_info, ids) {
+            match self
+                .client
+                .get_file_diff(&repo_id, &branch, &file_path)
+                .await
+            {
+                Ok(response) => {
+                    if let Some(diff) = self.diff_mut() {
+                        diff.file_lines.insert(file_idx, response.lines);
                     }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to load file diff: {}", e));
-                        // Remove from expanded since load failed
-                        self.diff.expanded.remove(&file_idx);
+                }
+                Err(e) => {
+                    self.error_message = Some(format!("Failed to load file diff: {}", e));
+                    if let Some(diff) = self.diff_mut() {
+                        diff.expanded.remove(&file_idx);
                     }
                 }
             }
@@ -2220,23 +2501,27 @@ impl App {
 
     /// Get current item at cursor position
     pub fn current_diff_item(&self) -> DiffItem {
-        if self.diff.files.is_empty() {
+        let Some(diff) = self.diff() else {
+            return DiffItem::None;
+        };
+
+        if diff.files.is_empty() {
             return DiffItem::None;
         }
 
         let mut pos = 0;
-        for (file_idx, _) in self.diff.files.iter().enumerate() {
+        for (file_idx, _) in diff.files.iter().enumerate() {
             // Check if cursor is on this file
-            if pos == self.diff.cursor {
+            if pos == diff.cursor {
                 return DiffItem::File(file_idx);
             }
             pos += 1;
 
             // Check if cursor is on one of this file's lines
-            if self.diff.expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
+            if diff.expanded.contains(&file_idx) {
+                if let Some(lines) = diff.file_lines.get(&file_idx) {
                     for line_idx in 0..lines.len() {
-                        if pos == self.diff.cursor {
+                        if pos == diff.cursor {
                             return DiffItem::Line(file_idx, line_idx);
                         }
                         pos += 1;
@@ -2250,62 +2535,60 @@ impl App {
 
     /// Move cursor up in diff view
     pub fn diff_move_up(&mut self) {
-        if self.diff.move_up() {
-            self.dirty.sidebar = true;
+        if let Some(diff) = self.diff_mut() {
+            if diff.move_up() {
+                self.dirty.sidebar = true;
+            }
         }
     }
 
     /// Move cursor down in diff view
     pub fn diff_move_down(&mut self) {
-        if self.diff.move_down() {
-            self.dirty.sidebar = true;
+        if let Some(diff) = self.diff_mut() {
+            if diff.move_down() {
+                self.dirty.sidebar = true;
+            }
         }
     }
 
     /// Jump to previous file
     pub fn diff_prev_file(&mut self) {
+        let Some(diff) = self.diff_mut() else { return };
+
         let mut pos = 0;
         let mut last_file_pos = 0;
-        for (file_idx, _) in self.diff.files.iter().enumerate() {
-            if pos >= self.diff.cursor {
+        for (file_idx, _) in diff.files.iter().enumerate() {
+            if pos >= diff.cursor {
                 // Found current or past cursor, go to last file
                 break;
             }
             last_file_pos = pos;
             pos += 1;
-            if self.diff.expanded.contains(&file_idx) {
-                pos += self
-                    .diff
-                    .file_lines
-                    .get(&file_idx)
-                    .map(|l| l.len())
-                    .unwrap_or(0);
+            if diff.expanded.contains(&file_idx) {
+                pos += diff.file_lines.get(&file_idx).map(|l| l.len()).unwrap_or(0);
             }
         }
-        if self.diff.cursor > 0 {
-            self.diff.cursor = last_file_pos;
+        if diff.cursor > 0 {
+            diff.cursor = last_file_pos;
             self.dirty.sidebar = true;
         }
     }
 
     /// Jump to next file
     pub fn diff_next_file(&mut self) {
+        let Some(diff) = self.diff_mut() else { return };
+
         let mut pos = 0;
-        for (file_idx, _) in self.diff.files.iter().enumerate() {
-            if pos > self.diff.cursor {
+        for (file_idx, _) in diff.files.iter().enumerate() {
+            if pos > diff.cursor {
                 // Found next file after cursor
-                self.diff.cursor = pos;
+                diff.cursor = pos;
                 self.dirty.sidebar = true;
                 return;
             }
             pos += 1;
-            if self.diff.expanded.contains(&file_idx) {
-                pos += self
-                    .diff
-                    .file_lines
-                    .get(&file_idx)
-                    .map(|l| l.len())
-                    .unwrap_or(0);
+            if diff.expanded.contains(&file_idx) {
+                pos += diff.file_lines.get(&file_idx).map(|l| l.len()).unwrap_or(0);
             }
         }
     }
@@ -2313,14 +2596,15 @@ impl App {
     /// Toggle expansion of current file (only works when cursor is on a file)
     pub fn toggle_diff_expand(&mut self) -> Option<AsyncAction> {
         if let DiffItem::File(file_idx) = self.current_diff_item() {
-            if self.diff.expanded.contains(&file_idx) {
+            let diff = self.diff_mut()?;
+            if diff.expanded.contains(&file_idx) {
                 // Collapse
-                self.diff.expanded.remove(&file_idx);
-                self.diff.file_lines.remove(&file_idx);
+                diff.expanded.remove(&file_idx);
+                diff.file_lines.remove(&file_idx);
                 None
             } else {
                 // Expand - need to load diff content
-                self.diff.expanded.insert(file_idx);
+                diff.expanded.insert(file_idx);
                 Some(AsyncAction::LoadFileDiff)
             }
         } else {
@@ -2330,7 +2614,9 @@ impl App {
 
     /// Toggle diff fullscreen mode
     pub fn toggle_diff_fullscreen(&mut self) {
-        self.diff.fullscreen = !self.diff.fullscreen;
+        if let Some(diff) = self.diff_mut() {
+            diff.fullscreen = !diff.fullscreen;
+        }
     }
 
     // ========== Comment Operations ==========
@@ -2338,9 +2624,10 @@ impl App {
     /// Start adding a line comment (only works when cursor is on a diff line)
     pub fn start_add_line_comment(&mut self) {
         if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
+            let Some(diff) = self.diff() else { return };
             if let (Some(file), Some(lines)) = (
-                self.diff.files.get(file_idx).cloned(),
-                self.diff.file_lines.get(&file_idx),
+                diff.files.get(file_idx).cloned(),
+                diff.file_lines.get(&file_idx),
             ) {
                 if let Some(diff_line) = lines.get(line_idx).cloned() {
                     // Get actual line number from diff info
@@ -2384,15 +2671,17 @@ impl App {
         }
 
         // Get current repo and branch
-        if let (Some(repo), Some(branch)) = (
-            self.repos.get(self.repo_idx).cloned(),
-            self.worktrees.get(self.branch_idx).cloned(),
-        ) {
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
             match self
                 .client
                 .create_line_comment(
-                    &repo.id,
-                    &branch.branch,
+                    &repo_id,
+                    &branch,
                     &file_path,
                     line_number,
                     line_type,
@@ -2401,7 +2690,9 @@ impl App {
                 .await
             {
                 Ok(comment) => {
-                    self.line_comments.push(comment);
+                    if let Some(repo) = self.current_repo_mut() {
+                        repo.line_comments.push(comment);
+                    }
                     self.status_message = Some("Comment added".to_string());
                 }
                 Err(e) => {
@@ -2415,21 +2706,27 @@ impl App {
 
     /// Load comments for current branch
     pub async fn load_comments(&mut self) -> Result<()> {
-        if let (Some(repo), Some(branch)) = (
-            self.repos.get(self.repo_idx).cloned(),
-            self.worktrees.get(self.branch_idx).cloned(),
-        ) {
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
             match self
                 .client
-                .list_line_comments(&repo.id, &branch.branch, None)
+                .list_line_comments(&repo_id, &branch, None)
                 .await
             {
                 Ok(comments) => {
-                    self.line_comments = comments;
+                    if let Some(repo) = self.current_repo_mut() {
+                        repo.line_comments = comments;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load comments: {}", e);
-                    self.line_comments.clear();
+                    if let Some(repo) = self.current_repo_mut() {
+                        repo.line_comments.clear();
+                    }
                 }
             }
         }
@@ -2438,7 +2735,7 @@ impl App {
 
     /// Get comments for a specific file and line
     pub fn get_line_comment(&self, file_path: &str, line_number: i32) -> Option<&LineCommentInfo> {
-        self.line_comments
+        self.line_comments()
             .iter()
             .find(|c| c.file_path == file_path && c.line_number == line_number)
     }
@@ -2450,7 +2747,7 @@ impl App {
 
     /// Count comments for a specific file
     pub fn count_file_comments(&self, file_path: &str) -> usize {
-        self.line_comments
+        self.line_comments()
             .iter()
             .filter(|c| c.file_path == file_path)
             .count()
@@ -2461,9 +2758,10 @@ impl App {
         // Extract needed data first to avoid borrow conflicts
         let edit_info: Option<(String, String, i32, String)> = {
             if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
+                let diff = self.diff();
                 if let (Some(file), Some(lines)) = (
-                    self.diff.files.get(file_idx),
-                    self.diff.file_lines.get(&file_idx),
+                    diff.and_then(|d| d.files.get(file_idx)),
+                    diff.and_then(|d| d.file_lines.get(&file_idx)),
                 ) {
                     if let Some(diff_line) = lines.get(line_idx) {
                         let line_number = diff_line
@@ -2529,8 +2827,12 @@ impl App {
         {
             Ok(updated) => {
                 // Update in local list
-                if let Some(comment) = self.line_comments.iter_mut().find(|c| c.id == comment_id) {
-                    comment.comment = updated.comment;
+                if let Some(repo) = self.current_repo_mut() {
+                    if let Some(comment) =
+                        repo.line_comments.iter_mut().find(|c| c.id == comment_id)
+                    {
+                        comment.comment = updated.comment;
+                    }
                 }
                 self.status_message = Some("Comment updated".to_string());
             }
@@ -2545,17 +2847,19 @@ impl App {
     /// Delete comment on current line
     pub async fn delete_current_line_comment(&mut self) -> Result<()> {
         if let DiffItem::Line(file_idx, line_idx) = self.current_diff_item() {
-            if let (Some(file), Some(lines)) = (
-                self.diff.files.get(file_idx),
-                self.diff.file_lines.get(&file_idx),
-            ) {
+            let Some(diff) = self.diff() else {
+                return Ok(());
+            };
+            if let (Some(file), Some(lines)) =
+                (diff.files.get(file_idx), diff.file_lines.get(&file_idx))
+            {
                 if let Some(diff_line) = lines.get(line_idx) {
                     let line_number = diff_line
                         .new_lineno
                         .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
 
                     if let Some(comment) = self
-                        .line_comments
+                        .line_comments()
                         .iter()
                         .find(|c| c.file_path == file.path && c.line_number == line_number)
                     {
@@ -2563,7 +2867,9 @@ impl App {
 
                         match self.client.delete_line_comment(&comment_id).await {
                             Ok(_) => {
-                                self.line_comments.retain(|c| c.id != comment_id);
+                                if let Some(repo) = self.current_repo_mut() {
+                                    repo.line_comments.retain(|c| c.id != comment_id);
+                                }
                                 self.status_message = Some("Comment deleted".to_string());
                             }
                             Err(e) => {
@@ -2590,19 +2896,23 @@ impl App {
         };
 
         // Build a flat list of (file_idx, line_idx, line_number, file_path)
-        let mut all_lines: Vec<(usize, usize, i32, String)> = Vec::new();
-        for (file_idx, file) in self.diff.files.iter().enumerate() {
-            if self.diff.expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
-                    for (line_idx, diff_line) in lines.iter().enumerate() {
-                        let line_number = diff_line
-                            .new_lineno
-                            .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
-                        all_lines.push((file_idx, line_idx, line_number, file.path.clone()));
+        let all_lines: Vec<(usize, usize, i32, String)> = {
+            let Some(diff) = self.diff() else { return };
+            let mut lines = Vec::new();
+            for (file_idx, file) in diff.files.iter().enumerate() {
+                if diff.expanded.contains(&file_idx) {
+                    if let Some(diff_lines) = diff.file_lines.get(&file_idx) {
+                        for (line_idx, diff_line) in diff_lines.iter().enumerate() {
+                            let line_number = diff_line
+                                .new_lineno
+                                .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
+                            lines.push((file_idx, line_idx, line_number, file.path.clone()));
+                        }
                     }
                 }
             }
-        }
+            lines
+        };
 
         // Find current position in flat list
         let current_pos = all_lines
@@ -2613,7 +2923,10 @@ impl App {
         // Find next comment after current position
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().skip(current_pos + 1) {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                let cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                if let Some(diff) = self.diff_mut() {
+                    diff.cursor = cursor;
+                }
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2622,7 +2935,10 @@ impl App {
         // Wrap around - search from beginning
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().take(current_pos + 1) {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                let cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                if let Some(diff) = self.diff_mut() {
+                    diff.cursor = cursor;
+                }
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2641,19 +2957,23 @@ impl App {
         };
 
         // Build a flat list of (file_idx, line_idx, line_number, file_path)
-        let mut all_lines: Vec<(usize, usize, i32, String)> = Vec::new();
-        for (file_idx, file) in self.diff.files.iter().enumerate() {
-            if self.diff.expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
-                    for (line_idx, diff_line) in lines.iter().enumerate() {
-                        let line_number = diff_line
-                            .new_lineno
-                            .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
-                        all_lines.push((file_idx, line_idx, line_number, file.path.clone()));
+        let all_lines: Vec<(usize, usize, i32, String)> = {
+            let Some(diff) = self.diff() else { return };
+            let mut lines = Vec::new();
+            for (file_idx, file) in diff.files.iter().enumerate() {
+                if diff.expanded.contains(&file_idx) {
+                    if let Some(diff_lines) = diff.file_lines.get(&file_idx) {
+                        for (line_idx, diff_line) in diff_lines.iter().enumerate() {
+                            let line_number = diff_line
+                                .new_lineno
+                                .unwrap_or(diff_line.old_lineno.unwrap_or(line_idx as i32));
+                            lines.push((file_idx, line_idx, line_number, file.path.clone()));
+                        }
                     }
                 }
             }
-        }
+            lines
+        };
 
         // Find current position in flat list
         let current_pos = all_lines
@@ -2665,7 +2985,10 @@ impl App {
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().take(current_pos).rev()
         {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                let cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                if let Some(diff) = self.diff_mut() {
+                    diff.cursor = cursor;
+                }
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2675,7 +2998,10 @@ impl App {
         for (file_idx, line_idx, line_number, file_path) in all_lines.iter().skip(current_pos).rev()
         {
             if self.has_line_comment(file_path, *line_number) {
-                self.diff.cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                let cursor = self.calculate_cursor_for_line(*file_idx, *line_idx);
+                if let Some(diff) = self.diff_mut() {
+                    diff.cursor = cursor;
+                }
                 self.status_message = Some(format!("Jumped to comment at line {}", line_number));
                 return;
             }
@@ -2686,15 +3012,16 @@ impl App {
 
     /// Calculate cursor position for a specific file and line
     fn calculate_cursor_for_line(&self, target_file_idx: usize, target_line_idx: usize) -> usize {
+        let Some(diff) = self.diff() else { return 0 };
         let mut cursor = 0;
-        for (file_idx, _) in self.diff.files.iter().enumerate() {
+        for (file_idx, _) in diff.files.iter().enumerate() {
             if file_idx == target_file_idx {
                 // Found the file, add the line offset
                 return cursor + 1 + target_line_idx; // +1 for file header
             }
             cursor += 1; // File header
-            if self.diff.expanded.contains(&file_idx) {
-                if let Some(lines) = self.diff.file_lines.get(&file_idx) {
+            if diff.expanded.contains(&file_idx) {
+                if let Some(lines) = diff.file_lines.get(&file_idx) {
                     cursor += lines.len();
                 }
             }
@@ -2704,7 +3031,7 @@ impl App {
 
     /// Submit all comments as a review to Claude
     pub async fn submit_review_to_claude(&mut self) -> Result<()> {
-        if self.line_comments.is_empty() {
+        if self.line_comments().is_empty() {
             self.status_message = Some("No comments to submit".to_string());
             return Ok(());
         }
@@ -2715,7 +3042,7 @@ impl App {
         // Group comments by file
         let mut by_file: std::collections::HashMap<String, Vec<&LineCommentInfo>> =
             std::collections::HashMap::new();
-        for comment in &self.line_comments {
+        for comment in self.line_comments() {
             by_file
                 .entry(comment.file_path.clone())
                 .or_default()
@@ -2765,9 +3092,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         // Only cleanup on abnormal exit (should_quit = false means unexpected termination)
-        if !self.should_quit && !self.sessions.is_empty() {
+        if !self.should_quit && !self.sessions().is_empty() {
             let running_ids: Vec<String> = self
-                .sessions
+                .sessions()
                 .iter()
                 .filter(|s| s.status == 1) // SESSION_STATUS_RUNNING
                 .map(|s| s.id.clone())
@@ -2776,8 +3103,8 @@ impl Drop for App {
             if !running_ids.is_empty() {
                 // Drop cannot be async, so create a sync runtime
                 if let Ok(runtime) = tokio::runtime::Runtime::new() {
-                    for session_id in running_ids {
-                        let _ = runtime.block_on(self.client.stop_session(&session_id));
+                    for session_id in &running_ids {
+                        let _ = runtime.block_on(self.client.stop_session(session_id));
                     }
                 }
             }

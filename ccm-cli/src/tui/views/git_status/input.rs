@@ -25,7 +25,9 @@ pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             if let Some(file_path) = app.current_git_file_path() {
                 app.status_message = Some(format!("Opening diff for: {}", file_path));
                 // Store file path to auto-expand after loading
-                app.git.pending_diff_file = Some(file_path);
+                if let Some(git) = app.git_mut() {
+                    git.pending_diff_file = Some(file_path);
+                }
             } else {
                 app.status_message = Some("Switching to Diff panel".to_string());
             }
@@ -69,7 +71,9 @@ fn execute_git_status_action(app: &mut App, action: Action) -> Option<AsyncActio
                 app.right_panel_view = RightPanelView::Diff;
                 app.focus = Focus::DiffFiles;
                 // Store the file path to expand after loading
-                app.git.pending_diff_file = Some(file_path);
+                if let Some(git) = app.git_mut() {
+                    git.pending_diff_file = Some(file_path);
+                }
                 return Some(AsyncAction::LoadDiffFiles);
             }
             // If on a section header, toggle expand/collapse

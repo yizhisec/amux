@@ -13,7 +13,7 @@ use ratatui::{
 /// Draw repo tabs at the top
 pub fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
     let titles: Vec<Line> = app
-        .repos
+        .repos()
         .iter()
         .enumerate()
         .map(|(i, repo)| {
@@ -32,7 +32,7 @@ pub fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .title(" CCM - Claude Code Manager "),
         )
-        .select(app.repo_idx)
+        .select(app.repo_idx())
         .style(Style::default().fg(Color::White))
         .highlight_style(
             Style::default()
