@@ -117,7 +117,10 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
             Some(AsyncAction::LoadGitStatus)
         }
 
-        Action::CreateSession => Some(AsyncAction::CreateSession),
+        Action::CreateSession => {
+            app.start_create_session_input();
+            None
+        }
 
         Action::SelectProviderAndCreate => {
             // Get current repo and branch

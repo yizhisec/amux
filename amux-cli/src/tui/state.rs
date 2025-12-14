@@ -131,6 +131,12 @@ pub enum InputMode {
         selected_index: usize,
         loading: bool,
     },
+    // Creating new session with name input in status bar
+    CreateSessionInput {
+        repo_id: String,
+        branch: String,
+        provider: Option<String>,
+    },
 }
 
 /// Terminal mode (vim-style)
@@ -305,6 +311,8 @@ pub enum AsyncAction {
         branch: String,
     },
     SubmitProviderSelection,
+    // Session creation with name input
+    SubmitCreateSessionInput,
 }
 
 /// Default expanded git sections
@@ -499,6 +507,8 @@ pub struct GitState {
     pub files: Vec<GitStatusFile>,
     /// Cursor in virtual list
     pub cursor: usize,
+    /// Scroll offset for rendering
+    pub scroll_offset: usize,
     /// Expanded sections
     pub expanded_sections: HashSet<GitSection>,
     /// File to auto-expand in diff view
@@ -510,6 +520,7 @@ impl Default for GitState {
         Self {
             files: Vec::new(),
             cursor: 0,
+            scroll_offset: 0,
             expanded_sections: default_expanded_git_sections(),
             pending_diff_file: None,
         }

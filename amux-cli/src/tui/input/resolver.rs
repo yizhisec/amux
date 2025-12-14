@@ -94,7 +94,8 @@ pub fn detect_context(app: &App) -> BindingContext {
         | InputMode::EditLineComment { .. }
         | InputMode::AddTodo { .. }
         | InputMode::EditTodo { .. }
-        | InputMode::EditTodoDescription { .. } => return BindingContext::DialogText,
+        | InputMode::EditTodoDescription { .. }
+        | InputMode::CreateSessionInput { .. } => return BindingContext::DialogText,
 
         InputMode::ConfirmDelete(_)
         | InputMode::ConfirmDeleteBranch(_)

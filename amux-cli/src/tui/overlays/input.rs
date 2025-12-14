@@ -189,6 +189,16 @@ pub fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
     )
 }
 
+/// Handle input when in create session input mode (name input in status bar)
+pub fn handle_create_session_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    handle_text_input_with_actions(
+        app,
+        &key,
+        |a| a.cancel_input(),
+        |_| Some(AsyncAction::SubmitCreateSessionInput),
+    )
+}
+
 /// Handle input when in select provider mode
 pub fn handle_select_provider_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
     match key.code {

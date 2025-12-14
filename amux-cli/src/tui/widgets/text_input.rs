@@ -42,6 +42,21 @@ impl TextInput {
         self.cursor
     }
 
+    /// Get text before cursor (Unicode-safe)
+    pub fn text_before_cursor(&self) -> String {
+        self.buffer.chars().take(self.cursor).collect()
+    }
+
+    /// Get char at cursor (or None if at end)
+    pub fn char_at_cursor(&self) -> Option<char> {
+        self.buffer.chars().nth(self.cursor)
+    }
+
+    /// Get text after cursor, excluding char at cursor (Unicode-safe)
+    pub fn text_after_cursor(&self) -> String {
+        self.buffer.chars().skip(self.cursor + 1).collect()
+    }
+
     /// Get display width of text before cursor (for terminal cursor positioning)
     pub fn cursor_display_offset(&self) -> usize {
         let text_before_cursor: String = self.buffer.chars().take(self.cursor).collect();

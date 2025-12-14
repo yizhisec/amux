@@ -433,6 +433,138 @@ impl App {
         Ok(())
     }
 
+    /// Start create session input mode (prompt for session name in status bar)
+    pub fn start_create_session_input(&mut self) {
+        // Get current repo and branch
+        let (repo_id, branch) = match (
+            self.current_repo().map(|r| r.info.id.clone()),
+            self.current_worktree().map(|w| w.branch.clone()),
+        ) {
+            (Some(repo_id), Some(branch)) => (repo_id, branch),
+            _ => {
+                self.error_message = Some("No worktree selected".to_string());
+                return;
+            }
+        };
+
+        self.save_focus();
+        self.input_mode = InputMode::CreateSessionInput {
+            repo_id,
+            branch,
+            provider: None,
+        };
+        self.text_input.clear();
+    }
+
+    /// Submit create session with name from input
+    pub async fn submit_create_session_input(&mut self) -> Result<()> {
+        let (repo_id, branch, provider) = match &self.input_mode {
+            InputMode::CreateSessionInput {
+                repo_id,
+                branch,
+                provider,
+            } => (repo_id.clone(), branch.clone(), provider.clone()),
+            _ => return Ok(()),
+        };
+
+        // Get name from input (None if empty for default name)
+        let name = {
+            let trimmed = self.text_input.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        };
+
+        self.input_mode = InputMode::Normal;
+        self.text_input.clear();
+        self.restore_focus();
+
+        // Get terminal size for PTY creation
+        let (inner_rows, inner_cols) = self.get_inner_terminal_size();
+
+        // Create session with optional name and provider
+        match self
+            .client
+            .create_session(
+                &repo_id,
+                &branch,
+                name.as_deref(),
+                None,
+                None,
+                None,
+                provider.as_deref(),
+                Some(inner_rows as u32),
+                Some(inner_cols as u32),
+            )
+            .await
+        {
+            Ok(session) => {
+                // Refresh sessions for this worktree
+                let b_idx = self.branch_idx();
+                self.load_worktree_sessions(b_idx).await?;
+                // Expand worktree
+                if let Some(repo) = self.current_repo_mut() {
+                    repo.expanded_worktrees.insert(b_idx);
+                }
+                self.update_sidebar_total_items();
+
+                // Update sidebar cursor to point to the new session
+                if let Some(repo) = self.current_repo_mut() {
+                    let session_idx =
+                        repo.sessions_by_worktree.get(&b_idx).and_then(|sessions| {
+                            sessions.iter().position(|s| s.id == session.id)
+                        });
+
+                    if let Some(s_idx) = session_idx {
+                        let mut cursor_pos = 0;
+                        for wt_idx in 0..b_idx {
+                            cursor_pos += 1;
+                            if repo.expanded_worktrees.contains(&wt_idx) {
+                                if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
+                                    cursor_pos += sessions.len();
+                                }
+                            }
+                        }
+                        cursor_pos += 1;
+                        cursor_pos += s_idx;
+                        repo.sidebar_cursor = cursor_pos;
+                    }
+                }
+
+                // Disconnect current stream
+                self.disconnect_stream();
+
+                // Save current parser if there was an active session
+                if let Some(old_id) = &self.terminal.active_session_id {
+                    self.terminal
+                        .session_parsers
+                        .insert(old_id.clone(), self.terminal.parser.clone());
+                }
+
+                // Create new parser for the new session
+                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(
+                    DEFAULT_TERMINAL_ROWS,
+                    DEFAULT_TERMINAL_COLS,
+                    DEFAULT_SCROLLBACK,
+                )));
+                self.terminal
+                    .session_parsers
+                    .insert(session.id.clone(), self.terminal.parser.clone());
+                self.terminal.scroll_offset = 0;
+                self.terminal.active_session_id = Some(session.id.clone());
+
+                self.enter_terminal().await?;
+            }
+            Err(e) => {
+                self.error_message = Some(e.to_string());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create new session and enter interactive mode
     pub async fn create_new(&mut self) -> Result<()> {
         match self.focus {
