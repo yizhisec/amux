@@ -12,7 +12,7 @@ use crate::tui::overlays::dialogs::{
     draw_edit_line_comment_overlay, draw_input_overlay, draw_rename_session_overlay,
 };
 use crate::tui::state::{Focus, InputMode, RightPanelView};
-use crate::tui::tab_bar::{draw_status_bar, draw_tab_bar};
+use crate::tui::views::tab_bar::{draw_status_bar, draw_tab_bar};
 use crate::tui::views::todo::{
     draw_add_todo_overlay, draw_confirm_delete_todo_overlay, draw_edit_todo_description_overlay,
     draw_edit_todo_overlay, draw_todo_popup,

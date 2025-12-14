@@ -3,10 +3,9 @@
 mod app;
 pub mod highlight;
 mod input;
+mod layout;
 pub mod overlays;
 pub mod state;
-pub mod tab_bar;
-mod ui;
 pub mod views;
 pub mod widgets;
 
