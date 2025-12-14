@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "xtask")]
-#[command(about = "Build tasks for ccm project")]
+#[command(about = "Build tasks for amux project")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Install ccm and ccm-daemon to a bin directory
+    /// Install amux and amux-daemon to a bin directory
     Install {
         /// Custom installation path (default: ~/.cargo/bin or ~/.local/bin)
         #[arg(long)]
@@ -36,7 +36,7 @@ fn install(custom_path: Option<PathBuf>) -> Result<()> {
     // Build release binaries
     println!("Building release binaries...");
     let status = Command::new("cargo")
-        .args(["build", "--release", "-p", "ccm-cli", "-p", "ccm-daemon"])
+        .args(["build", "--release", "-p", "amux-cli", "-p", "amux-daemon"])
         .status()
         .context("Failed to run cargo build")?;
 
@@ -57,7 +57,7 @@ fn install(custom_path: Option<PathBuf>) -> Result<()> {
     let target_dir = project_root.join("target/release");
 
     // Copy binaries
-    let binaries = [("ccm", "ccm"), ("ccm-daemon", "ccm-daemon")];
+    let binaries = [("amux", "amux"), ("amux-daemon", "amux-daemon")];
 
     for (src_name, dst_name) in binaries {
         let src = target_dir.join(src_name);

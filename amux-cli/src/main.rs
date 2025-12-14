@@ -115,7 +115,7 @@ async fn main() -> Result<(), CliError> {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);
-            eprintln!("Make sure ccm-daemon is running.");
+            eprintln!("Make sure amux-daemon is running.");
             std::process::exit(1);
         }
     };

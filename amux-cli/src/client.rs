@@ -44,13 +44,13 @@ impl Client {
 
     /// Start the daemon process in background
     fn start_daemon() -> Result<()> {
-        // Try to find ccm-daemon in the same directory as current executable
+        // Try to find amux-daemon in the same directory as current executable
         let daemon_path = std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("ccm-daemon")))
+            .and_then(|p| p.parent().map(|d| d.join("amux-daemon")))
             .filter(|p| p.exists());
 
-        let daemon_cmd = daemon_path.as_deref().unwrap_or(Path::new("ccm-daemon"));
+        let daemon_cmd = daemon_path.as_deref().unwrap_or(Path::new("amux-daemon"));
 
         Command::new(daemon_cmd)
             .stdin(Stdio::null())
