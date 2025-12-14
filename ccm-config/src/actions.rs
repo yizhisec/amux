@@ -68,6 +68,8 @@ pub enum Action {
     StageAll,
     UnstageAll,
     ToggleOrOpen,
+    GitPush,
+    GitPull,
 
     // TODO
     AddTodo,
@@ -178,6 +180,8 @@ impl Action {
             "stage-all" => Some(Action::StageAll),
             "unstage-all" => Some(Action::UnstageAll),
             "toggle-or-open" => Some(Action::ToggleOrOpen),
+            "git-push" | "push" => Some(Action::GitPush),
+            "git-pull" | "pull" => Some(Action::GitPull),
 
             // TODO
             "add-todo" => Some(Action::AddTodo),
@@ -269,6 +273,8 @@ impl Action {
             Action::StageAll => "Stage All",
             Action::UnstageAll => "Unstage All",
             Action::ToggleOrOpen => "Toggle or Open",
+            Action::GitPush => "Git Push",
+            Action::GitPull => "Git Pull",
             Action::AddTodo => "Add Todo",
             Action::AddChildTodo => "Add Child Todo",
             Action::EditTodoTitle => "Edit Todo Title",

@@ -235,4 +235,42 @@ impl App {
             false
         }
     }
+
+    /// Push to remote
+    pub async fn git_push(&mut self) -> Result<()> {
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
+            let response = self.client.git_push(&repo_id, &branch).await?;
+            if response.success {
+                self.status_message = Some(response.message);
+            } else {
+                self.error_message = Some(response.message);
+            }
+        }
+        Ok(())
+    }
+
+    /// Pull from remote (fetch + rebase)
+    pub async fn git_pull(&mut self) -> Result<()> {
+        let ids = self
+            .current_repo()
+            .map(|r| r.info.id.clone())
+            .zip(self.current_worktree().map(|w| w.branch.clone()));
+
+        if let Some((repo_id, branch)) = ids {
+            let response = self.client.git_pull(&repo_id, &branch).await?;
+            if response.success {
+                self.status_message = Some(response.message);
+                // Refresh git status after pull
+                self.load_git_status().await?;
+            } else {
+                self.error_message = Some(response.message);
+            }
+        }
+        Ok(())
+    }
 }

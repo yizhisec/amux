@@ -208,6 +208,9 @@ fn default_git_status_bindings() -> HashMap<String, String> {
     map.insert("S".to_string(), "stage-all".to_string());
     map.insert("U".to_string(), "unstage-all".to_string());
 
+    map.insert("p".to_string(), "git-pull".to_string());
+    map.insert("P".to_string(), "git-push".to_string());
+
     map.insert("r".to_string(), "refresh-status".to_string());
 
     map.insert("Tab".to_string(), "focus-diff".to_string());

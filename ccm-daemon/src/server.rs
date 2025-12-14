@@ -311,6 +311,20 @@ impl CcmDaemon for CcmDaemonService {
         handlers::git_status::unstage_all(&self.state, request.into_inner()).await
     }
 
+    async fn git_push(
+        &self,
+        request: Request<GitPushRequest>,
+    ) -> Result<Response<GitPushResponse>, Status> {
+        handlers::git_status::git_push(&self.state, request.into_inner()).await
+    }
+
+    async fn git_pull(
+        &self,
+        request: Request<GitPullRequest>,
+    ) -> Result<Response<GitPullResponse>, Status> {
+        handlers::git_status::git_pull(&self.state, request.into_inner()).await
+    }
+
     // ============ TODO Operations ============
 
     async fn create_todo(

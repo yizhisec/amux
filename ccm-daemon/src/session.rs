@@ -28,6 +28,8 @@ pub struct Session {
     pub claude_session_started: bool,      // Whether Claude session has been started before
     pub name_updated_from_claude: bool,    // Whether name was updated from Claude's first message
     pub is_shell: bool,                    // Whether this is a shell-only session (no Claude)
+    pub model: Option<String>,             // Claude model to use (e.g., "haiku")
+    pub prompt: Option<String>,            // Initial prompt for Claude (only used on first start)
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
@@ -43,6 +45,8 @@ impl Session {
         worktree_path: PathBuf,
         claude_session_id: Option<String>,
         is_shell: bool,
+        model: Option<String>,
+        prompt: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -54,6 +58,8 @@ impl Session {
             claude_session_started: false, // New session, not started yet
             name_updated_from_claude: false, // Name not yet updated from Claude
             is_shell,
+            model,
+            prompt,
             pty: None,
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -74,6 +80,8 @@ impl Session {
             claude_session_started, // Restored session was likely started before
             name_updated_from_claude: meta.name_updated_from_claude,
             is_shell: meta.is_shell,
+            model: meta.model,
+            prompt: None, // Prompt is only used on first start, not restored
             pty: None, // PTY will be started on demand
             screen_buffer: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
             raw_output_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -118,11 +126,32 @@ impl Session {
                 self.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
             }
 
-            // Determine mode based on started flag
-            match &self.claude_session_id {
-                Some(id) if self.claude_session_started => ClaudeSessionMode::Resume(id.clone()),
-                Some(id) => ClaudeSessionMode::New(id.clone()),
-                None => unreachable!(), // We just set it above
+            // Determine mode based on started flag, model, and prompt
+            match (&self.claude_session_id, &self.model, self.prompt.take()) {
+                // One-shot mode: model + prompt, no session management
+                (_, Some(model), Some(prompt)) => ClaudeSessionMode::OneShot {
+                    model: model.clone(),
+                    prompt,
+                },
+                // Prompt without model - use default model
+                (_, None, Some(prompt)) => ClaudeSessionMode::OneShot {
+                    model: "sonnet".to_string(),
+                    prompt,
+                },
+                // New session with specific model
+                (Some(id), Some(model), None) if !self.claude_session_started => {
+                    ClaudeSessionMode::NewWithModel {
+                        session_id: id.clone(),
+                        model: model.clone(),
+                    }
+                }
+                // Resume existing session
+                (Some(id), _, None) if self.claude_session_started => {
+                    ClaudeSessionMode::Resume(id.clone())
+                }
+                // New session without model
+                (Some(id), _, None) => ClaudeSessionMode::New(id.clone()),
+                (None, _, _) => unreachable!(), // We just set it above
             }
         };
 

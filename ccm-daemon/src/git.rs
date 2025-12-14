@@ -1,7 +1,7 @@
 //! Git operations wrapper
 
 use crate::error::GitError;
-use git2::Repository;
+use git2::{Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 use std::path::{Path, PathBuf};
 
 /// Git repository operations
@@ -458,5 +458,124 @@ impl GitOps {
         }
 
         Ok(())
+    }
+
+    /// Create remote callbacks with SSH agent authentication
+    fn create_remote_callbacks<'a>() -> RemoteCallbacks<'a> {
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(|_url, username_from_url, allowed_types| {
+            // Try SSH agent first
+            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                let username = username_from_url.unwrap_or("git");
+                // Try SSH agent
+                if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+                    return Ok(cred);
+                }
+                // Fallback: try default SSH key locations
+                let home = std::env::var("HOME").unwrap_or_default();
+                for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+                    let key_path = PathBuf::from(&home).join(".ssh").join(key_name);
+                    if key_path.exists() {
+                        if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
+                            return Ok(cred);
+                        }
+                    }
+                }
+            }
+            // Try default credentials (for HTTPS with credential helper)
+            if allowed_types.contains(git2::CredentialType::DEFAULT) {
+                return Cred::default();
+            }
+            Err(git2::Error::from_str("no valid credentials available"))
+        });
+        callbacks
+    }
+
+    /// Push current branch to remote
+    pub fn push(repo: &Repository, remote_name: &str) -> Result<String, GitError> {
+        let head = repo.head()?;
+        let branch_name = head
+            .shorthand()
+            .ok_or(GitError::NoBranchName)?;
+
+        let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+
+        let mut remote = repo.find_remote(remote_name)?;
+        let callbacks = Self::create_remote_callbacks();
+        let mut push_opts = PushOptions::new();
+        push_opts.remote_callbacks(callbacks);
+
+        remote.push(&[&refspec], Some(&mut push_opts))?;
+
+        Ok(format!("Pushed {} to {}", branch_name, remote_name))
+    }
+
+    /// Pull (fetch + rebase) from remote
+    pub fn pull(repo: &Repository, remote_name: &str) -> Result<String, GitError> {
+        let head = repo.head()?;
+        let branch_name = head
+            .shorthand()
+            .ok_or(GitError::NoBranchName)?
+            .to_string();
+
+        // Fetch from remote
+        let mut remote = repo.find_remote(remote_name)?;
+        let callbacks = Self::create_remote_callbacks();
+        let mut fetch_opts = FetchOptions::new();
+        fetch_opts.remote_callbacks(callbacks);
+
+        let refspec = format!("refs/heads/{}", branch_name);
+        remote.fetch(&[&refspec], Some(&mut fetch_opts), None)?;
+
+        // Get the fetch head
+        let fetch_head = repo.find_reference("FETCH_HEAD")?;
+        let fetch_commit = fetch_head.peel_to_commit()?;
+
+        // Get current HEAD commit
+        let head_commit = head.peel_to_commit()?;
+
+        // Check if rebase is needed
+        if head_commit.id() == fetch_commit.id() {
+            return Ok("Already up to date".to_string());
+        }
+
+        // Find merge base
+        let merge_base = repo.merge_base(head_commit.id(), fetch_commit.id())?;
+
+        // If HEAD is ancestor of fetch, we can fast-forward
+        if merge_base == head_commit.id() {
+            // Fast-forward: just move HEAD to fetch_commit
+            let refname = format!("refs/heads/{}", branch_name);
+            repo.reference(
+                &refname,
+                fetch_commit.id(),
+                true,
+                &format!("pull: fast-forward to {}", fetch_commit.id()),
+            )?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+            return Ok(format!("Fast-forwarded to {}", &fetch_commit.id().to_string()[..7]));
+        }
+
+        // Need actual rebase - this is complex in git2, use annotated commit
+        let annotated = repo.find_annotated_commit(fetch_commit.id())?;
+
+        // Start rebase
+        let mut rebase = repo.rebase(None, Some(&annotated), None, None)?;
+
+        let signature = repo.signature()?;
+
+        // Apply each commit
+        while let Some(op) = rebase.next() {
+            let _op = op?;
+            // Commit the rebased changes
+            if let Err(e) = rebase.commit(None, &signature, None) {
+                rebase.abort()?;
+                return Err(GitError::Git(e));
+            }
+        }
+
+        rebase.finish(Some(&signature))?;
+
+        Ok(format!("Rebased onto {}", &fetch_commit.id().to_string()[..7]))
     }
 }

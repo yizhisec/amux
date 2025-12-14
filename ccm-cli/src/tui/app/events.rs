@@ -316,6 +316,12 @@ impl App {
             AsyncAction::UnstageAll => {
                 self.unstage_all().await?;
             }
+            AsyncAction::GitPush => {
+                self.git_push().await?;
+            }
+            AsyncAction::GitPull => {
+                self.git_pull().await?;
+            }
             AsyncAction::SwitchToShell => {
                 self.switch_to_shell_session().await?;
             }

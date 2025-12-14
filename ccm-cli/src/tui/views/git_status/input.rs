@@ -102,6 +102,9 @@ fn execute_git_status_action(app: &mut App, action: Action) -> Option<AsyncActio
         Action::StageAll => Some(AsyncAction::StageAll),
         Action::UnstageAll => Some(AsyncAction::UnstageAll),
 
+        Action::GitPush => Some(AsyncAction::GitPush),
+        Action::GitPull => Some(AsyncAction::GitPull),
+
         Action::RefreshStatus => Some(AsyncAction::LoadGitStatus),
 
         // Unhandled or context-inappropriate actions

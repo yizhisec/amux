@@ -444,6 +444,30 @@ impl Client {
         Ok(())
     }
 
+    /// Push to remote
+    pub async fn git_push(&mut self, repo_id: &str, branch: &str) -> Result<GitPushResponse> {
+        let response = self
+            .inner
+            .git_push(GitPushRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    /// Pull from remote (fetch + rebase)
+    pub async fn git_pull(&mut self, repo_id: &str, branch: &str) -> Result<GitPullResponse> {
+        let response = self
+            .inner
+            .git_pull(GitPullRequest {
+                repo_id: repo_id.to_string(),
+                branch: branch.to_string(),
+            })
+            .await?;
+        Ok(response.into_inner())
+    }
+
     // ============ TODO Operations ============
 
     /// Create a new TODO item

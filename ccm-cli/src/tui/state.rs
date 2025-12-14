@@ -257,6 +257,8 @@ pub enum AsyncAction {
     },
     StageAll,
     UnstageAll,
+    GitPush,
+    GitPull,
     // Shell session action
     SwitchToShell,
     // TODO actions
