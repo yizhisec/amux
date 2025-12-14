@@ -21,16 +21,26 @@ pub struct TerminalStream {
 impl App {
     /// Enter terminal Insert mode (from Sessions)
     pub async fn enter_terminal(&mut self) -> Result<()> {
-        if self.terminal.active_session_id.is_some() {
-            self.focus = Focus::Terminal;
-            self.terminal.mode = TerminalMode::Insert;
-            self.scroll_to_bottom();
+        let Some(target_session_id) = self.terminal.active_session_id.clone() else {
+            return Ok(());
+        };
 
-            // Ensure stream is connected
-            if self.terminal_stream.is_none() {
-                self.connect_stream().await?;
-            }
+        self.focus = Focus::Terminal;
+        self.terminal.mode = TerminalMode::Insert;
+        self.scroll_to_bottom();
+
+        // Check if stream is connected to the correct session
+        let needs_reconnect = match &self.terminal_stream {
+            None => true,
+            Some(stream) => stream.session_id != target_session_id,
+        };
+
+        if needs_reconnect {
+            // Disconnect old stream if any
+            self.disconnect_stream();
+            self.connect_stream().await?;
         }
+
         Ok(())
     }
 

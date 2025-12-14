@@ -241,8 +241,55 @@ impl App {
                                 repo.expanded_worktrees.insert(b_idx);
                             }
                             self.update_sidebar_total_items();
-                            // Set active session before entering terminal
+
+                            // Update sidebar cursor to point to the new session
+                            // Calculate position: worktree position + 1 + session index within worktree
+                            if let Some(repo) = self.current_repo_mut() {
+                                // Find the new session's index in sessions_by_worktree
+                                let session_idx =
+                                    repo.sessions_by_worktree.get(&b_idx).and_then(|sessions| {
+                                        sessions.iter().position(|s| s.id == session.id)
+                                    });
+
+                                if let Some(s_idx) = session_idx {
+                                    // Calculate cursor position
+                                    let mut cursor_pos = 0;
+                                    for wt_idx in 0..b_idx {
+                                        cursor_pos += 1; // worktree itself
+                                        if repo.expanded_worktrees.contains(&wt_idx) {
+                                            if let Some(sessions) =
+                                                repo.sessions_by_worktree.get(&wt_idx)
+                                            {
+                                                cursor_pos += sessions.len();
+                                            }
+                                        }
+                                    }
+                                    cursor_pos += 1; // current worktree
+                                    cursor_pos += s_idx; // session position within worktree
+
+                                    repo.sidebar_cursor = cursor_pos;
+                                }
+                            }
+
+                            // Disconnect current stream
+                            self.disconnect_stream();
+
+                            // Save current parser if there was an active session
+                            if let Some(old_id) = &self.terminal.active_session_id {
+                                self.terminal
+                                    .session_parsers
+                                    .insert(old_id.clone(), self.terminal.parser.clone());
+                            }
+
+                            // Create new parser for the new session
+                            self.terminal.parser =
+                                Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                            self.terminal
+                                .session_parsers
+                                .insert(session.id.clone(), self.terminal.parser.clone());
+                            self.terminal.scroll_offset = 0;
                             self.terminal.active_session_id = Some(session.id.clone());
+
                             self.enter_terminal().await?;
                         }
                         Err(e) => {
