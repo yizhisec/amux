@@ -128,6 +128,8 @@ message CreateSessionRequest {
     string branch = 2;
     optional string name = 3;  // Custom name (optional)
     optional bool is_shell = 4;  // true to create shell-only session (no Claude)
+    optional string model = 5;  // Claude model to use (e.g., "haiku")
+    optional string prompt = 6; // Initial prompt for Claude (only used on first start)
 }
 
 message RenameSessionRequest {

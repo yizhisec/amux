@@ -65,15 +65,32 @@ impl App {
                     "Event: SessionNameUpdated {} -> {}",
                     e.session_id, e.new_name
                 );
-                // Update session name in list
+                let mut changed = false;
+
+                // Update session name in main sessions list
                 if let Some(repo) = self.current_repo_mut() {
                     if let Some(session) = repo.sessions.iter_mut().find(|s| s.id == e.session_id) {
                         if session.name != e.new_name {
-                            session.name = e.new_name;
-                            self.dirty.sidebar = true;
-                            return None; // Name changed
+                            session.name = e.new_name.clone();
+                            changed = true;
                         }
                     }
+                }
+
+                // Also update in sidebar sessions_by_worktree (for tree view)
+                if let Some(repo) = self.current_repo_mut() {
+                    for sessions in repo.sessions_by_worktree.values_mut() {
+                        if let Some(session) = sessions.iter_mut().find(|s| s.id == e.session_id) {
+                            if session.name != e.new_name {
+                                session.name = e.new_name.clone();
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+
+                if changed {
+                    self.dirty.sidebar = true;
                 }
                 None
             }

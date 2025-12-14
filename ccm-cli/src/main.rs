@@ -11,7 +11,7 @@ mod tui;
 use client::Client;
 use error::CliError;
 use futures::stream::StreamExt;
-use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::consts::{SIGINT, SIGTERM, SIGTSTP};
 use signal_hook_tokio::Signals;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -87,10 +87,12 @@ async fn main() -> Result<(), CliError> {
     let should_exit = Arc::new(AtomicBool::new(false));
     let should_exit_signal = should_exit.clone();
 
-    let mut signals = Signals::new([SIGINT, SIGTERM])?;
+    let mut signals = Signals::new([SIGINT, SIGTERM, SIGTSTP])?;
     let signals_handle = signals.handle();
 
     // Spawn signal handler task
+    // SIGINT/SIGTERM: trigger graceful shutdown
+    // SIGTSTP: ignore (prevent suspension)
     tokio::spawn(async move {
         while let Some(signal) = signals.next().await {
             match signal {
@@ -98,6 +100,10 @@ async fn main() -> Result<(), CliError> {
                     debug!("Received signal {}, triggering shutdown", signal);
                     should_exit_signal.store(true, Ordering::Relaxed);
                     break;
+                }
+                SIGTSTP => {
+                    // Ignore Ctrl+Z - don't suspend the TUI
+                    debug!("Received SIGTSTP, ignoring");
                 }
                 _ => {}
             }
@@ -150,12 +156,8 @@ async fn main() -> Result<(), CliError> {
         }
     }
 
-    // Pass signal flag to TUI (will be checked in event loop)
-    // For now, we rely on Drop trait to handle cleanup
-    // In the future, we can check should_exit in the event loop
-
-    // Run TUI
-    tui::run_with_client(app).await?;
+    // Run TUI with signal exit flag
+    tui::run_with_client(app, should_exit).await?;
 
     // Cleanup signal handler
     signals_handle.close();

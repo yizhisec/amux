@@ -103,6 +103,8 @@ pub async fn create_session(
     // Create session with auto-generated Claude session ID
     let id = session::generate_session_id();
     let is_shell = req.is_shell.unwrap_or(false);
+    let model = req.model;
+    let prompt = req.prompt;
 
     // Shell sessions don't need Claude session ID
     let claude_session_id = if is_shell {
@@ -119,6 +121,8 @@ pub async fn create_session(
         worktree_path.clone(),
         claude_session_id.clone(),
         is_shell,
+        model,
+        prompt,
     );
 
     // Start session

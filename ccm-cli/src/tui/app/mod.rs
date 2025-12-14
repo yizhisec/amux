@@ -36,6 +36,8 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 type Result<T> = std::result::Result<T, TuiError>;
@@ -104,7 +106,7 @@ pub struct App {
     // ============ Event Subscription ============
     pub event_rx: Option<mpsc::Receiver<DaemonEvent>>,
 
-    // ============ Git Refresh Debounce ============
+    // ============ Debounce ============
     pub last_git_refresh: Option<std::time::Instant>,
 
     // ============ Prefix Key Mode ============
@@ -225,7 +227,7 @@ fn spawn_input_reader() -> mpsc::Receiver<Event> {
 }
 
 /// Run the TUI application
-pub async fn run_with_client(mut app: App) -> Result<RunResult> {
+pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Result<RunResult> {
     // Deactivate IME at startup
     deactivate_ime();
 
@@ -342,8 +344,9 @@ pub async fn run_with_client(mut app: App) -> Result<RunResult> {
             }
         }
 
-        // Check if should quit
-        if app.should_quit {
+        // Check if should quit (from app or signal handler)
+        if app.should_quit || should_exit.load(Ordering::Relaxed) {
+            app.should_quit = true; // Ensure clean shutdown
             break;
         }
     }

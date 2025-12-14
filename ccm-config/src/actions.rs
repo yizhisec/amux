@@ -182,7 +182,6 @@ impl Action {
             "toggle-or-open" => Some(Action::ToggleOrOpen),
             "git-push" | "push" => Some(Action::GitPush),
             "git-pull" | "pull" => Some(Action::GitPull),
-
             // TODO
             "add-todo" => Some(Action::AddTodo),
             "add-child-todo" => Some(Action::AddChildTodo),

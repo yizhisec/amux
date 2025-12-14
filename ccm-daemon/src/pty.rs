@@ -22,6 +22,10 @@ pub enum ClaudeSessionMode {
     New(String),
     /// Resume existing session
     Resume(String),
+    /// New session with specific ID and model (e.g., "haiku")
+    NewWithModel { session_id: String, model: String },
+    /// One-shot command with model and prompt (no session management)
+    OneShot { model: String, prompt: String },
 }
 
 /// PTY process handle
@@ -128,6 +132,27 @@ impl PtyProcess {
                             cmd.clone(),
                             CString::new("--resume").unwrap(),
                             CString::new(id).unwrap(),
+                        ];
+                        (cmd, args)
+                    }
+                    ClaudeSessionMode::NewWithModel { session_id, model } => {
+                        let cmd = CString::new("claude").unwrap();
+                        let args = vec![
+                            cmd.clone(),
+                            CString::new("--model").unwrap(),
+                            CString::new(model).unwrap(),
+                            CString::new("--session-id").unwrap(),
+                            CString::new(session_id).unwrap(),
+                        ];
+                        (cmd, args)
+                    }
+                    ClaudeSessionMode::OneShot { model, prompt } => {
+                        let cmd = CString::new("claude").unwrap();
+                        let args = vec![
+                            cmd.clone(),
+                            CString::new("--model").unwrap(),
+                            CString::new(model).unwrap(),
+                            CString::new(prompt).unwrap(),
                         ];
                         (cmd, args)
                     }

@@ -17,8 +17,12 @@ use super::super::state::Focus;
 pub fn key_event_to_pattern_string(key: KeyEvent) -> Option<String> {
     let mut modifiers = Vec::new();
 
+    // Check if this is an uppercase letter (Shift is implicit in the character)
+    let is_uppercase_letter = matches!(key.code, KeyCode::Char(c) if c.is_ascii_uppercase());
+
     // Handle modifiers in the order: Shift, Control, Alt, Meta (like tmux)
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
+    // Don't add Shift modifier for uppercase letters - it's already in the character
+    if key.modifiers.contains(KeyModifiers::SHIFT) && !is_uppercase_letter {
         modifiers.push("S");
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -36,7 +40,7 @@ pub fn key_event_to_pattern_string(key: KeyEvent) -> Option<String> {
                 'a'..='z' | 'A'..='Z' | '0'..='9' => c.to_string(),
                 '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '-' | '=' | '['
                 | ']' | '{' | '}' | ';' | ':' | '\'' | '"' | ',' | '.' | '/' | '\\' | '|' | '?'
-                | '`' | '~' => c.to_string(),
+                | '`' | '~' | '<' | '>' => c.to_string(),
                 _ => return None,
             }
         }

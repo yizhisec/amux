@@ -195,21 +195,38 @@ impl App {
         }
     }
 
-    /// Move cursor up in git status panel
+    /// Move cursor up in git status panel (with wrap-around)
     pub fn git_status_move_up(&mut self) {
         if let Some(git) = self.git_mut() {
-            if git.move_up() {
-                self.dirty.sidebar = true;
+            let len = git.virtual_len();
+            if len == 0 {
+                return;
             }
+            if git.cursor() == 0 {
+                // Wrap to bottom
+                git.set_cursor(len.saturating_sub(1));
+            } else {
+                git.move_up();
+            }
+            self.dirty.sidebar = true;
         }
     }
 
-    /// Move cursor down in git status panel
+    /// Move cursor down in git status panel (with wrap-around)
     pub fn git_status_move_down(&mut self) {
         if let Some(git) = self.git_mut() {
-            if git.move_down() {
-                self.dirty.sidebar = true;
+            let len = git.virtual_len();
+            if len == 0 {
+                return;
             }
+            let max = len.saturating_sub(1);
+            if git.cursor() >= max {
+                // Wrap to top
+                git.set_cursor(0);
+            } else {
+                git.move_down();
+            }
+            self.dirty.sidebar = true;
         }
     }
 
@@ -273,4 +290,5 @@ impl App {
         }
         Ok(())
     }
+
 }

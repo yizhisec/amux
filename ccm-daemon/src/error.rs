@@ -61,6 +61,9 @@ pub enum GitError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("git command failed: {0}")]
+    CommandFailed(String),
 }
 
 /// Errors that can occur in session operations

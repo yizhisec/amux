@@ -13,11 +13,15 @@ pub fn handle_navigation_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
 
     // Try to resolve the key to an action using the sidebar context
     if let Some(pattern_str) = resolver::key_event_to_pattern_string(key) {
+        tracing::debug!("sidebar input: pattern_str = {:?}", pattern_str);
         if let Some(action) = app
             .keybinds
             .resolve(&pattern_str, ccm_config::BindingContext::Sidebar)
         {
+            tracing::debug!("sidebar input: resolved action = {:?}", action);
             return execute_sidebar_action(app, action);
+        } else {
+            tracing::debug!("sidebar input: no action resolved for pattern {:?}", pattern_str);
         }
     }
 
@@ -132,9 +136,8 @@ fn execute_sidebar_action(app: &mut App, action: Action) -> Option<AsyncAction> 
         }
 
         Action::RenameSession if app.focus == Focus::Sidebar => {
-            if let SidebarItem::Session(_, _) = app.current_sidebar_item() {
-                app.start_rename_session();
-            }
+            tracing::debug!("RenameSession action triggered, current_sidebar_item = {:?}", app.current_sidebar_item());
+            app.start_rename_session();
             None
         }
 

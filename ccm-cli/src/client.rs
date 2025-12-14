@@ -199,6 +199,8 @@ impl Client {
         branch: &str,
         name: Option<&str>,
         is_shell: Option<bool>,
+        model: Option<&str>,
+        prompt: Option<&str>,
     ) -> Result<SessionInfo> {
         let response = self
             .inner
@@ -207,6 +209,8 @@ impl Client {
                 branch: branch.to_string(),
                 name: name.map(String::from),
                 is_shell,
+                model: model.map(String::from),
+                prompt: prompt.map(String::from),
             })
             .await?;
         Ok(response.into_inner())

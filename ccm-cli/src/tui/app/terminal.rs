@@ -352,6 +352,8 @@ impl App {
                         &current_worktree.branch,
                         Some(SHELL_SESSION_NAME),
                         Some(true),
+                        None, // no model for shell sessions
+                        None, // no prompt for shell sessions
                     )
                     .await
                 {

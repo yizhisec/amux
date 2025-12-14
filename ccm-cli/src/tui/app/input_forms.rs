@@ -52,12 +52,54 @@ impl App {
 
     /// Start rename session mode
     pub fn start_rename_session(&mut self) {
-        if let Some(session) = self.current_session().cloned() {
+        // Get session from current sidebar item (tree view uses sessions_by_worktree)
+        let item = self.current_sidebar_item();
+        tracing::debug!("start_rename_session: current_sidebar_item = {:?}", item);
+
+        let session = match item {
+            SidebarItem::Session(wt_idx, s_idx) => {
+                let repo = self.current_repo();
+                tracing::debug!(
+                    "start_rename_session: wt_idx={}, s_idx={}, repo={:?}",
+                    wt_idx,
+                    s_idx,
+                    repo.map(|r| &r.info.id)
+                );
+                if let Some(repo) = repo {
+                    tracing::debug!(
+                        "start_rename_session: sessions_by_worktree keys = {:?}",
+                        repo.sessions_by_worktree.keys().collect::<Vec<_>>()
+                    );
+                    if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
+                        tracing::debug!(
+                            "start_rename_session: found {} sessions for wt_idx={}",
+                            sessions.len(),
+                            wt_idx
+                        );
+                        sessions.get(s_idx).cloned()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => {
+                tracing::debug!("start_rename_session: not a session item");
+                None
+            }
+        };
+
+        if let Some(session) = session {
+            tracing::debug!("start_rename_session: renaming session {}", session.id);
             self.save_focus();
             self.input_mode = InputMode::RenameSession {
                 session_id: session.id.clone(),
             };
             self.text_input.set_content(session.name.clone());
+        } else {
+            tracing::debug!("start_rename_session: no session found");
+            self.error_message = Some("No session selected".to_string());
         }
     }
 
@@ -182,7 +224,7 @@ impl App {
         if let Some(repo) = self.current_repo().map(|r| r.info.clone()) {
             match self
                 .client
-                .create_session(&repo.id, &branch_name, None, None)
+                .create_session(&repo.id, &branch_name, None, None, None, None)
                 .await
             {
                 Ok(session) => {
@@ -229,7 +271,7 @@ impl App {
                 ) {
                     match self
                         .client
-                        .create_session(&repo.id, &branch.branch, None, None)
+                        .create_session(&repo.id, &branch.branch, None, None, None, None)
                         .await
                     {
                         Ok(session) => {

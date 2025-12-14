@@ -28,7 +28,7 @@ use crate::tui::app::App;
 use crate::tui::overlays::input as overlay_input;
 use crate::tui::state::{AsyncAction, Focus, InputMode, PrefixMode, TerminalMode};
 use crate::tui::views::{diff, git_status, sidebar, terminal, todo};
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 // Re-export for external use
 pub use super::widgets::TextInput;
@@ -36,6 +36,14 @@ pub use mouse::handle_mouse_sync;
 
 /// Handle keyboard input (sync version - returns async action if needed)
 pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    // Ignore Ctrl+C and Ctrl+Z at TUI level (prevent accidental exit/suspend)
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('c') | KeyCode::Char('z') => return None,
+            _ => {}
+        }
+    }
+
     // Check for prefix key - works in any context except text input
     // Use the configured prefix key from keybind map instead of hardcoded
     if resolver::is_key_the_prefix(key, &app.keybinds) && !utils::is_text_input_mode(app) {

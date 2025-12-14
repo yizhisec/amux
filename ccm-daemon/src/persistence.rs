@@ -23,6 +23,8 @@ pub struct SessionMeta {
     pub name_updated_from_claude: bool, // Whether name was updated from Claude's first message
     #[serde(default)]
     pub is_shell: bool, // Whether this is a shell-only session
+    #[serde(default)]
+    pub model: Option<String>, // Claude model to use (e.g., "haiku")
 }
 
 impl SessionMeta {
@@ -44,6 +46,7 @@ impl SessionMeta {
             claude_session_id: session.claude_session_id.clone(),
             name_updated_from_claude: session.name_updated_from_claude,
             is_shell: session.is_shell,
+            model: session.model.clone(),
         }
     }
 }

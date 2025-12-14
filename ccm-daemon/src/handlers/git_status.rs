@@ -201,11 +201,8 @@ pub async fn git_push(
         Status::not_found(format!("Worktree not found for branch: {}", req.branch))
     })?;
 
-    // Open the worktree repository
-    let wt_repo = GitOps::open(&worktree_path).map_err(|e| Status::from(DaemonError::from(e)))?;
-
-    // Push to origin
-    match GitOps::push(&wt_repo, "origin") {
+    // Push using system git
+    match GitOps::push(&worktree_path) {
         Ok(msg) => Ok(Response::new(GitPushResponse {
             success: true,
             message: msg,
@@ -236,11 +233,8 @@ pub async fn git_pull(
         Status::not_found(format!("Worktree not found for branch: {}", req.branch))
     })?;
 
-    // Open the worktree repository
-    let wt_repo = GitOps::open(&worktree_path).map_err(|e| Status::from(DaemonError::from(e)))?;
-
-    // Pull from origin
-    match GitOps::pull(&wt_repo, "origin") {
+    // Pull using system git
+    match GitOps::pull(&worktree_path) {
         Ok(msg) => Ok(Response::new(GitPullResponse {
             success: true,
             message: msg,
