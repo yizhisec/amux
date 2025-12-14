@@ -5,8 +5,10 @@ use crate::error::{DaemonError, SessionError};
 use crate::events::EventBroadcaster;
 use crate::git::GitOps;
 use crate::persistence;
+use crate::providers::ProviderRef;
 use crate::session::{self, Session, SessionStatus};
 use crate::state::SharedState;
+use amux_config::{DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
 use amux_proto::daemon::*;
 use tonic::{Response, Status};
 
@@ -23,13 +25,13 @@ pub async fn list_sessions(
     state: &SharedState,
     req: ListSessionsRequest,
 ) -> Result<Response<ListSessionsResponse>, Status> {
-    // Try to update session names from Claude's first message
+    // Try to update session names from provider's first message
     {
         let mut state = state.write().await;
         for session in state.sessions.values_mut() {
-            if !session.name_updated_from_claude {
-                session.update_name_from_claude();
-                if session.name_updated_from_claude {
+            if !session.name_updated_from_provider {
+                session.update_name_from_provider();
+                if session.name_updated_from_provider {
                     let _ = persistence::save_session_meta(session);
                 }
             }
@@ -54,8 +56,9 @@ pub async fn list_sessions(
                 SessionStatus::Running => session_status::SessionStatus::Running as i32,
                 SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
             },
-            claude_session_id: s.claude_session_id.clone(),
-            is_shell: Some(s.is_shell),
+            provider_session_id: s.provider_session_id().map(|s| s.to_string()),
+            is_shell: Some(s.is_shell()),
+            provider: Some(s.provider.clone()),
         })
         .collect();
 
@@ -82,7 +85,28 @@ pub async fn create_session(
         }
     };
 
-    // Generate session name
+    // Create session with auto-generated provider session ID
+    let id = session::generate_session_id();
+    let is_shell = req.is_shell.unwrap_or(false);
+    let prompt = req.prompt;
+
+    // Validate provider and model for non-shell sessions
+    let (provider, model) = if is_shell {
+        // Shell sessions don't use providers
+        ("shell".to_string(), None)
+    } else {
+        // Validate provider and model using cached registry
+        let provider_ref = ProviderRef::new(
+            &state_guard.provider_registry,
+            req.provider.as_deref(),
+            req.model.as_deref(),
+        )
+        .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        (provider_ref.name, Some(provider_ref.model))
+    };
+
+    // Generate session name based on provider (e.g., claude-1, codex-2)
     let existing_names: Vec<String> = state_guard
         .sessions
         .values()
@@ -93,16 +117,13 @@ pub async fn create_session(
     let name = req
         .name
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| session::generate_session_name(&req.branch, &existing_names));
+        .unwrap_or_else(|| session::generate_session_name(&provider, &existing_names));
 
-    // Create session with auto-generated Claude session ID
-    let id = session::generate_session_id();
-    let is_shell = req.is_shell.unwrap_or(false);
-    let model = req.model;
-    let prompt = req.prompt;
+    // Debug: log the provider being used
+    tracing::info!("Creating session with provider: {}, model: {:?}", provider, model);
 
-    // Shell sessions don't need Claude session ID
-    let claude_session_id = if is_shell {
+    // Shell sessions don't need provider session ID
+    let provider_session_id = if is_shell {
         None
     } else {
         Some(uuid::Uuid::new_v4().to_string())
@@ -114,15 +135,18 @@ pub async fn create_session(
         req.repo_id.clone(),
         req.branch.clone(),
         worktree_path.clone(),
-        claude_session_id.clone(),
+        provider,
+        provider_session_id.clone(),
         is_shell,
         model,
         prompt,
     );
 
-    // Start session
+    // Start session with provided size (or defaults)
+    let rows = req.rows.map(|r| r as u16).unwrap_or(DEFAULT_TERMINAL_ROWS);
+    let cols = req.cols.map(|c| c as u16).unwrap_or(DEFAULT_TERMINAL_COLS);
     session
-        .start()
+        .start_with_size(&state_guard.provider_registry, rows, cols)
         .map_err(|e| Status::from(DaemonError::Session(SessionError::Start(e.to_string()))))?;
 
     let info = SessionInfo {
@@ -132,8 +156,9 @@ pub async fn create_session(
         branch: session.branch.clone(),
         worktree_path: session.worktree_path.to_string_lossy().to_string(),
         status: session_status::SessionStatus::Running as i32,
-        claude_session_id,
-        is_shell: Some(session.is_shell),
+        provider_session_id,
+        is_shell: Some(session.is_shell()),
+        provider: Some(session.provider.clone()),
     };
 
     // Save session metadata to disk
@@ -165,7 +190,7 @@ pub async fn rename_session(
 
     let old_name = session.name.clone();
     session.name = req.new_name.clone();
-    session.name_updated_from_claude = true; // Mark as manually updated
+    session.name_updated_from_provider = true; // Mark as manually updated
 
     // Save updated metadata
     if let Err(e) = persistence::save_session_meta(session) {
@@ -182,8 +207,9 @@ pub async fn rename_session(
             SessionStatus::Running => session_status::SessionStatus::Running as i32,
             SessionStatus::Stopped => session_status::SessionStatus::Stopped as i32,
         },
-        claude_session_id: session.claude_session_id.clone(),
-        is_shell: Some(session.is_shell),
+        provider_session_id: session.provider_session_id().map(|s| s.to_string()),
+        is_shell: Some(session.is_shell()),
+        provider: Some(session.provider.clone()),
     };
 
     // Emit session name updated event

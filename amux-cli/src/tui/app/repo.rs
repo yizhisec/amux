@@ -3,6 +3,7 @@
 use super::super::state::{AsyncAction, RepoState};
 use super::super::App;
 use crate::error::TuiError;
+use amux_config::{DEFAULT_SCROLLBACK, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
 use amux_proto::daemon::{LineCommentInfo, RepoInfo, SessionInfo, WorktreeInfo};
 use std::sync::{Arc, Mutex};
 use tracing::debug;
@@ -323,11 +324,11 @@ impl App {
                     .terminal
                     .session_parsers
                     .entry(new_id.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))))
+                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK))))
                     .clone();
             } else {
                 // No session selected, use a fresh parser
-                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)));
             }
 
             self.terminal.scroll_offset = 0;

@@ -188,3 +188,53 @@ pub fn handle_input_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncActio
         |_| Some(AsyncAction::SubmitInput),
     )
 }
+
+/// Handle input when in select provider mode
+pub fn handle_select_provider_mode_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
+    match key.code {
+        // Cancel
+        KeyCode::Esc => {
+            app.cancel_input();
+            None
+        }
+        // Confirm selection (unless loading)
+        KeyCode::Enter => {
+            if let InputMode::SelectProvider { loading, .. } = &app.input_mode {
+                if *loading {
+                    return None; // Ignore Enter while loading
+                }
+            }
+            Some(AsyncAction::SubmitProviderSelection)
+        }
+        // Navigate up in provider list (unless loading)
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let InputMode::SelectProvider {
+                selected_index,
+                loading,
+                ..
+            } = &mut app.input_mode
+            {
+                if !*loading && *selected_index > 0 {
+                    *selected_index -= 1;
+                }
+            }
+            None
+        }
+        // Navigate down in provider list (unless loading)
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let InputMode::SelectProvider {
+                selected_index,
+                providers,
+                loading,
+                ..
+            } = &mut app.input_mode
+            {
+                if !*loading && *selected_index + 1 < providers.len() {
+                    *selected_index += 1;
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}

@@ -425,6 +425,71 @@ pub fn draw_add_line_comment_overlay(
     f.set_cursor_position((cursor_x, cursor_y));
 }
 
+/// Draw select provider overlay for new session
+pub fn draw_select_provider_overlay(
+    f: &mut Frame,
+    area: Rect,
+    providers: &[String],
+    selected_index: usize,
+    loading: bool,
+) {
+    // Calculate popup size based on content
+    let popup_height = (providers.len() + 4).min(15) as u16; // +4 for borders, title, instructions
+    let popup_width = 50.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
+    let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Split popup into sections
+    let inner = popup_area.inner(ratatui::layout::Margin::new(1, 1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Instructions
+            Constraint::Min(1),    // Provider list
+        ])
+        .split(inner);
+
+    // Draw border with background to cover underlying content
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan).bg(Color::Black))
+        .style(Style::default().bg(Color::Black))
+        .title(" Select Provider (j/k=select, Enter=create, Esc=cancel) ");
+    f.render_widget(block, popup_area);
+
+    // Instructions
+    let instructions_text = if loading {
+        "Loading providers...".to_string()
+    } else {
+        "Select AI provider for new session:".to_string()
+    };
+    let instructions = Paragraph::new(instructions_text)
+        .style(Style::default().fg(Color::DarkGray).bg(Color::Black));
+    f.render_widget(instructions, chunks[0]);
+
+    // Provider list
+    let items: Vec<ListItem> = providers
+        .iter()
+        .enumerate()
+        .map(|(i, provider)| {
+            let is_selected = i == selected_index;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .bg(Color::Black)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White).bg(Color::Black)
+            };
+            let prefix = if is_selected { "> " } else { "  " };
+            ListItem::new(format!("{}{}", prefix, provider)).style(style)
+        })
+        .collect();
+    let list = List::new(items).style(Style::default().bg(Color::Black));
+    f.render_widget(list, chunks[1]);
+}
+
 /// Draw edit line comment overlay
 pub fn draw_edit_line_comment_overlay(
     f: &mut Frame,

@@ -8,6 +8,7 @@ name = "amux-daemon"
 path = "src/main.rs"
 
 [dependencies]
+amux-config = { path = "../amux-config" }
 amux-proto = { path = "../amux-proto" }
 tokio.workspace = true
 tonic.workspace = true

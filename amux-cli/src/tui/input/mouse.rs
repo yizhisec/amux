@@ -2,6 +2,7 @@
 
 use super::super::app::App;
 use super::super::state::{Focus, RightPanelView};
+use amux_config::DEFAULT_TERMINAL_COLS;
 use crossterm::event::{MouseEvent, MouseEventKind};
 
 /// Handle mouse events (sync version)
@@ -10,7 +11,7 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
     // Determine which area the mouse is over based on x position
     // Layout: 25% sidebar (left), 75% main content (right)
     // We use a simple heuristic: x < 25% of terminal width = sidebar
-    let terminal_width = app.terminal.cols.unwrap_or(80);
+    let terminal_width = app.terminal.cols.unwrap_or(DEFAULT_TERMINAL_COLS);
     let sidebar_width = terminal_width / 4; // ~25%
     let in_sidebar = mouse.column < sidebar_width;
 

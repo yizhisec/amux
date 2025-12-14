@@ -1,7 +1,7 @@
 //! Session persistence - save and restore sessions across daemon restarts
 
 use crate::error::PersistenceError;
-use crate::session::Session;
+use crate::session::{Session, SessionKind};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,14 +17,28 @@ pub struct SessionMeta {
     pub worktree_path: PathBuf,
     pub created_at: u64,
     pub updated_at: u64,
+
+    // Provider fields
+    #[serde(default = "default_provider")]
+    pub provider: String, // AI provider name (e.g., "claude", "codex")
+
+    // New SessionKind field (preferred format)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<SessionKind>,
+
+    // Legacy fields for backward compatibility (will be converted to SessionKind on load)
+    #[serde(default, alias = "claude_session_id")]
+    pub provider_session_id: Option<String>,
+    #[serde(default, alias = "name_updated_from_claude")]
+    pub name_updated_from_provider: bool,
     #[serde(default)]
-    pub claude_session_id: Option<String>, // Associated Claude Code session ID
+    pub is_shell: bool,
     #[serde(default)]
-    pub name_updated_from_claude: bool, // Whether name was updated from Claude's first message
-    #[serde(default)]
-    pub is_shell: bool, // Whether this is a shell-only session
-    #[serde(default)]
-    pub model: Option<String>, // Claude model to use (e.g., "haiku")
+    pub model: Option<String>,
+}
+
+fn default_provider() -> String {
+    "claude".to_string()
 }
 
 impl SessionMeta {
@@ -35,6 +49,15 @@ impl SessionMeta {
             .unwrap()
             .as_secs();
 
+        // Extract legacy fields for backward compatibility
+        let (provider_session_id, is_shell) = match &session.kind {
+            SessionKind::Interactive { provider_session_id, .. } => {
+                (Some(provider_session_id.clone()), false)
+            }
+            SessionKind::Shell => (None, true),
+            SessionKind::OneShot => (None, false),
+        };
+
         Self {
             id: session.id.clone(),
             name: session.name.clone(),
@@ -43,9 +66,11 @@ impl SessionMeta {
             worktree_path: session.worktree_path.clone(),
             created_at: now,
             updated_at: now,
-            claude_session_id: session.claude_session_id.clone(),
-            name_updated_from_claude: session.name_updated_from_claude,
-            is_shell: session.is_shell,
+            provider: session.provider.clone(),
+            kind: Some(session.kind.clone()),
+            provider_session_id,
+            name_updated_from_provider: session.name_updated_from_provider,
+            is_shell,
             model: session.model.clone(),
         }
     }
@@ -80,8 +105,13 @@ pub fn ensure_sessions_dir() -> Result<(), PersistenceError> {
     Ok(())
 }
 
-/// Save session metadata
+/// Save session metadata (skips OneShot sessions)
 pub fn save_session_meta(session: &Session) -> Result<(), PersistenceError> {
+    // OneShot sessions should not be persisted
+    if !session.kind.should_persist() {
+        return Ok(());
+    }
+
     ensure_sessions_dir()?;
 
     let dir = session_dir(&session.id);

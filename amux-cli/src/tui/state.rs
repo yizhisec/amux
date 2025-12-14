@@ -123,6 +123,14 @@ pub enum InputMode {
         todo_id: String,
         title: String,
     },
+    // Provider selection for new session (with loading state)
+    SelectProvider {
+        repo_id: String,
+        branch: String,
+        providers: Vec<String>,
+        selected_index: usize,
+        loading: bool,
+    },
 }
 
 /// Terminal mode (vim-style)
@@ -291,6 +299,12 @@ pub enum AsyncAction {
         new_order: i32,
         new_parent_id: Option<String>,
     },
+    // Provider selection
+    FetchProviders {
+        repo_id: String,
+        branch: String,
+    },
+    SubmitProviderSelection,
 }
 
 /// Default expanded git sections
@@ -306,6 +320,7 @@ pub fn default_expanded_git_sections() -> HashSet<GitSection> {
 // These types group related fields from App for better organization.
 // They are designed to be used as embedded structs within App.
 
+use amux_config::{DEFAULT_SCROLLBACK, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
 use amux_proto::daemon::{
     DiffFileInfo, DiffLine, LineCommentInfo, RepoInfo, SessionInfo, TodoItem, WorktreeInfo,
 };
@@ -443,7 +458,11 @@ pub struct TerminalState {
 impl Default for TerminalState {
     fn default() -> Self {
         Self {
-            parser: Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000))),
+            parser: Arc::new(Mutex::new(vt100::Parser::new(
+                DEFAULT_TERMINAL_ROWS,
+                DEFAULT_TERMINAL_COLS,
+                DEFAULT_SCROLLBACK,
+            ))),
             session_parsers: HashMap::new(),
             active_session_id: None,
             session_before_shell: None,

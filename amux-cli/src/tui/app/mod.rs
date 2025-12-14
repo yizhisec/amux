@@ -282,13 +282,30 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                 }
             }
 
-            // 2. Terminal PTY output - just process data, no flags needed
+            // 2. Terminal PTY output - process data and handle terminal queries
             Some(data) = async {
                 match app.terminal_stream.as_mut() {
                     Some(stream) => stream.output_rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
+                // Debug: log escape sequences in received data
+                if data.contains(&0x1b) {
+                    let escaped: String = data.iter().map(|&b| {
+                        if b == 0x1b { "ESC".to_string() }
+                        else if b < 32 { format!("^{}", (b + 64) as char) }
+                        else { (b as char).to_string() }
+                    }).collect();
+                    tracing::debug!("PTY output contains escape: {}", escaped);
+                }
+
+                // Check for terminal query sequences and respond
+                if let Some(response) = detect_terminal_query(&data, &app.terminal.parser) {
+                    tracing::debug!("Detected terminal query, sending response: {:?}", response);
+                    // Send response back to PTY
+                    let _ = app.send_to_terminal(response).await;
+                }
+
                 if let Ok(mut parser) = app.terminal.parser.lock() {
                     parser.process(&data);
                 }
@@ -368,4 +385,100 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
     activate_ime();
 
     Ok(RunResult::Quit)
+}
+
+/// Detect terminal query sequences and generate appropriate responses
+/// Returns the combined response to send back to the PTY, if any
+fn detect_terminal_query(
+    data: &[u8],
+    parser: &std::sync::Arc<std::sync::Mutex<vt100::Parser>>,
+) -> Option<Vec<u8>> {
+    // Look for common terminal query sequences:
+    // CSI 6 n - Device Status Report (cursor position query)
+    // CSI ? 6 n - DECXCPR (extended cursor position)
+    // CSI c - Device Attributes (DA1)
+    // CSI > c - Secondary Device Attributes (DA2)
+    // CSI ? u - Kitty keyboard protocol query
+
+    let csi_6n = b"\x1b[6n";           // Cursor position query
+    let csi_0c = b"\x1b[c";            // DA1
+    let csi_0_c = b"\x1b[0c";          // DA1 variant
+    let csi_gt_c = b"\x1b[>c";         // DA2 (Secondary Device Attributes)
+    let csi_gt_0c = b"\x1b[>0c";       // DA2 variant
+    let csi_qmark_u = b"\x1b[?u";      // Kitty keyboard protocol query
+    let osc_10_query = b"\x1b]10;?\x1b\\";  // OSC 10 foreground color query (ST terminator)
+    let osc_10_query_bel = b"\x1b]10;?\x07"; // OSC 10 foreground color query (BEL terminator)
+    let osc_11_query = b"\x1b]11;?\x1b\\";  // OSC 11 background color query (ST terminator)
+    let osc_11_query_bel = b"\x1b]11;?\x07"; // OSC 11 background color query (BEL terminator)
+
+    let mut responses: Vec<u8> = Vec::new();
+
+    // Check for cursor position query (CSI 6 n)
+    if contains_sequence(data, csi_6n) {
+        // Get cursor position from parser
+        let (row, col) = if let Ok(p) = parser.lock() {
+            let screen = p.screen();
+            (
+                screen.cursor_position().0 as u16 + 1,
+                screen.cursor_position().1 as u16 + 1,
+            )
+        } else {
+            (1, 1) // Default to 1,1 if we can't get position
+        };
+        tracing::debug!("Responding to CSI 6n with position ({}, {})", row, col);
+        responses.extend(format!("\x1b[{};{}R", row, col).into_bytes());
+    }
+
+    // Check for Device Attributes query (CSI c or CSI 0 c)
+    if contains_sequence(data, csi_0c) || contains_sequence(data, csi_0_c) {
+        // Respond as VT100 compatible terminal with advanced video
+        // ESC [ ? 1 ; 2 c means "VT100 with Advanced Video Option"
+        tracing::debug!("Responding to DA1 query");
+        responses.extend(b"\x1b[?1;2c");
+    }
+
+    // Check for Secondary Device Attributes query (CSI > c or CSI > 0 c)
+    if contains_sequence(data, csi_gt_c) || contains_sequence(data, csi_gt_0c) {
+        // Respond as xterm-compatible: ESC [ > 41 ; version ; 0 c
+        // 41 = xterm, version = 0 (unknown), 0 = no keyboard type
+        tracing::debug!("Responding to DA2 query");
+        responses.extend(b"\x1b[>41;0;0c");
+    }
+
+    // Check for Kitty keyboard protocol query
+    if contains_sequence(data, csi_qmark_u) {
+        // Respond with flags=0 (no enhanced keyboard)
+        tracing::debug!("Responding to Kitty keyboard query");
+        responses.extend(b"\x1b[?0u");
+    }
+
+    // Check for OSC 10 foreground color query
+    if contains_sequence(data, osc_10_query) || contains_sequence(data, osc_10_query_bel) {
+        // Respond with a default light gray foreground color
+        // Format: OSC 10 ; rgb:RR/GG/BB ST
+        tracing::debug!("Responding to OSC 10 foreground color query");
+        responses.extend(b"\x1b]10;rgb:d0/d0/d0\x1b\\");
+    }
+
+    // Check for OSC 11 background color query
+    if contains_sequence(data, osc_11_query) || contains_sequence(data, osc_11_query_bel) {
+        // Respond with a default dark background color
+        // Format: OSC 11 ; rgb:RR/GG/BB ST
+        tracing::debug!("Responding to OSC 11 background color query");
+        responses.extend(b"\x1b]11;rgb:1e/1e/1e\x1b\\");
+    }
+
+    if responses.is_empty() {
+        None
+    } else {
+        Some(responses)
+    }
+}
+
+/// Check if data contains a specific byte sequence
+fn contains_sequence(data: &[u8], pattern: &[u8]) -> bool {
+    if pattern.is_empty() || data.len() < pattern.len() {
+        return false;
+    }
+    data.windows(pattern.len()).any(|w| w == pattern)
 }

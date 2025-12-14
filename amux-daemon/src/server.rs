@@ -81,6 +81,15 @@ impl CcmDaemonService {
 
 #[tonic::async_trait]
 impl CcmDaemon for CcmDaemonService {
+    // ============ Provider Management ============
+
+    async fn list_providers(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<ListProvidersResponse>, Status> {
+        handlers::provider::list_providers(&self.state).await
+    }
+
     // ============ Repo Management ============
 
     async fn add_repo(

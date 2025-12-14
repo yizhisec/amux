@@ -8,6 +8,7 @@ pub mod comments;
 pub mod diff;
 pub mod events;
 pub mod git_status;
+pub mod provider;
 pub mod repo;
 pub mod session;
 pub mod todo;

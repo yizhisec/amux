@@ -1,6 +1,5 @@
 //! Amux Daemon - Claude Code Manager Daemon
 
-mod claude_session;
 mod diff;
 pub mod error;
 mod events;
@@ -8,6 +7,7 @@ mod file_watcher;
 mod git;
 mod handlers;
 mod persistence;
+pub mod providers;
 mod pty;
 mod repo;
 mod review;
@@ -137,13 +137,13 @@ async fn main() -> Result<()> {
             let mut state_guard = state_for_bg.write().await;
             for session in state_guard.sessions.values_mut() {
                 // Skip shell sessions - they don't have Claude names
-                if session.is_shell {
+                if session.is_shell() {
                     continue;
                 }
-                if !session.name_updated_from_claude {
+                if !session.name_updated_from_provider {
                     let old_name = session.name.clone();
-                    session.update_name_from_claude();
-                    if session.name_updated_from_claude {
+                    session.update_name_from_provider();
+                    if session.name_updated_from_provider {
                         let _ = persistence::save_session_meta(session);
                         // Emit name updated event
                         events_for_bg.emit_session_name_updated(

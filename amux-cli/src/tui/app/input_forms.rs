@@ -6,6 +6,7 @@ use super::super::state::{
 use super::super::widgets::VirtualList;
 use super::super::App;
 use crate::error::TuiError;
+use amux_config::{DEFAULT_SCROLLBACK, DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS};
 use std::sync::{Arc, Mutex};
 
 type Result<T> = std::result::Result<T, TuiError>;
@@ -60,6 +61,165 @@ impl App {
         self.input_mode = InputMode::AddWorktree { base_branch };
         self.text_input.clear();
         self.set_add_worktree_idx(0);
+    }
+
+    /// Start select provider mode for new session creation
+    pub fn start_select_provider(&mut self, repo_id: String, branch: String) {
+        self.save_focus();
+        self.input_mode = InputMode::SelectProvider {
+            repo_id,
+            branch,
+            providers: vec![],
+            selected_index: 0,
+            loading: true,
+        };
+    }
+
+    /// Fetch available providers from daemon
+    pub async fn fetch_providers(&mut self, _repo_id: &str, _branch: &str) -> Result<()> {
+        match self.client.list_providers().await {
+            Ok(provider_infos) => {
+                let provider_names: Vec<String> = provider_infos.iter().map(|p| p.name.clone()).collect();
+                let provider_count = provider_names.len();
+
+                // Update the input mode with fetched providers
+                if let InputMode::SelectProvider {
+                    ref mut providers,
+                    ref mut loading,
+                    ..
+                } = &mut self.input_mode
+                {
+                    *providers = provider_names;
+                    *loading = false;
+
+                    if providers.is_empty() {
+                        self.status_message = Some("No providers available".to_string());
+                        self.input_mode = InputMode::Normal;
+                        self.restore_focus();
+                    } else {
+                        self.status_message = Some(format!("Loaded {} providers", provider_count));
+                    }
+                }
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Failed to fetch providers: {}", e));
+                self.input_mode = InputMode::Normal;
+                self.restore_focus();
+            }
+        }
+        Ok(())
+    }
+
+    /// Submit provider selection and create session
+    pub async fn submit_provider_selection(&mut self) -> Result<()> {
+        let (repo_id, branch, provider) = match &self.input_mode {
+            InputMode::SelectProvider {
+                repo_id,
+                branch,
+                providers,
+                selected_index,
+                loading,
+            } => {
+                if *loading {
+                    return Ok(()); // Still loading, ignore submit
+                }
+
+                if providers.is_empty() {
+                    self.status_message = Some("No provider selected".to_string());
+                    return Ok(());
+                }
+
+                let provider = providers.get(*selected_index).cloned().unwrap_or_else(|| {
+                    // Should not happen if providers is not empty
+                    providers.first().cloned().unwrap_or_default()
+                });
+
+                if provider.is_empty() {
+                    self.status_message = Some("Invalid provider selected".to_string());
+                    return Ok(());
+                }
+
+                (repo_id.clone(), branch.clone(), provider)
+            }
+            _ => return Ok(()),
+        };
+
+        self.input_mode = InputMode::Normal;
+        self.restore_focus();
+
+        // Update status message to show which provider was selected
+        self.status_message = Some(format!("Creating session with {}...", provider));
+
+        // Get terminal size for PTY creation
+        let (inner_rows, inner_cols) = self.get_inner_terminal_size();
+
+        // Create session with selected provider
+        match self
+            .client
+            .create_session(&repo_id, &branch, None, None, None, None, Some(&provider), Some(inner_rows as u32), Some(inner_cols as u32))
+            .await
+        {
+            Ok(session) => {
+                // Refresh sessions for this worktree
+                let b_idx = self.branch_idx();
+                self.load_worktree_sessions(b_idx).await?;
+                // Expand worktree
+                if let Some(repo) = self.current_repo_mut() {
+                    repo.expanded_worktrees.insert(b_idx);
+                }
+                self.update_sidebar_total_items();
+
+                // Update sidebar cursor to point to the new session
+                if let Some(repo) = self.current_repo_mut() {
+                    let session_idx =
+                        repo.sessions_by_worktree.get(&b_idx).and_then(|sessions| {
+                            sessions.iter().position(|s| s.id == session.id)
+                        });
+
+                    if let Some(s_idx) = session_idx {
+                        let mut cursor_pos = 0;
+                        for wt_idx in 0..b_idx {
+                            cursor_pos += 1;
+                            if repo.expanded_worktrees.contains(&wt_idx) {
+                                if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx)
+                                {
+                                    cursor_pos += sessions.len();
+                                }
+                            }
+                        }
+                        cursor_pos += 1;
+                        cursor_pos += s_idx;
+                        repo.sidebar_cursor = cursor_pos;
+                    }
+                }
+
+                // Disconnect current stream
+                self.disconnect_stream();
+
+                // Save current parser if there was an active session
+                if let Some(old_id) = &self.terminal.active_session_id {
+                    self.terminal
+                        .session_parsers
+                        .insert(old_id.clone(), self.terminal.parser.clone());
+                }
+
+                // Create new parser for the new session
+                self.terminal.parser =
+                    Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)));
+                self.terminal
+                    .session_parsers
+                    .insert(session.id.clone(), self.terminal.parser.clone());
+                self.terminal.scroll_offset = 0;
+                self.terminal.active_session_id = Some(session.id.clone());
+
+                self.enter_terminal().await?;
+            }
+            Err(e) => {
+                self.error_message = Some(e.to_string());
+            }
+        }
+
+        Ok(())
     }
 
     /// Start rename session mode
@@ -234,9 +394,10 @@ impl App {
 
         // Create session (will auto-create worktree if needed)
         if let Some(repo) = self.current_repo().map(|r| r.info.clone()) {
+            let (inner_rows, inner_cols) = self.get_inner_terminal_size();
             match self
                 .client
-                .create_session(&repo.id, &branch_name, None, None, None, None)
+                .create_session(&repo.id, &branch_name, None, None, None, None, None, Some(inner_rows as u32), Some(inner_cols as u32))
                 .await
             {
                 Ok(session) => {
@@ -281,9 +442,10 @@ impl App {
                     self.current_repo().map(|r| r.info.clone()),
                     self.current_worktree().cloned(),
                 ) {
+                    let (inner_rows, inner_cols) = self.get_inner_terminal_size();
                     match self
                         .client
-                        .create_session(&repo.id, &branch.branch, None, None, None, None)
+                        .create_session(&repo.id, &branch.branch, None, None, None, None, None, Some(inner_rows as u32), Some(inner_cols as u32))
                         .await
                     {
                         Ok(session) => {
@@ -337,7 +499,7 @@ impl App {
 
                             // Create new parser for the new session
                             self.terminal.parser =
-                                Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)));
+                                Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)));
                             self.terminal
                                 .session_parsers
                                 .insert(session.id.clone(), self.terminal.parser.clone());
@@ -656,7 +818,7 @@ impl App {
                             .session_parsers
                             .entry(new_id.clone())
                             .or_insert_with(|| {
-                                Arc::new(Mutex::new(vt100::Parser::new(24, 80, 10000)))
+                                Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)))
                             })
                             .clone();
 

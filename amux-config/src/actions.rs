@@ -43,6 +43,7 @@ pub enum Action {
 
     // Session management
     CreateSession,
+    SelectProviderAndCreate, // Show provider selection form before creating session
     RenameSession,
     DeleteCurrent,
     SwitchToShell,
@@ -150,6 +151,7 @@ impl Action {
 
             // Session management
             "create-session" | "new-session" => Some(Action::CreateSession),
+            "select-provider-and-create" | "select-provider" => Some(Action::SelectProviderAndCreate),
             "rename-session" => Some(Action::RenameSession),
             "delete-current" | "delete" => Some(Action::DeleteCurrent),
             "switch-to-shell" => Some(Action::SwitchToShell),
@@ -253,6 +255,7 @@ impl Action {
             Action::ScrollTop => "Scroll Top",
             Action::ScrollBottom => "Scroll Bottom",
             Action::CreateSession => "Create Session",
+            Action::SelectProviderAndCreate => "Select Provider",
             Action::RenameSession => "Rename Session",
             Action::DeleteCurrent => "Delete Current",
             Action::SwitchToShell => "Switch to Shell",

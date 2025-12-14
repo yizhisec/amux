@@ -22,9 +22,111 @@ pub struct Config {
     #[serde(default)]
     pub bindings: Bindings,
 
+    /// AI provider configuration
+    #[serde(default)]
+    pub providers: ProvidersConfig,
+
     /// Source files to load (for modularity)
     #[serde(default)]
     pub source: Vec<String>,
+}
+
+/// AI Provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvidersConfig {
+    /// Default provider to use when creating sessions
+    #[serde(default = "default_provider")]
+    pub default: String,
+
+    /// Claude provider settings
+    #[serde(default)]
+    pub claude: ClaudeConfig,
+
+    /// Codex provider settings
+    #[serde(default)]
+    pub codex: CodexConfig,
+}
+
+/// Claude provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeConfig {
+    /// Whether Claude provider is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Command path for Claude CLI
+    #[serde(default = "default_claude_command")]
+    pub command: String,
+
+    /// Default model to use
+    #[serde(default = "default_claude_model")]
+    pub model: String,
+}
+
+/// OpenAI Codex provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexConfig {
+    /// Whether Codex provider is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Command path for Codex CLI
+    #[serde(default = "default_codex_command")]
+    pub command: String,
+
+    /// Default model to use
+    #[serde(default = "default_codex_model")]
+    pub model: String,
+}
+
+fn default_provider() -> String {
+    "claude".to_string()
+}
+
+fn default_claude_command() -> String {
+    "claude".to_string()
+}
+
+fn default_claude_model() -> String {
+    "sonnet".to_string()
+}
+
+fn default_codex_command() -> String {
+    "codex".to_string()
+}
+
+fn default_codex_model() -> String {
+    "o4-mini".to_string()
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            default: default_provider(),
+            claude: ClaudeConfig::default(),
+            codex: CodexConfig::default(),
+        }
+    }
+}
+
+impl Default for ClaudeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            command: default_claude_command(),
+            model: default_claude_model(),
+        }
+    }
+}
+
+impl Default for CodexConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            command: default_codex_command(),
+            model: default_codex_model(),
+        }
+    }
 }
 
 /// Prefix key configuration
@@ -69,6 +171,14 @@ pub struct UiConfig {
     /// Sidebar width in characters
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u16,
+
+    /// Default terminal rows
+    #[serde(default = "default_terminal_rows")]
+    pub terminal_rows: u16,
+
+    /// Default terminal columns
+    #[serde(default = "default_terminal_cols")]
+    pub terminal_cols: u16,
 
     /// Terminal scrollback buffer size
     #[serde(default = "default_scrollback")]
@@ -132,6 +242,14 @@ fn default_sidebar_width() -> u16 {
     30
 }
 
+fn default_terminal_rows() -> u16 {
+    24
+}
+
+fn default_terminal_cols() -> u16 {
+    80
+}
+
 fn default_scrollback() -> usize {
     10000
 }
@@ -161,6 +279,8 @@ impl Default for UiConfig {
         Self {
             show_borders: default_true(),
             sidebar_width: default_sidebar_width(),
+            terminal_rows: default_terminal_rows(),
+            terminal_cols: default_terminal_cols(),
             terminal_scrollback: default_scrollback(),
         }
     }
