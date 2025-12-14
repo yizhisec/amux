@@ -307,7 +307,16 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                 }
 
                 if let Ok(mut parser) = app.terminal.parser.lock() {
+                    // Save user's scroll position before processing PTY output
+                    let scroll_offset = parser.screen().scrollback();
+
                     parser.process(&data);
+
+                    // If user is viewing history (offset > 0), restore scroll position
+                    // This prevents new output from pulling user back to bottom
+                    if scroll_offset > 0 {
+                        parser.screen_mut().set_scrollback(scroll_offset);
+                    }
                 }
             }
 
@@ -329,6 +338,35 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
 
             // 4. Render tick - ALWAYS RENDER (tuitest pattern)
             _ = render_interval.tick() => {
+                // Drain all pending PTY data before rendering to avoid showing intermediate states
+                // (e.g., blank screen during clear+redraw sequences from TUI frameworks like ink)
+                // First, collect all pending data to avoid borrow conflicts
+                let pending_data: Vec<Vec<u8>> = if let Some(stream) = app.terminal_stream.as_mut() {
+                    let mut data_vec = Vec::new();
+                    while let Ok(data) = stream.output_rx.try_recv() {
+                        data_vec.push(data);
+                    }
+                    data_vec
+                } else {
+                    Vec::new()
+                };
+
+                // Process all collected PTY data
+                for data in pending_data {
+                    // Check for terminal query sequences and respond
+                    if let Some(response) = detect_terminal_query(&data, &app.terminal.parser) {
+                        let _ = app.send_to_terminal(response).await;
+                    }
+
+                    if let Ok(mut parser) = app.terminal.parser.lock() {
+                        let scroll_offset = parser.screen().scrollback();
+                        parser.process(&data);
+                        if scroll_offset > 0 {
+                            parser.screen_mut().set_scrollback(scroll_offset);
+                        }
+                    }
+                }
+
                 // Execute pending async action
                 if let Some(action) = pending_action.take() {
                     if let Err(e) = app.execute_async_action(action).await {
