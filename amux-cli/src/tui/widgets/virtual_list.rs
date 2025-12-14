@@ -25,29 +25,41 @@ pub trait VirtualList {
     /// Set the cursor to a specific position
     fn set_cursor(&mut self, pos: usize);
 
-    /// Move cursor up by one position
+    /// Move cursor up by one position, wrapping to bottom if at top
     ///
-    /// Returns true if the cursor moved, false if already at top
+    /// Returns true if the cursor moved
     fn move_up(&mut self) -> bool {
-        if self.cursor() > 0 {
-            self.set_cursor(self.cursor() - 1);
-            true
-        } else {
-            false
+        let len = self.virtual_len();
+        if len == 0 {
+            return false;
         }
+        let current = self.cursor();
+        if current > 0 {
+            self.set_cursor(current - 1);
+        } else {
+            // Wrap to bottom
+            self.set_cursor(len.saturating_sub(1));
+        }
+        true
     }
 
-    /// Move cursor down by one position
+    /// Move cursor down by one position, wrapping to top if at bottom
     ///
-    /// Returns true if the cursor moved, false if already at bottom
+    /// Returns true if the cursor moved
     fn move_down(&mut self) -> bool {
-        let max = self.virtual_len().saturating_sub(1);
-        if self.cursor() < max {
-            self.set_cursor(self.cursor() + 1);
-            true
-        } else {
-            false
+        let len = self.virtual_len();
+        if len == 0 {
+            return false;
         }
+        let max = len.saturating_sub(1);
+        let current = self.cursor();
+        if current < max {
+            self.set_cursor(current + 1);
+        } else {
+            // Wrap to top
+            self.set_cursor(0);
+        }
+        true
     }
 
     /// Move to the top of the list
@@ -156,9 +168,10 @@ mod tests {
         assert!(list.move_up());
         assert_eq!(list.cursor(), 4);
 
+        // Wraps to bottom when at top
         let mut list = MockList { len: 10, cursor: 0 };
-        assert!(!list.move_up());
-        assert_eq!(list.cursor(), 0);
+        assert!(list.move_up());
+        assert_eq!(list.cursor(), 9);
     }
 
     #[test]
@@ -167,9 +180,10 @@ mod tests {
         assert!(list.move_down());
         assert_eq!(list.cursor(), 6);
 
+        // Wraps to top when at bottom
         let mut list = MockList { len: 10, cursor: 9 };
-        assert!(!list.move_down());
-        assert_eq!(list.cursor(), 9);
+        assert!(list.move_down());
+        assert_eq!(list.cursor(), 0);
     }
 
     #[test]

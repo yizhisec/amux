@@ -324,6 +324,43 @@ impl KeybindMap {
             .copied()
             .collect()
     }
+
+    /// Get the key(s) bound to a specific action in a context
+    /// Returns the first key found, or None if not bound
+    pub fn key_for_action(&self, action: Action, context: BindingContext) -> Option<String> {
+        // Check context-specific bindings first
+        if let Some(bindings) = self.bindings.get(&context) {
+            for (key_str, bound_action) in bindings {
+                if *bound_action == action {
+                    return Some(key_str.clone());
+                }
+            }
+        }
+
+        // Check global bindings as fallback
+        if let Some(bindings) = self.bindings.get(&BindingContext::Global) {
+            for (key_str, bound_action) in bindings {
+                if *bound_action == action {
+                    return Some(key_str.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get the display string for a key bound to an action
+    /// Format: "[key]" if found, empty string if not bound
+    pub fn key_display(&self, action: Action, context: BindingContext) -> String {
+        self.key_for_action(action, context)
+            .map(|k| format!("[{}]", k))
+            .unwrap_or_default()
+    }
+
+    /// Get the display string for the prefix key
+    pub fn prefix_key_display(&self) -> String {
+        format!("[{}]", self.prefix_key)
+    }
 }
 
 // Tests temporarily disabled due to module test compilation issues

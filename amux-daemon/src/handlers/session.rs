@@ -1,6 +1,7 @@
 //! Session management handlers
 
-use crate::error::{DaemonError, RepoError, SessionError};
+use super::get_repo_and_open_git;
+use crate::error::{DaemonError, SessionError};
 use crate::events::EventBroadcaster;
 use crate::git::GitOps;
 use crate::persistence;
@@ -67,15 +68,9 @@ pub async fn create_session(
     events: &EventBroadcaster,
     req: CreateSessionRequest,
 ) -> Result<Response<SessionInfo>, Status> {
-    let mut state = state.write().await;
+    let (repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?
-        .clone();
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let mut state_guard = state.write().await;
 
     // Find or create worktree
     let worktree_path = match GitOps::find_worktree_path(&git_repo, &req.branch) {
@@ -88,7 +83,7 @@ pub async fn create_session(
     };
 
     // Generate session name
-    let existing_names: Vec<String> = state
+    let existing_names: Vec<String> = state_guard
         .sessions
         .values()
         .filter(|s| s.repo_id == req.repo_id && s.branch == req.branch)
@@ -146,7 +141,7 @@ pub async fn create_session(
         tracing::warn!("Failed to persist session metadata: {}", e);
     }
 
-    state.sessions.insert(id, session);
+    state_guard.sessions.insert(id, session);
 
     // Emit session created event
     events.emit_session_created(info.clone());

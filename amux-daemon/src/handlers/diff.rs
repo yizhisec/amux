@@ -1,7 +1,8 @@
 //! Diff operations handlers
 
+use super::get_repo_and_open_git;
 use crate::diff::DiffOps;
-use crate::error::{DaemonError, RepoError};
+use crate::error::DaemonError;
 use crate::git::GitOps;
 use crate::state::SharedState;
 use amux_proto::daemon::*;
@@ -12,14 +13,7 @@ pub async fn get_diff_files(
     state: &SharedState,
     req: GetDiffFilesRequest,
 ) -> Result<Response<GetDiffFilesResponse>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -54,14 +48,7 @@ pub async fn get_file_diff(
     state: &SharedState,
     req: GetFileDiffRequest,
 ) -> Result<Response<GetFileDiffResponse>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
