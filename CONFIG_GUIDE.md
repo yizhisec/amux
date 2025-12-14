@@ -1,12 +1,12 @@
 # CCM Configuration Guide
 
-Learn how to customize CCMan (CCM) to match your workflow.
+Learn how to customize amux (CCM) to match your workflow.
 
 ## Quick Start
 
 CCM works out of the box with sensible vim-like defaults. To customize:
 
-1. Create `~/.ccm/config.toml`
+1. Create `~/.amux/config.toml`
 2. Add your customizations
 3. Restart CCM
 
@@ -200,7 +200,7 @@ The rest will use defaults automatically.
 
 For larger customizations, split into multiple files:
 
-**~/.ccm/config.toml:**
+**~/.amux/config.toml:**
 ```toml
 [prefix]
 key = "C-s"
@@ -209,12 +209,12 @@ key = "C-s"
 tree_view_enabled = true
 
 source = [
-    "~/.ccm/bindings.toml",
-    "~/.ccm/local.toml"
+    "~/.amux/bindings.toml",
+    "~/.amux/local.toml"
 ]
 ```
 
-**~/.ccm/bindings.toml:**
+**~/.amux/bindings.toml:**
 ```toml
 [bindings.sidebar]
 "j" = "move-down"
@@ -222,7 +222,7 @@ source = [
 # ... more bindings
 ```
 
-**~/.ccm/local.toml:**
+**~/.amux/local.toml:**
 ```toml
 # Local overrides (not in version control)
 [bindings.sidebar]
@@ -258,7 +258,7 @@ Combine: `C-S-x` = Ctrl+Shift+x
 
 ## Available Actions
 
-See `ccm-config/README.md` for complete list. Common ones:
+See `amux-config/README.md` for complete list. Common ones:
 
 - Navigation: `move-up`, `move-down`, `scroll-up`, `scroll-down`
 - Focus: `focus-next`, `focus-prev`, `focus-sidebar`, `focus-terminal`
@@ -285,9 +285,9 @@ Invalid entries are skipped; valid ones apply.
 ### Bindings Don't Work
 
 1. Check syntax: Key names are case-sensitive
-2. Verify file location: `~/.ccm/config.toml`
+2. Verify file location: `~/.amux/config.toml`
 3. Check for typos: TOML is strict about formatting
-4. Verify action names in `ccm-config/README.md`
+4. Verify action names in `amux-config/README.md`
 5. Restart CCM after changes
 
 ### Default Bindings Still Work?
@@ -336,7 +336,7 @@ File size: A typical config file is <1KB. Even 100+ custom bindings is <5KB.
 
 ## Next Steps
 
-1. Create `~/.ccm/config.toml`
+1. Create `~/.amux/config.toml`
 2. Add your customizations
 3. Restart CCM
 4. Verify bindings work

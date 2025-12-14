@@ -24,6 +24,85 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "amux-cli"
+version = "0.1.0"
+dependencies = [
+ "amux-config",
+ "amux-proto",
+ "anyhow",
+ "async-stream",
+ "cargo-husky",
+ "clap",
+ "crossterm 0.28.1",
+ "dialoguer",
+ "dirs",
+ "futures",
+ "hyper-util",
+ "ratatui",
+ "signal-hook",
+ "signal-hook-tokio",
+ "syntect",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tower 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width 0.2.2",
+ "vt100 0.16.2",
+]
+
+[[package]]
+name = "amux-config"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+ "toml_edit 0.21.1",
+]
+
+[[package]]
+name = "amux-daemon"
+version = "0.1.0"
+dependencies = [
+ "amux-proto",
+ "anyhow",
+ "async-stream",
+ "chrono",
+ "dirs",
+ "git2",
+ "hyper-util",
+ "libc",
+ "nix",
+ "notify",
+ "notify-debouncer-full",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tower 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "vt100 0.15.2",
+]
+
+[[package]]
+name = "amux-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,85 +368,6 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
-]
-
-[[package]]
-name = "ccm-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "cargo-husky",
- "ccm-config",
- "ccm-proto",
- "clap",
- "crossterm 0.28.1",
- "dialoguer",
- "dirs",
- "futures",
- "hyper-util",
- "ratatui",
- "signal-hook",
- "signal-hook-tokio",
- "syntect",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tonic",
- "tower 0.5.2",
- "tracing",
- "tracing-subscriber",
- "unicode-width 0.2.2",
- "vt100 0.16.2",
-]
-
-[[package]]
-name = "ccm-config"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "serde",
- "thiserror 1.0.69",
- "toml",
- "toml_edit 0.21.1",
-]
-
-[[package]]
-name = "ccm-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "ccm-proto",
- "chrono",
- "dirs",
- "git2",
- "hyper-util",
- "libc",
- "nix",
- "notify",
- "notify-debouncer-full",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tonic",
- "tower 0.5.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "vt100 0.15.2",
-]
-
-[[package]]
-name = "ccm-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "tonic",
- "tonic-build",
 ]
 
 [[package]]

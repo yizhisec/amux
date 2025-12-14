@@ -36,7 +36,7 @@ CCM provides a TUI interface to:
 
 ## Components
 
-### ccm-daemon
+### amux-daemon
 Background daemon that:
 - Manages repositories (add/remove/list)
 - Manages git worktrees (create/remove/list)
@@ -45,7 +45,7 @@ Background daemon that:
 - Streams terminal I/O via gRPC
 - Persists output buffer for history replay
 
-### ccm-cli (ccm)
+### amux-cli (ccm)
 TUI client that:
 - Connects to daemon via Unix socket
 - Displays repo tabs, branch/session sidebar
@@ -53,7 +53,7 @@ TUI client that:
 - Vim-style Normal/Insert modes for terminal
 - Supports scrollback and fullscreen toggle
 
-### ccm-proto
+### amux-proto
 Protocol buffer definitions for gRPC:
 - CcmDaemon service
 - Session/Repo/Worktree management RPCs
@@ -134,14 +134,14 @@ Works from any context (except text input). Press `Ctrl+s` then:
 ## File Structure
 
 ```
-ccman/
+amux/
 ├── Cargo.toml           # Workspace
 ├── docs/
 │   └── MVP_PLAN.md      # This file
-├── ccm-proto/
+├── amux-proto/
 │   ├── proto/daemon.proto
 │   └── src/lib.rs
-├── ccm-daemon/
+├── amux-daemon/
 │   └── src/
 │       ├── main.rs
 │       ├── server.rs    # gRPC service
@@ -150,7 +150,7 @@ ccman/
 │       ├── git.rs       # Git operations
 │       ├── repo.rs      # Repo persistence
 │       └── state.rs     # Shared state
-└── ccm-cli/
+└── amux-cli/
     └── src/
         ├── main.rs
         ├── client.rs    # gRPC client

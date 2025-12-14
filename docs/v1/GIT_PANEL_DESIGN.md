@@ -199,12 +199,12 @@ pub fn git_status_selection_changed(&mut self) -> Option<AsyncAction> {
 ## 实现步骤
 
 ### 阶段 1: Proto 定义
-**文件**: `ccm-proto/proto/daemon.proto`
+**文件**: `amux-proto/proto/daemon.proto`
 - [ ] 新增 RPC: `GetGitStatus`, `StageFile`, `UnstageFile`, `StageAll`, `UnstageAll`
 - [ ] 新增消息类型
 
 ### 阶段 2: Git 操作实现
-**文件**: `ccm-daemon/src/git.rs`
+**文件**: `amux-daemon/src/git.rs`
 - [ ] `get_status(repo)` - 获取文件状态
 - [ ] `stage_file(repo, path)` - 暂存文件
 - [ ] `unstage_file(repo, path)` - 取消暂存
@@ -212,15 +212,15 @@ pub fn git_status_selection_changed(&mut self) -> Option<AsyncAction> {
 - [ ] `unstage_all(repo)` - 取消暂存所有
 
 ### 阶段 3: Server RPC 实现
-**文件**: `ccm-daemon/src/server.rs`
+**文件**: `amux-daemon/src/server.rs`
 - [ ] 实现 5 个新 RPC handler
 
 ### 阶段 4: Client 方法
-**文件**: `ccm-cli/src/client.rs`
+**文件**: `amux-cli/src/client.rs`
 - [ ] 新增 5 个客户端方法
 
 ### 阶段 5: App 状态管理
-**文件**: `ccm-cli/src/tui/app.rs`
+**文件**: `amux-cli/src/tui/app.rs`
 - [ ] 新增数据结构: `GitSection`, `GitStatusFile`, `GitPanelItem`
 - [ ] 新增 `Focus::GitStatus`
 - [ ] 新增状态字段
@@ -228,12 +228,12 @@ pub fn git_status_selection_changed(&mut self) -> Option<AsyncAction> {
 - [ ] 实现导航和联动方法
 
 ### 阶段 6: UI 渲染
-**文件**: `ccm-cli/src/tui/ui.rs`
+**文件**: `amux-cli/src/tui/ui.rs`
 - [ ] 修改 `draw_sidebar()` 为双面板布局
 - [ ] 新增 `draw_git_status_panel()`
 
 ### 阶段 7: 输入处理
-**文件**: `ccm-cli/src/tui/input.rs`
+**文件**: `amux-cli/src/tui/input.rs`
 - [ ] 新增 `handle_git_status_input_sync()`
 - [ ] 修改 prefix 模式支持 `g` 键
 
@@ -241,10 +241,10 @@ pub fn git_status_selection_changed(&mut self) -> Option<AsyncAction> {
 
 | 文件 | 修改内容 |
 |------|----------|
-| `ccm-proto/proto/daemon.proto` | Proto 定义 |
-| `ccm-daemon/src/git.rs` | Git 操作核心 |
-| `ccm-daemon/src/server.rs` | RPC 实现 |
-| `ccm-cli/src/client.rs` | 客户端方法 |
-| `ccm-cli/src/tui/app.rs` | 状态管理 |
-| `ccm-cli/src/tui/ui.rs` | UI 渲染 |
-| `ccm-cli/src/tui/input.rs` | 输入处理 |
+| `amux-proto/proto/daemon.proto` | Proto 定义 |
+| `amux-daemon/src/git.rs` | Git 操作核心 |
+| `amux-daemon/src/server.rs` | RPC 实现 |
+| `amux-cli/src/client.rs` | 客户端方法 |
+| `amux-cli/src/tui/app.rs` | 状态管理 |
+| `amux-cli/src/tui/ui.rs` | UI 渲染 |
+| `amux-cli/src/tui/input.rs` | 输入处理 |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Repository-level TODO list feature for ccman, accessible via floating popup modal with nested sub-item support.
+Repository-level TODO list feature for amux, accessible via floating popup modal with nested sub-item support.
 
 ## User Requirements
 
@@ -30,7 +30,7 @@ pub struct TodoItem {
 
 ### Storage
 
-- **Location**: `~/.ccm/todos/{repo_id}/todos.json`
+- **Location**: `~/.amux/todos/{repo_id}/todos.json`
 - **Format**: JSON with pretty printing
 - **Persistence**: Automatic save on every change
 
@@ -213,14 +213,14 @@ pub struct App {
 
 | File | Changes |
 |------|---------|
-| `ccm-proto/proto/daemon.proto` | TODO messages + RPCs |
-| `ccm-daemon/src/todo.rs` | **NEW** - Persistence module |
-| `ccm-daemon/src/main.rs` | Add `mod todo;` |
-| `ccm-daemon/src/server.rs` | TODO RPC handlers |
-| `ccm-cli/src/client.rs` | TODO client methods |
-| `ccm-cli/src/tui/app.rs` | State fields + InputMode + AsyncAction |
-| `ccm-cli/src/tui/input.rs` | TODO popup input handlers |
-| `ccm-cli/src/tui/ui.rs` | Popup rendering functions |
+| `amux-proto/proto/daemon.proto` | TODO messages + RPCs |
+| `amux-daemon/src/todo.rs` | **NEW** - Persistence module |
+| `amux-daemon/src/main.rs` | Add `mod todo;` |
+| `amux-daemon/src/server.rs` | TODO RPC handlers |
+| `amux-cli/src/client.rs` | TODO client methods |
+| `amux-cli/src/tui/app.rs` | State fields + InputMode + AsyncAction |
+| `amux-cli/src/tui/input.rs` | TODO popup input handlers |
+| `amux-cli/src/tui/ui.rs` | Popup rendering functions |
 
 ## Implementation Phases
 

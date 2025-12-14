@@ -1,4 +1,4 @@
-# CCMan 交互改进实现计划
+# amux 交互改进实现计划
 
 ## 需求概览
 
@@ -19,7 +19,7 @@
 
 #### 1.1 Prefix + `[` 进入 Terminal Normal 模式
 
-**文件**: `ccm-cli/src/tui/input.rs`
+**文件**: `amux-cli/src/tui/input.rs`
 
 在 `handle_prefix_command_sync()` 中添加:
 ```rust
@@ -32,13 +32,13 @@ KeyCode::Char('[') => {
 }
 ```
 
-**文件**: `ccm-cli/src/tui/ui.rs` - 更新帮助提示
+**文件**: `amux-cli/src/tui/ui.rs` - 更新帮助提示
 
 ---
 
 #### 1.2 多行输入支持 (Shift+Enter)
 
-**文件**: `ccm-cli/src/tui/input.rs`
+**文件**: `amux-cli/src/tui/input.rs`
 
 修改所有输入处理函数 (`handle_input_mode_sync`, `handle_rename_session_mode_sync`, `handle_add_line_comment_mode_sync`):
 ```rust
@@ -52,7 +52,7 @@ match (key.code, key.modifiers) {
 }
 ```
 
-**文件**: `ccm-cli/src/tui/ui.rs`
+**文件**: `amux-cli/src/tui/ui.rs`
 
 更新输入框渲染以支持多行:
 - 使用 `Paragraph::wrap()`
@@ -62,7 +62,7 @@ match (key.code, key.modifiers) {
 
 #### 1.3 修复 repo 重复创建问题
 
-**文件**: `ccm-daemon/src/git.rs`
+**文件**: `amux-daemon/src/git.rs`
 
 添加 worktree 检测函数:
 ```rust
@@ -87,7 +87,7 @@ impl GitOps {
 }
 ```
 
-**文件**: `ccm-cli/src/main.rs`
+**文件**: `amux-cli/src/main.rs`
 
 修改自动检测逻辑:
 ```rust
@@ -112,7 +112,7 @@ if cwd.join(".git").exists() {
 
 #### 2.1 鼠标滚动支持
 
-**文件**: `ccm-cli/src/tui/input.rs`
+**文件**: `amux-cli/src/tui/input.rs`
 
 新增鼠标处理函数:
 ```rust
@@ -143,7 +143,7 @@ pub fn handle_mouse_sync(app: &mut App, mouse: MouseEvent) {
 }
 ```
 
-**文件**: `ccm-cli/src/tui/app.rs`
+**文件**: `amux-cli/src/tui/app.rs`
 
 在主循环的 `tokio::select!` 中处理鼠标事件:
 ```rust
@@ -158,11 +158,11 @@ Event::Mouse(mouse) => {
 
 已有的事件机制基本满足需求。需要确认:
 
-**文件**: `ccm-proto/proto/daemon.proto`
+**文件**: `amux-proto/proto/daemon.proto`
 
 检查是否已有 `WorktreeAdded`/`WorktreeRemoved` 事件，如没有则添加。
 
-**文件**: `ccm-daemon/src/server.rs`
+**文件**: `amux-daemon/src/server.rs`
 
 在 `create_worktree`/`remove_worktree` 中触发事件:
 ```rust
@@ -170,7 +170,7 @@ self.events.emit_worktree_added(info);
 self.events.emit_worktree_removed(repo_id, branch);
 ```
 
-**文件**: `ccm-cli/src/tui/app.rs`
+**文件**: `amux-cli/src/tui/app.rs`
 
 在 `handle_daemon_event` 中处理新事件，刷新 UI。
 
@@ -180,7 +180,7 @@ self.events.emit_worktree_removed(repo_id, branch);
 
 #### 3.1 合并 worktree 和 session 为树形列表
 
-**数据结构变更** (`ccm-cli/src/tui/app.rs`):
+**数据结构变更** (`amux-cli/src/tui/app.rs`):
 
 ```rust
 // 新增字段
@@ -211,7 +211,7 @@ pub enum Focus {
 }
 ```
 
-**UI 渲染变更** (`ccm-cli/src/tui/ui.rs`):
+**UI 渲染变更** (`amux-cli/src/tui/ui.rs`):
 
 修改 `draw_sidebar()`:
 - 侧边栏不再分割为两部分
@@ -222,7 +222,7 @@ pub enum Focus {
 - 显示当前 worktree 的 diff 文件列表
 - 复用现有 `draw_diff_inline()` 逻辑
 
-**输入处理变更** (`ccm-cli/src/tui/input.rs`):
+**输入处理变更** (`amux-cli/src/tui/input.rs`):
 
 - 移除 `Focus::Branches` 和 `Focus::Sessions` 的单独处理
 - 添加 `Focus::Sidebar` 的统一处理
@@ -235,14 +235,14 @@ pub enum Focus {
 
 | 文件 | 涉及需求 |
 |------|----------|
-| `ccm-cli/src/tui/input.rs` | 1, 3, 5, 6 |
-| `ccm-cli/src/tui/app.rs` | 1, 2, 5 |
-| `ccm-cli/src/tui/ui.rs` | 1, 3, 6 |
-| `ccm-cli/src/main.rs` | 4 |
-| `ccm-daemon/src/git.rs` | 4 |
-| `ccm-proto/proto/daemon.proto` | 2 |
-| `ccm-daemon/src/server.rs` | 2 |
-| `ccm-daemon/src/events.rs` | 2 |
+| `amux-cli/src/tui/input.rs` | 1, 3, 5, 6 |
+| `amux-cli/src/tui/app.rs` | 1, 2, 5 |
+| `amux-cli/src/tui/ui.rs` | 1, 3, 6 |
+| `amux-cli/src/main.rs` | 4 |
+| `amux-daemon/src/git.rs` | 4 |
+| `amux-proto/proto/daemon.proto` | 2 |
+| `amux-daemon/src/server.rs` | 2 |
+| `amux-daemon/src/events.rs` | 2 |
 
 ---
 

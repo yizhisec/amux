@@ -8,10 +8,10 @@
 
 | 文件 | 行数 | 问题 |
 |------|------|------|
-| `ccm-cli/src/tui/app.rs` | 3386 | App 结构体 40+ 字段，61 个方法 |
-| `ccm-cli/src/tui/ui.rs` | 2088 | 35 个渲染函数混在一个文件 |
-| `ccm-cli/src/tui/input.rs` | 1356 | 29 个输入处理函数 |
-| `ccm-daemon/src/server.rs` | 1310 | 31 个 gRPC 方法在一个 impl |
+| `amux-cli/src/tui/app.rs` | 3386 | App 结构体 40+ 字段，61 个方法 |
+| `amux-cli/src/tui/ui.rs` | 2088 | 35 个渲染函数混在一个文件 |
+| `amux-cli/src/tui/input.rs` | 1356 | 29 个输入处理函数 |
+| `amux-daemon/src/server.rs` | 1310 | 31 个 gRPC 方法在一个 impl |
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### 1.1 创建 State 模块
 
-**新文件**: `ccm-cli/src/tui/state.rs`
+**新文件**: `amux-cli/src/tui/state.rs`
 
 从 `app.rs` (32-196行) 提取以下类型：
 
@@ -165,7 +165,7 @@ pub struct TerminalStream {
 ### 1.2 更新 mod.rs
 
 ```rust
-// ccm-cli/src/tui/mod.rs
+// amux-cli/src/tui/mod.rs
 mod app;
 pub mod highlight;
 mod input;
@@ -192,7 +192,7 @@ cargo clippy --workspace
 ### 2.1 目录结构
 
 ```
-ccm-cli/src/tui/ui/
+amux-cli/src/tui/ui/
     mod.rs          # 主 draw() + 重新导出
     tab_bar.rs      # draw_tab_bar, draw_status_bar
     sidebar.rs      # draw_sidebar, draw_sidebar_tree, draw_worktrees, draw_sessions
@@ -261,7 +261,7 @@ ccm-cli/src/tui/ui/
 ### 3.1 目录结构
 
 ```
-ccm-cli/src/tui/input/
+amux-cli/src/tui/input/
     mod.rs              # handle_input_sync() 主分发器
     navigation.rs       # handle_navigation_input_sync
     terminal.rs         # handle_insert_mode_sync, handle_terminal_normal_mode_sync
@@ -307,7 +307,7 @@ ccm-cli/src/tui/input/
 
 ### 4.1 提取 TerminalState
 
-**新文件**: `ccm-cli/src/tui/terminal_state.rs`
+**新文件**: `amux-cli/src/tui/terminal_state.rs`
 
 ```rust
 pub struct TerminalState {
@@ -339,7 +339,7 @@ impl TerminalState {
 
 ### 4.2 提取 DiffState
 
-**新文件**: `ccm-cli/src/tui/diff_state.rs`
+**新文件**: `amux-cli/src/tui/diff_state.rs`
 
 ```rust
 pub struct DiffState {
@@ -365,7 +365,7 @@ impl DiffState {
 
 ### 4.3 提取 GitState
 
-**新文件**: `ccm-cli/src/tui/git_state.rs`
+**新文件**: `amux-cli/src/tui/git_state.rs`
 
 ```rust
 pub struct GitState {
@@ -389,7 +389,7 @@ impl GitState {
 
 ### 4.4 提取 SidebarState
 
-**新文件**: `ccm-cli/src/tui/sidebar_state.rs`
+**新文件**: `amux-cli/src/tui/sidebar_state.rs`
 
 ```rust
 pub struct SidebarState {
@@ -414,7 +414,7 @@ impl SidebarState {
 
 ### 4.5 提取 TodoState
 
-**新文件**: `ccm-cli/src/tui/todo_state.rs`
+**新文件**: `amux-cli/src/tui/todo_state.rs`
 
 ```rust
 pub struct TodoState {
@@ -485,7 +485,7 @@ pub struct App {
 ### 5.1 目录结构
 
 ```
-ccm-daemon/src/handlers/
+amux-daemon/src/handlers/
     mod.rs              # CcmDaemonService 定义
     repo.rs             # add_repo, list_repos, remove_repo
     worktree.rs         # list_worktrees, create_worktree, remove_worktree, delete_branch
@@ -534,7 +534,7 @@ impl CcmDaemon for CcmDaemonService {
 
 ### 6.1 提取导航 Trait
 
-**新文件**: `ccm-cli/src/tui/navigation.rs`
+**新文件**: `amux-cli/src/tui/navigation.rs`
 
 ```rust
 /// 虚拟列表导航的通用 trait
@@ -568,7 +568,7 @@ pub trait VirtualList {
 
 ### 6.2 提取文本输入处理器
 
-**新文件**: `ccm-cli/src/tui/input/text_input.rs`
+**新文件**: `amux-cli/src/tui/input/text_input.rs`
 
 ```rust
 /// 通用文本输入处理（所有文本输入模式共享）
@@ -646,7 +646,7 @@ pub fn handle_confirmation(
 
 ### 8.1 状态组件的单元测试
 
-**新文件**: `ccm-cli/src/tui/terminal_state_test.rs`
+**新文件**: `amux-cli/src/tui/terminal_state_test.rs`
 
 ```rust
 #[cfg(test)]
@@ -732,48 +732,48 @@ Phase 6 (去重) ──► Phase 7 (清理) ──► Phase 8 (测试)
 
 | 文件路径 | 操作 |
 |---------|------|
-| `ccm-cli/src/tui/app.rs` | 提取类型、分解结构体 |
-| `ccm-cli/src/tui/ui.rs` | 拆分为多个模块 |
-| `ccm-cli/src/tui/input.rs` | 拆分为多个模块 |
-| `ccm-cli/src/tui/mod.rs` | 更新模块导出 |
-| `ccm-daemon/src/server.rs` | 拆分为处理器模块 |
-| `ccm-daemon/src/main.rs` | 更新引用 |
+| `amux-cli/src/tui/app.rs` | 提取类型、分解结构体 |
+| `amux-cli/src/tui/ui.rs` | 拆分为多个模块 |
+| `amux-cli/src/tui/input.rs` | 拆分为多个模块 |
+| `amux-cli/src/tui/mod.rs` | 更新模块导出 |
+| `amux-daemon/src/server.rs` | 拆分为处理器模块 |
+| `amux-daemon/src/main.rs` | 更新引用 |
 
 ### 需要创建的新文件
 
 | 文件路径 | 描述 |
 |---------|------|
-| `ccm-cli/src/tui/state.rs` | 类型和枚举定义 |
-| `ccm-cli/src/tui/terminal_state.rs` | 终端状态管理 |
-| `ccm-cli/src/tui/diff_state.rs` | Diff 状态管理 |
-| `ccm-cli/src/tui/git_state.rs` | Git 状态管理 |
-| `ccm-cli/src/tui/sidebar_state.rs` | 侧边栏状态管理 |
-| `ccm-cli/src/tui/todo_state.rs` | TODO 状态管理 |
-| `ccm-cli/src/tui/navigation.rs` | 导航 trait |
-| `ccm-cli/src/tui/ui/mod.rs` | UI 主模块 |
-| `ccm-cli/src/tui/ui/tab_bar.rs` | 标签栏渲染 |
-| `ccm-cli/src/tui/ui/sidebar.rs` | 侧边栏渲染 |
-| `ccm-cli/src/tui/ui/git_panel.rs` | Git 面板渲染 |
-| `ccm-cli/src/tui/ui/terminal.rs` | 终端渲染 |
-| `ccm-cli/src/tui/ui/diff.rs` | Diff 渲染 |
-| `ccm-cli/src/tui/ui/overlays.rs` | 弹窗渲染 |
-| `ccm-cli/src/tui/ui/helpers.rs` | 辅助函数 |
-| `ccm-cli/src/tui/input/mod.rs` | Input 主模块 |
-| `ccm-cli/src/tui/input/navigation.rs` | 导航输入 |
-| `ccm-cli/src/tui/input/terminal.rs` | 终端输入 |
-| `ccm-cli/src/tui/input/prefix.rs` | 前缀键处理 |
-| `ccm-cli/src/tui/input/dialogs.rs` | 对话框输入 |
-| `ccm-cli/src/tui/input/diff.rs` | Diff 输入 |
-| `ccm-cli/src/tui/input/git_status.rs` | Git 状态输入 |
-| `ccm-cli/src/tui/input/todo.rs` | TODO 输入 |
-| `ccm-cli/src/tui/input/mouse.rs` | 鼠标输入 |
-| `ccm-cli/src/tui/input/text_input.rs` | 文本输入处理器 |
-| `ccm-daemon/src/handlers/mod.rs` | Handlers 主模块 |
-| `ccm-daemon/src/handlers/repo.rs` | 仓库处理器 |
-| `ccm-daemon/src/handlers/worktree.rs` | Worktree 处理器 |
-| `ccm-daemon/src/handlers/session.rs` | 会话处理器 |
-| `ccm-daemon/src/handlers/events.rs` | 事件处理器 |
-| `ccm-daemon/src/handlers/diff.rs` | Diff 处理器 |
-| `ccm-daemon/src/handlers/comments.rs` | 评论处理器 |
-| `ccm-daemon/src/handlers/git_status.rs` | Git 状态处理器 |
-| `ccm-daemon/src/handlers/todo.rs` | TODO 处理器 |
+| `amux-cli/src/tui/state.rs` | 类型和枚举定义 |
+| `amux-cli/src/tui/terminal_state.rs` | 终端状态管理 |
+| `amux-cli/src/tui/diff_state.rs` | Diff 状态管理 |
+| `amux-cli/src/tui/git_state.rs` | Git 状态管理 |
+| `amux-cli/src/tui/sidebar_state.rs` | 侧边栏状态管理 |
+| `amux-cli/src/tui/todo_state.rs` | TODO 状态管理 |
+| `amux-cli/src/tui/navigation.rs` | 导航 trait |
+| `amux-cli/src/tui/ui/mod.rs` | UI 主模块 |
+| `amux-cli/src/tui/ui/tab_bar.rs` | 标签栏渲染 |
+| `amux-cli/src/tui/ui/sidebar.rs` | 侧边栏渲染 |
+| `amux-cli/src/tui/ui/git_panel.rs` | Git 面板渲染 |
+| `amux-cli/src/tui/ui/terminal.rs` | 终端渲染 |
+| `amux-cli/src/tui/ui/diff.rs` | Diff 渲染 |
+| `amux-cli/src/tui/ui/overlays.rs` | 弹窗渲染 |
+| `amux-cli/src/tui/ui/helpers.rs` | 辅助函数 |
+| `amux-cli/src/tui/input/mod.rs` | Input 主模块 |
+| `amux-cli/src/tui/input/navigation.rs` | 导航输入 |
+| `amux-cli/src/tui/input/terminal.rs` | 终端输入 |
+| `amux-cli/src/tui/input/prefix.rs` | 前缀键处理 |
+| `amux-cli/src/tui/input/dialogs.rs` | 对话框输入 |
+| `amux-cli/src/tui/input/diff.rs` | Diff 输入 |
+| `amux-cli/src/tui/input/git_status.rs` | Git 状态输入 |
+| `amux-cli/src/tui/input/todo.rs` | TODO 输入 |
+| `amux-cli/src/tui/input/mouse.rs` | 鼠标输入 |
+| `amux-cli/src/tui/input/text_input.rs` | 文本输入处理器 |
+| `amux-daemon/src/handlers/mod.rs` | Handlers 主模块 |
+| `amux-daemon/src/handlers/repo.rs` | 仓库处理器 |
+| `amux-daemon/src/handlers/worktree.rs` | Worktree 处理器 |
+| `amux-daemon/src/handlers/session.rs` | 会话处理器 |
+| `amux-daemon/src/handlers/events.rs` | 事件处理器 |
+| `amux-daemon/src/handlers/diff.rs` | Diff 处理器 |
+| `amux-daemon/src/handlers/comments.rs` | 评论处理器 |
+| `amux-daemon/src/handlers/git_status.rs` | Git 状态处理器 |
+| `amux-daemon/src/handlers/todo.rs` | TODO 处理器 |

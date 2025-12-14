@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "ccm-proto",
-    "ccm-config",
-    "ccm-cli",
-    "ccm-daemon",
+    "amux-proto",
+    "amux-config",
+    "amux-cli",
+    "amux-daemon",
     "xtask",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-authors = ["CCM Contributors"]
+license = "AGPL-3.0-or-later"
+authors = ["Amux Contributors"]
 
 [workspace.dependencies]
 # Async runtime

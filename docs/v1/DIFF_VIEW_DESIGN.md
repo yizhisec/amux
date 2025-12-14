@@ -31,7 +31,7 @@ Add a Diff View to ccm TUI, allowing users to view git diff alongside the termin
 
 ### Proto Definitions
 
-**File:** `ccm-proto/proto/daemon.proto`
+**File:** `amux-proto/proto/daemon.proto`
 
 ```protobuf
 service CcmDaemon {
@@ -94,7 +94,7 @@ enum LineType {
 
 ### Daemon Diff Module
 
-**New File:** `ccm-daemon/src/diff.rs`
+**New File:** `amux-daemon/src/diff.rs`
 
 ```rust
 use crate::error::GitError;
@@ -114,7 +114,7 @@ impl DiffOps {
 
 ### TUI State Changes
 
-**File:** `ccm-cli/src/tui/app.rs`
+**File:** `amux-cli/src/tui/app.rs`
 
 ```rust
 pub enum Focus {
@@ -162,11 +162,11 @@ DiffContent mode:
 
 **Dependencies:**
 ```toml
-# ccm-cli/Cargo.toml
+# amux-cli/Cargo.toml
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
 ```
 
-**New module:** `ccm-cli/src/tui/highlight.rs`
+**New module:** `amux-cli/src/tui/highlight.rs`
 
 ```rust
 use syntect::highlighting::{ThemeSet, Style};
@@ -195,16 +195,16 @@ impl Highlighter {
 
 | File | Change |
 |------|--------|
-| `ccm-proto/proto/daemon.proto` | Add diff RPCs and messages |
-| `ccm-daemon/src/main.rs` | Export `diff` module |
-| `ccm-daemon/src/diff.rs` | **NEW** - git2 diff operations |
-| `ccm-daemon/src/server.rs` | Implement diff handlers |
-| `ccm-cli/src/client.rs` | Add diff client methods |
-| `ccm-cli/src/tui/app.rs` | Add state, enums, methods |
-| `ccm-cli/src/tui/input.rs` | Add diff input handlers |
-| `ccm-cli/src/tui/ui.rs` | Add diff rendering |
-| `ccm-cli/src/tui/highlight.rs` | **NEW** - Syntect wrapper |
-| `ccm-cli/Cargo.toml` | Add syntect dependency |
+| `amux-proto/proto/daemon.proto` | Add diff RPCs and messages |
+| `amux-daemon/src/main.rs` | Export `diff` module |
+| `amux-daemon/src/diff.rs` | **NEW** - git2 diff operations |
+| `amux-daemon/src/server.rs` | Implement diff handlers |
+| `amux-cli/src/client.rs` | Add diff client methods |
+| `amux-cli/src/tui/app.rs` | Add state, enums, methods |
+| `amux-cli/src/tui/input.rs` | Add diff input handlers |
+| `amux-cli/src/tui/ui.rs` | Add diff rendering |
+| `amux-cli/src/tui/highlight.rs` | **NEW** - Syntect wrapper |
+| `amux-cli/Cargo.toml` | Add syntect dependency |
 
 ---
 
@@ -262,7 +262,7 @@ pub struct ReviewSession {
 ### Persistence
 
 ```
-~/.ccm/reviews/{repo_id}/{branch}/
+~/.amux/reviews/{repo_id}/{branch}/
 └── review.json   # ReviewSession
 ```
 

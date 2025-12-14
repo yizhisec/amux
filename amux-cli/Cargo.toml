@@ -1,0 +1,36 @@
+[package]
+name = "amux-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "amux"
+path = "src/main.rs"
+
+[dependencies]
+amux-proto = { path = "../amux-proto" }
+amux-config = { path = "../amux-config" }
+tokio.workspace = true
+tonic.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tower = "0.5"
+hyper-util = { version = "0.1", features = ["tokio"] }
+async-stream = "0.3"
+ratatui = "0.30.0-beta.0"
+dialoguer = { version = "0.11", features = ["fuzzy-select"] }
+vt100 = "0.16"
+dirs = "5"
+tokio-stream = "0.1"
+unicode-width = "0.2.1"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+futures = "0.3"
+
+[dev-dependencies]
+cargo-husky.workspace = true
