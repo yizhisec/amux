@@ -2,12 +2,13 @@
 
 use crate::tui::app::App;
 use crate::tui::state::{Focus, GitSection};
+use crate::tui::widgets::VirtualList;
 use amux_proto::daemon::FileStatus;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -147,13 +148,28 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let total_files = git.files.len();
+    let total_items = items.len();
+
+    // Calculate visible area (subtract 2 for borders)
+    let visible_height = area.height.saturating_sub(2) as usize;
+
+    // Calculate scroll offset using VirtualList trait
+    let scroll_offset = git.scroll_offset(visible_height);
+
+    // Slice items to visible range
+    let visible_items: Vec<ListItem> = items
+        .into_iter()
+        .skip(scroll_offset)
+        .take(visible_height)
+        .collect();
+
     let title = if is_focused {
         format!(" Git Status ({}) [*] ", total_files)
     } else {
         format!(" Git Status ({}) ", total_files)
     };
 
-    let list = List::new(items).block(
+    let list = List::new(visible_items).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
@@ -161,4 +177,17 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     );
 
     f.render_widget(list, area);
+
+    // Show scroll indicator if needed
+    if total_items > visible_height {
+        let scroll_info = format!(" {}/{} ", git.cursor + 1, total_items);
+        let scroll_len = scroll_info.len() as u16;
+        let scroll_span = Span::styled(scroll_info, Style::default().fg(Color::DarkGray));
+        let scroll_x = area.x + area.width.saturating_sub(scroll_len + 1);
+        let scroll_y = area.y;
+        f.render_widget(
+            Paragraph::new(scroll_span),
+            Rect::new(scroll_x, scroll_y, scroll_len, 1),
+        );
+    }
 }

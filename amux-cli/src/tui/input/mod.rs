@@ -94,6 +94,11 @@ pub fn handle_input_sync(app: &mut App, key: KeyEvent) -> Option<AsyncAction> {
         return overlay_input::handle_select_provider_mode_sync(app, key);
     }
 
+    // Handle create session input mode (name input in status bar)
+    if matches!(app.input_mode, InputMode::CreateSessionInput { .. }) {
+        return overlay_input::handle_create_session_input_mode_sync(app, key);
+    }
+
     // Handle add line comment mode
     if matches!(app.input_mode, InputMode::AddLineComment { .. }) {
         return overlay_input::handle_add_line_comment_mode_sync(app, key);

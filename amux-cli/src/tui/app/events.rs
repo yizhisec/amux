@@ -390,6 +390,9 @@ impl App {
             AsyncAction::SubmitProviderSelection => {
                 self.submit_provider_selection().await?;
             }
+            AsyncAction::SubmitCreateSessionInput => {
+                self.submit_create_session_input().await?;
+            }
         }
         Ok(())
     }

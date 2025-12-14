@@ -1,13 +1,13 @@
 //! Tab bar and status bar rendering
 
 use crate::tui::app::App;
-use crate::tui::state::{Focus, PrefixMode, TerminalMode};
+use crate::tui::state::{Focus, InputMode, PrefixMode, TerminalMode};
 use amux_config::actions::Action;
 use amux_config::keybind::BindingContext;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Tabs},
     Frame,
 };
@@ -80,6 +80,34 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Magenta)),
             );
+        f.render_widget(paragraph, area);
+        return;
+    }
+
+    // CreateSessionInput mode - show input prompt in status bar
+    if let InputMode::CreateSessionInput { .. } = &app.input_mode {
+        // Use Unicode-safe methods to get cursor-split text
+        let before = app.text_input.text_before_cursor();
+        let at_cursor = app.text_input.char_at_cursor();
+        let after = app.text_input.text_after_cursor();
+
+        // Build the prompt with cursor indicator
+        let prompt = "Session name (Enter=create, Esc=cancel): ";
+        let line = Line::from(vec![
+            Span::styled(prompt, Style::default().fg(Color::Cyan)),
+            Span::styled(before, Style::default().fg(Color::White)),
+            Span::styled(
+                at_cursor.map(|c| c.to_string()).unwrap_or_else(|| " ".to_string()),
+                Style::default().fg(Color::Black).bg(Color::White),
+            ),
+            Span::styled(after, Style::default().fg(Color::White)),
+        ]);
+
+        let paragraph = Paragraph::new(line).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
         f.render_widget(paragraph, area);
         return;
     }
