@@ -86,7 +86,7 @@ fn execute_diff_action(app: &mut App, action: Action) -> Option<AsyncAction> {
             None
         }
 
-        Action::BackToTerminal => {
+        Action::BackToTerminal | Action::ClosePopup => {
             app.switch_to_terminal_view();
             None
         }

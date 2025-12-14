@@ -41,6 +41,7 @@ pub fn key_event_to_pattern_string(key: KeyEvent) -> Option<String> {
                 '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' | '-' | '=' | '['
                 | ']' | '{' | '}' | ';' | ':' | '\'' | '"' | ',' | '.' | '/' | '\\' | '|' | '?'
                 | '`' | '~' | '<' | '>' => c.to_string(),
+                ' ' => "Space".to_string(),
                 _ => return None,
             }
         }

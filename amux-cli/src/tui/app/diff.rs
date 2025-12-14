@@ -17,10 +17,14 @@ impl App {
         Ok(())
     }
 
-    /// Switch back to terminal view
+    /// Switch back to previous view (restores focus)
     pub fn switch_to_terminal_view(&mut self) {
         self.right_panel_view = RightPanelView::Terminal;
-        self.focus = Focus::Sidebar;
+        // Restore focus to where user was before entering diff
+        if !self.restore_focus() {
+            // Fallback to sidebar if stack was empty
+            self.focus = Focus::Sidebar;
+        }
         if let Some(diff) = self.diff_mut() {
             diff.files.clear();
             diff.expanded.clear();

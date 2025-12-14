@@ -57,20 +57,20 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         }
 
         Action::AddWorktree => {
+            app.save_focus();
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.save_focus();
             app.focus = Focus::Sidebar;
             app.start_add_worktree();
             None
         }
 
         Action::DeleteCurrent => {
+            app.save_focus();
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            // request_delete already calls save_focus
             app.request_delete();
             None
         }
@@ -92,6 +92,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         }
 
         Action::FocusGitStatus => {
+            app.save_focus();
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
@@ -100,6 +101,7 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         }
 
         Action::FocusDiff => {
+            app.save_focus();
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
@@ -109,10 +111,10 @@ fn execute_prefix_action(app: &mut App, action: Action) -> Option<AsyncAction> {
         }
 
         Action::OpenTodo => {
+            app.save_focus();
             if app.focus == Focus::Terminal {
                 app.exit_terminal();
             }
-            app.save_focus();
             app.input_mode = InputMode::TodoPopup;
             Some(AsyncAction::LoadTodos)
         }

@@ -46,7 +46,7 @@ use super::input::{handle_input_sync, handle_mouse_sync, TextInput};
 use super::layout::draw;
 use super::state::{
     AsyncAction, DirtyFlags, ExitCleanupAction, Focus, InputMode, PrefixMode, RepoState,
-    RightPanelView, SidebarState, TerminalState, TodoState,
+    RightPanelView, SavedFocusState, SidebarState, TerminalState, TodoState,
 };
 
 /// Deactivate fcitx5 input method
@@ -78,8 +78,8 @@ pub struct App {
     // ============ Global UI State ============
     /// Focus position
     pub focus: Focus,
-    /// Focus restoration stack for popups/dialogs
-    pub saved_focus_stack: Vec<Focus>,
+    /// Focus restoration stack for popups/dialogs (saves focus and terminal mode)
+    pub saved_focus_stack: Vec<SavedFocusState>,
 
     // ============ Terminal State (global, shared across repos) ============
     pub terminal: TerminalState,

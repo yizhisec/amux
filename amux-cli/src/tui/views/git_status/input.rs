@@ -36,9 +36,11 @@ pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
             Some(AsyncAction::LoadDiffFiles)
         }
 
-        // Back to sidebar
+        // Back to previous focus
         KeyCode::Esc => {
-            app.focus = Focus::Sidebar;
+            if !app.restore_focus() {
+                app.focus = Focus::Sidebar;
+            }
             None
         }
 
@@ -49,8 +51,10 @@ pub fn handle_git_status_input_sync(app: &mut App, key: KeyEvent) -> Option<Asyn
 /// Execute a git status action
 fn execute_git_status_action(app: &mut App, action: Action) -> Option<AsyncAction> {
     match action {
-        Action::FocusSidebar => {
-            app.focus = Focus::Sidebar;
+        Action::FocusSidebar | Action::ClosePopup => {
+            if !app.restore_focus() {
+                app.focus = Focus::Sidebar;
+            }
             None
         }
 
