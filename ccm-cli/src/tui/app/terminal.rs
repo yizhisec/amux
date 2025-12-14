@@ -1,6 +1,6 @@
 //! Terminal operations and stream management
 
-use super::super::state::{Focus, TerminalMode};
+use super::super::state::{Focus, RightPanelView, TerminalMode};
 use super::super::App;
 use crate::error::TuiError;
 use ccm_proto::daemon::AttachInput;
@@ -26,6 +26,7 @@ impl App {
         };
 
         self.focus = Focus::Terminal;
+        self.right_panel_view = RightPanelView::Terminal;
         self.terminal.mode = TerminalMode::Insert;
         self.scroll_to_bottom();
 

@@ -231,8 +231,8 @@ fn default_todo_bindings() -> HashMap<String, String> {
 
     map.insert("Space".to_string(), "toggle-complete".to_string());
 
-    map.insert("a".to_string(), "add-todo".to_string());
-    map.insert("A".to_string(), "add-child-todo".to_string());
+    map.insert("n".to_string(), "add-todo".to_string());
+    map.insert("N".to_string(), "add-child-todo".to_string());
 
     map.insert("e".to_string(), "edit-title".to_string());
     map.insert("E".to_string(), "edit-description".to_string());
