@@ -188,7 +188,38 @@ impl App {
         };
 
         // Fetch worktrees from daemon
-        let all_branches = self.client.list_worktrees(&repo_id).await?;
+        let all_branches = match self.client.list_worktrees(&repo_id).await {
+            Ok(branches) => branches,
+            Err(e) => {
+                // Check if this is a "not found" error (repo was removed by daemon)
+                if matches!(&e, crate::error::ClientError::Rpc(status) if status.code() == tonic::Code::NotFound) {
+                    debug!(
+                        "Repo {} no longer exists, refreshing repo list",
+                        repo_id
+                    );
+                    // Remove from local state and refresh repos
+                    self.repo_states.remove(&repo_id);
+                    self.repo_order.retain(|id| id != &repo_id);
+                    if self.current_repo_id.as_ref() == Some(&repo_id) {
+                        self.current_repo_id = self.repo_order.first().cloned();
+                    }
+                    // Re-fetch repo list from daemon to stay in sync
+                    let repos = self.client.list_repos().await?;
+                    self.repo_order = repos.iter().map(|r| r.id.clone()).collect();
+                    for repo_info in repos {
+                        self.repo_states
+                            .entry(repo_info.id.clone())
+                            .and_modify(|r| r.info = repo_info.clone())
+                            .or_insert_with(|| RepoState::new(repo_info));
+                    }
+                    self.repo_states.retain(|id, _| self.repo_order.contains(id));
+                    self.dirty.sidebar = true;
+                    // Return early - branches will be loaded when switching to a valid repo
+                    return Ok(());
+                }
+                return Err(e.into());
+            }
+        };
 
         // Update the repo state
         if let Some(repo) = self.repo_states.get_mut(&repo_id) {

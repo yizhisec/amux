@@ -1,6 +1,7 @@
 //! Worktree management handlers
 
-use crate::error::{DaemonError, RepoError};
+use super::get_repo_and_open_git;
+use crate::error::DaemonError;
 use crate::events::EventBroadcaster;
 use crate::git::GitOps;
 use crate::state::SharedState;
@@ -13,14 +14,9 @@ pub async fn list_worktrees(
     state: &SharedState,
     req: ListWorktreesRequest,
 ) -> Result<Response<ListWorktreesResponse>, Status> {
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
+
     let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
 
     // Get worktrees from git
     let git_worktrees =
@@ -80,14 +76,7 @@ pub async fn create_worktree(
     events: &EventBroadcaster,
     req: CreateWorktreeRequest,
 ) -> Result<Response<WorktreeInfo>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     let wt_path = GitOps::create_worktree(
         &git_repo,
@@ -117,26 +106,22 @@ pub async fn remove_worktree(
     events: &EventBroadcaster,
     req: RemoveWorktreeRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
     // Check if any sessions exist for this worktree
-    let has_sessions = state
-        .sessions
-        .values()
-        .any(|s| s.repo_id == req.repo_id && s.branch == req.branch);
+    {
+        let state_guard = state.read().await;
+        let has_sessions = state_guard
+            .sessions
+            .values()
+            .any(|s| s.repo_id == req.repo_id && s.branch == req.branch);
 
-    if has_sessions {
-        return Err(Status::failed_precondition(
-            "Cannot remove worktree with active sessions",
-        ));
+        if has_sessions {
+            return Err(Status::failed_precondition(
+                "Cannot remove worktree with active sessions",
+            ));
+        }
     }
 
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     GitOps::remove_worktree(&git_repo, &req.branch)
         .map_err(|e| Status::from(DaemonError::from(e)))?;
@@ -152,14 +137,7 @@ pub async fn delete_branch(
     state: &SharedState,
     req: DeleteBranchRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     GitOps::delete_branch(&git_repo, &req.branch)
         .map_err(|e| Status::from(DaemonError::from(e)))?;

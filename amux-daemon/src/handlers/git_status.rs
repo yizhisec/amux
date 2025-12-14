@@ -1,6 +1,7 @@
 //! Git status operations handlers
 
-use crate::error::{DaemonError, RepoError};
+use super::get_repo_and_open_git;
+use crate::error::DaemonError;
 use crate::git::GitOps;
 use crate::state::SharedState;
 use amux_proto::daemon::{
@@ -15,14 +16,7 @@ pub async fn get_git_status(
     state: &SharedState,
     req: GetGitStatusRequest,
 ) -> Result<Response<GetGitStatusResponse>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -74,14 +68,7 @@ pub async fn stage_file(
     state: &SharedState,
     req: StageFileRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -102,14 +89,7 @@ pub async fn unstage_file(
     state: &SharedState,
     req: UnstageFileRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -131,14 +111,7 @@ pub async fn stage_all(
     state: &SharedState,
     req: StageAllRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -159,14 +132,7 @@ pub async fn unstage_all(
     state: &SharedState,
     req: UnstageAllRequest,
 ) -> Result<Response<Empty>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -187,14 +153,7 @@ pub async fn git_push(
     state: &SharedState,
     req: GitPushRequest,
 ) -> Result<Response<GitPushResponse>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {
@@ -219,14 +178,7 @@ pub async fn git_pull(
     state: &SharedState,
     req: GitPullRequest,
 ) -> Result<Response<GitPullResponse>, Status> {
-    let state = state.read().await;
-
-    let repo = state
-        .repos
-        .get(&req.repo_id)
-        .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(req.repo_id.clone()))))?;
-
-    let git_repo = GitOps::open(&repo.path).map_err(|e| Status::from(DaemonError::from(e)))?;
+    let (_repo, git_repo) = get_repo_and_open_git(state, &req.repo_id).await?;
 
     // Find worktree path for the branch
     let worktree_path = GitOps::find_worktree_path(&git_repo, &req.branch).ok_or_else(|| {

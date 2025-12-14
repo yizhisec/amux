@@ -2,6 +2,8 @@
 
 use crate::tui::app::App;
 use crate::tui::state::{Focus, PrefixMode, TerminalMode};
+use amux_config::actions::Action;
+use amux_config::keybind::BindingContext;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -44,11 +46,29 @@ pub fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(tabs, area);
 }
 
+/// Helper to format key binding for display
+fn key(app: &App, action: Action, context: BindingContext) -> String {
+    app.keybinds.key_display(action, context)
+}
+
 /// Draw status bar at the bottom
 pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Prefix mode takes priority - show available commands
     if app.prefix_mode == PrefixMode::WaitingForCommand {
-        let prefix_help = "Prefix: [b] Branches | [s] Sessions | [t] Terminal | [[] Normal | [n] New | [a] Add | [d] Delete | [r] Refresh | [f] Fullscreen | [1-9] Repo | [q] Quit";
+        let ctx = BindingContext::Prefix;
+        let prefix_help = format!(
+            "Prefix: {} Branches | {} Sessions | {} Terminal | {} Normal | {} New | {} Add | {} Delete | {} Refresh | {} Fullscreen | [1-9] Repo | {} Quit",
+            key(app, Action::FocusBranches, ctx),
+            key(app, Action::FocusSessions, ctx),
+            key(app, Action::FocusTerminal, ctx),
+            key(app, Action::NormalMode, ctx),
+            key(app, Action::CreateSession, ctx),
+            key(app, Action::AddWorktree, ctx),
+            key(app, Action::DeleteCurrent, ctx),
+            key(app, Action::RefreshAll, ctx),
+            key(app, Action::ToggleFullscreen, ctx),
+            key(app, Action::Quit, ctx),
+        );
         let paragraph = Paragraph::new(prefix_help)
             .style(
                 Style::default()
@@ -70,15 +90,77 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         (status.clone(), Color::Green)
     } else {
         let help = match app.focus {
-            Focus::Sidebar => "[Ctrl+s] Prefix | [j/k] Move | [o/Enter] Expand | [g] Git | [Tab] Terminal | [n] New | [a] Add | [R] Rename | [x] Delete | [d] Diff | [q] Quit",
-            Focus::GitStatus => "[j/k] Move | [o] Expand | [s] Stage | [u] Unstage | [S] Stage All | [U] Unstage All | [r] Refresh | [Tab] Diff | [Esc] Back",
-            Focus::Terminal => match app.terminal.mode {
-                TerminalMode::Normal => "[Ctrl+s] Prefix | [j/k] Scroll | [Ctrl+d/u] Page | [G/g] Top/Bottom | [i] Insert | [f] Fullscreen | [d] Diff | [Esc] Exit",
-                TerminalMode::Insert => "[Esc] Normal mode | Keys sent to terminal",
+            Focus::Sidebar => {
+                let ctx = BindingContext::Sidebar;
+                format!(
+                    "{} Prefix | {} Move | {} Expand | {} Git | {} Term | {} New | {} Add | {} Rename | {} Del | {} Diff | {} Quit",
+                    app.keybinds.prefix_key_display(),
+                    format!("{}/{}", key(app, Action::MoveUp, ctx), key(app, Action::MoveDown, ctx)).replace("[]", ""),
+                    key(app, Action::ToggleExpand, ctx),
+                    key(app, Action::FocusGitStatus, ctx),
+                    key(app, Action::FocusTerminal, ctx),
+                    key(app, Action::CreateSession, ctx),
+                    key(app, Action::AddWorktree, ctx),
+                    key(app, Action::RenameSession, ctx),
+                    key(app, Action::DeleteCurrent, ctx),
+                    key(app, Action::ToggleDiffView, ctx),
+                    key(app, Action::Quit, ctx),
+                )
             },
-            Focus::DiffFiles => "[j/k] Nav | [o] Expand | [c] Add | [C] Edit | [x] Del | [n/N] Jump | [S] Send | [Esc] Back",
+            Focus::GitStatus => {
+                let ctx = BindingContext::GitStatus;
+                format!(
+                    "{} Move | {} Expand | {} Stage | {} Unstage | {} Stage All | {} Unstage All | {} Refresh | {} Diff | {} Back",
+                    format!("{}/{}", key(app, Action::MoveUp, ctx), key(app, Action::MoveDown, ctx)).replace("[]", ""),
+                    key(app, Action::ToggleExpand, ctx),
+                    key(app, Action::StageFile, ctx),
+                    key(app, Action::UnstageFile, ctx),
+                    key(app, Action::StageAll, ctx),
+                    key(app, Action::UnstageAll, ctx),
+                    key(app, Action::RefreshStatus, ctx),
+                    key(app, Action::ToggleDiffView, ctx),
+                    key(app, Action::FocusSidebar, ctx),
+                )
+            },
+            Focus::Terminal => match app.terminal.mode {
+                TerminalMode::Normal => {
+                    let ctx = BindingContext::TerminalNormal;
+                    format!(
+                        "{} Prefix | {} Scroll | {} Page | {} Top/Bottom | {} Insert | {} Full | {} Diff | {} Exit",
+                        app.keybinds.prefix_key_display(),
+                        format!("{}/{}", key(app, Action::ScrollUp, ctx), key(app, Action::ScrollDown, ctx)).replace("[]", ""),
+                        format!("{}/{}", key(app, Action::ScrollHalfPageUp, ctx), key(app, Action::ScrollHalfPageDown, ctx)).replace("[]", ""),
+                        format!("{}/{}", key(app, Action::ScrollTop, ctx), key(app, Action::ScrollBottom, ctx)).replace("[]", ""),
+                        key(app, Action::InsertMode, ctx),
+                        key(app, Action::ToggleFullscreen, ctx),
+                        key(app, Action::ToggleDiffView, ctx),
+                        key(app, Action::ExitTerminal, ctx),
+                    )
+                },
+                TerminalMode::Insert => {
+                    let ctx = BindingContext::TerminalInsert;
+                    format!(
+                        "{} Normal mode | Keys sent to terminal",
+                        key(app, Action::NormalMode, ctx),
+                    )
+                },
+            },
+            Focus::DiffFiles => {
+                let ctx = BindingContext::Diff;
+                format!(
+                    "{} Nav | {} Expand | {} Add | {} Edit | {} Del | {} Jump | {} Send | {} Back",
+                    format!("{}/{}", key(app, Action::MoveUp, ctx), key(app, Action::MoveDown, ctx)).replace("[]", ""),
+                    key(app, Action::ToggleExpand, ctx),
+                    key(app, Action::AddComment, ctx),
+                    key(app, Action::EditComment, ctx),
+                    key(app, Action::DeleteComment, ctx),
+                    format!("{}/{}", key(app, Action::NextComment, ctx), key(app, Action::PrevComment, ctx)).replace("[]", ""),
+                    key(app, Action::SubmitReviewClaude, ctx),
+                    key(app, Action::BackToTerminal, ctx),
+                )
+            },
         };
-        (help.to_string(), Color::DarkGray)
+        (help, Color::DarkGray)
     };
 
     let paragraph = Paragraph::new(message)

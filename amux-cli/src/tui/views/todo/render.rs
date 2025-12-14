@@ -2,6 +2,8 @@
 
 use crate::tui::app::App;
 use crate::tui::state::InputMode;
+use amux_config::actions::Action;
+use amux_config::keybind::BindingContext;
 use amux_proto::daemon::TodoItem;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -10,6 +12,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
+
+/// Helper to format key binding for display
+fn key(app: &App, action: Action) -> String {
+    app.keybinds.key_display(action, BindingContext::Todo)
+}
 
 /// Calculate depth for TODO item in tree structure
 fn calculate_depth(items: &[TodoItem], item_idx: usize) -> usize {
@@ -109,7 +116,17 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(list, chunks[0]);
 
     // Draw help text
-    let help_text = "[j/k] Nav | [Space] Toggle | [a] Add | [A] Add child | [e] Edit | [E] Desc | [d] Delete | [q] Close";
+    let help_text = format!(
+        "{} Nav | {} Toggle | {} Add | {} Add child | {} Edit | {} Desc | {} Delete | {} Close",
+        format!("{}/{}", key(app, Action::MoveUp), key(app, Action::MoveDown)).replace("[]", ""),
+        key(app, Action::ToggleTodoComplete),
+        key(app, Action::AddTodo),
+        key(app, Action::AddChildTodo),
+        key(app, Action::EditTodoTitle),
+        key(app, Action::EditTodoDescription),
+        key(app, Action::DeleteTodo),
+        key(app, Action::ClosePopup),
+    );
     let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .block(Block::default().borders(Borders::ALL).title(" Help "));
