@@ -258,9 +258,10 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
     // This prevents showing intermediate states (e.g., blank screen during clear+redraw)
     let mut pty_data_buffer: Vec<Vec<u8>> = Vec::new();
 
-    // Track when PTY data was last received for debouncing
-    let mut last_pty_data_time: Option<std::time::Instant> = None;
-    const PTY_DEBOUNCE_MS: u64 = 8; // Wait 8ms after last PTY data before rendering
+    // Track when PTY data was received for debouncing
+    // This prevents rendering intermediate states during rapid updates
+    let mut last_pty_time: Option<std::time::Instant> = None;
+    const DEBOUNCE_MS: u64 = 5; // Wait 5ms after last PTY data before rendering
 
     // Main loop with tokio::select!
     loop {
@@ -301,7 +302,7 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                 // Buffer data for batch processing at render time
                 pty_data_buffer.push(data);
                 // Record time for debouncing - wait for more data before rendering
-                last_pty_data_time = Some(std::time::Instant::now());
+                last_pty_time = Some(std::time::Instant::now());
             }
 
             // 3. Daemon events - update state
@@ -326,21 +327,24 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                 if let Some(stream) = app.terminal_stream.as_mut() {
                     while let Ok(data) = stream.output_rx.try_recv() {
                         pty_data_buffer.push(data);
-                        last_pty_data_time = Some(std::time::Instant::now());
+                        last_pty_time = Some(std::time::Instant::now());
                     }
                 }
 
-                // Debounce: if we received PTY data very recently, skip this render tick
-                // This allows more data to accumulate before rendering, preventing
-                // intermediate states (e.g., blank screen during clear+redraw sequences)
-                let should_skip_render = if let Some(last_time) = last_pty_data_time {
-                    last_time.elapsed().as_millis() < PTY_DEBOUNCE_MS as u128
+                // Debounce: if PTY data arrived very recently, skip render to wait for more
+                // This prevents showing intermediate states (e.g., blank during clear+redraw)
+                // Only debounce if we have buffered data waiting to be processed
+                let should_skip = if !pty_data_buffer.is_empty() {
+                    if let Some(last_time) = last_pty_time {
+                        last_time.elapsed().as_millis() < DEBOUNCE_MS as u128
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };
 
-                if should_skip_render && !pty_data_buffer.is_empty() {
-                    // Skip this tick - more data might be coming
+                if should_skip {
                     continue;
                 }
 
@@ -360,8 +364,7 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                             }
                         }
                     }
-                    // Clear debounce timer after processing
-                    last_pty_data_time = None;
+                    last_pty_time = None;
                 }
 
                 // Execute pending async action
