@@ -30,11 +30,9 @@ pub async fn get_repo_and_open_git(
     // First, read the state to get the repo
     let repo = {
         let state_guard = state.read().await;
-        state_guard
-            .repos
-            .get(repo_id)
-            .cloned()
-            .ok_or_else(|| Status::from(DaemonError::Repo(RepoError::NotFound(repo_id.to_string()))))?
+        state_guard.repos.get(repo_id).cloned().ok_or_else(|| {
+            Status::from(DaemonError::Repo(RepoError::NotFound(repo_id.to_string())))
+        })?
     };
 
     // Check if the path exists

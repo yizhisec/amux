@@ -51,9 +51,10 @@ impl SessionMeta {
 
         // Extract legacy fields for backward compatibility
         let (provider_session_id, is_shell) = match &session.kind {
-            SessionKind::Interactive { provider_session_id, .. } => {
-                (Some(provider_session_id.clone()), false)
-            }
+            SessionKind::Interactive {
+                provider_session_id,
+                ..
+            } => (Some(provider_session_id.clone()), false),
             SessionKind::Shell => (None, true),
             SessionKind::OneShot => (None, false),
         };

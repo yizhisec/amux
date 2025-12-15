@@ -54,7 +54,10 @@ impl SessionKind {
     /// Get provider session ID if interactive
     pub fn provider_session_id(&self) -> Option<&str> {
         match self {
-            SessionKind::Interactive { provider_session_id, .. } => Some(provider_session_id),
+            SessionKind::Interactive {
+                provider_session_id,
+                ..
+            } => Some(provider_session_id),
             _ => None,
         }
     }
@@ -74,11 +77,11 @@ pub struct Session {
     pub repo_id: String,
     pub branch: String,
     pub worktree_path: PathBuf,
-    pub provider: String,                 // AI provider name (e.g., "claude", "codex")
-    pub kind: SessionKind,                // Session type (Interactive/OneShot/Shell)
+    pub provider: String,  // AI provider name (e.g., "claude", "codex")
+    pub kind: SessionKind, // Session type (Interactive/OneShot/Shell)
     pub name_updated_from_provider: bool, // Whether name was updated from provider's first message
-    pub model: Option<String>,            // Model to use (e.g., "haiku", "sonnet")
-    pub prompt: Option<String>,           // Initial prompt (only used on first start)
+    pub model: Option<String>, // Model to use (e.g., "haiku", "sonnet")
+    pub prompt: Option<String>, // Initial prompt (only used on first start)
     pub pty: Option<PtyProcess>,
     pub screen_buffer: Arc<Mutex<vt100::Parser>>,
     pub raw_output_buffer: Arc<Mutex<Vec<u8>>>,
@@ -101,6 +104,7 @@ impl Session {
 
 impl Session {
     /// Create a new session with explicit SessionKind
+    #[allow(clippy::too_many_arguments)]
     pub fn with_kind(
         id: String,
         name: String,
@@ -282,7 +286,10 @@ impl Session {
 
                 PtyProcess::spawn(&self.worktree_path, cmd, args, rows, cols)?
             }
-            SessionKind::Interactive { provider_session_id, started } => {
+            SessionKind::Interactive {
+                provider_session_id,
+                started,
+            } => {
                 // Take prompt if set (only used on first start)
                 let prompt = self.prompt.take();
 
@@ -423,7 +430,9 @@ impl Session {
             // TODO: Use ProviderRegistry to get appropriate provider
             if self.provider == "claude" {
                 let claude_provider = ClaudeProvider::new();
-                if let Ok(Some(info)) = claude_provider.read_session_info(session_id, &self.worktree_path) {
+                if let Ok(Some(info)) =
+                    claude_provider.read_session_info(session_id, &self.worktree_path)
+                {
                     if let Some(description) = info.description {
                         self.name = description;
                         self.name_updated_from_provider = true;

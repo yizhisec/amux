@@ -507,7 +507,8 @@ pub struct GitState {
     pub files: Vec<GitStatusFile>,
     /// Cursor in virtual list
     pub cursor: usize,
-    /// Scroll offset for rendering
+    /// Scroll offset for rendering (reserved for future caching optimization)
+    #[allow(dead_code)]
     pub scroll_offset: usize,
     /// Expanded sections
     pub expanded_sections: HashSet<GitSection>,

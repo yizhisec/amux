@@ -1,6 +1,8 @@
 //! OpenAI Codex CLI provider implementation
 
-use super::{AiProvider, ProviderConfig, ProviderError, ProviderResult, ProviderSessionInfo, SessionMode};
+use super::{
+    AiProvider, ProviderConfig, ProviderError, ProviderResult, ProviderSessionInfo, SessionMode,
+};
 use std::ffi::CString;
 use std::path::Path;
 
@@ -96,8 +98,7 @@ impl AiProvider for CodexProvider {
             SessionMode::OneShot => {
                 // Use codex exec for non-interactive one-shot
                 args.push(
-                    CString::new("exec")
-                        .map_err(|e| ProviderError::CommandBuild(e.to_string()))?,
+                    CString::new("exec").map_err(|e| ProviderError::CommandBuild(e.to_string()))?,
                 );
 
                 // Add model if specified

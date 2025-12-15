@@ -281,11 +281,13 @@ impl App {
                         .terminal
                         .session_parsers
                         .entry(target_id.clone())
-                        .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(
+                        .or_insert_with(|| {
+                            Arc::new(Mutex::new(vt100::Parser::new(
                                 DEFAULT_TERMINAL_ROWS,
                                 DEFAULT_TERMINAL_COLS,
                                 DEFAULT_SCROLLBACK,
-                            ))))
+                            )))
+                        })
                         .clone();
 
                     self.terminal.scroll_offset = 0;
@@ -332,11 +334,13 @@ impl App {
                     .terminal
                     .session_parsers
                     .entry(new_id.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(vt100::Parser::new(
-                                DEFAULT_TERMINAL_ROWS,
-                                DEFAULT_TERMINAL_COLS,
-                                DEFAULT_SCROLLBACK,
-                            ))))
+                    .or_insert_with(|| {
+                        Arc::new(Mutex::new(vt100::Parser::new(
+                            DEFAULT_TERMINAL_ROWS,
+                            DEFAULT_TERMINAL_COLS,
+                            DEFAULT_SCROLLBACK,
+                        )))
+                    })
                     .clone();
 
                 self.terminal.scroll_offset = 0;
@@ -389,12 +393,11 @@ impl App {
                         }
 
                         // Create parser for new shell session
-                        self.terminal.parser =
-                            Arc::new(Mutex::new(vt100::Parser::new(
-                                DEFAULT_TERMINAL_ROWS,
-                                DEFAULT_TERMINAL_COLS,
-                                DEFAULT_SCROLLBACK,
-                            )));
+                        self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(
+                            DEFAULT_TERMINAL_ROWS,
+                            DEFAULT_TERMINAL_COLS,
+                            DEFAULT_SCROLLBACK,
+                        )));
                         self.terminal
                             .session_parsers
                             .insert(new_id.clone(), self.terminal.parser.clone());
@@ -418,7 +421,8 @@ impl App {
     /// Get inner terminal size (rows, cols) accounting for borders and layout
     /// Returns (inner_rows, inner_cols) suitable for PTY creation
     pub fn get_inner_terminal_size(&self) -> (u16, u16) {
-        let (full_cols, full_rows) = size().unwrap_or((DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS));
+        let (full_cols, full_rows) =
+            size().unwrap_or((DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS));
         let main_height = full_rows.saturating_sub(6); // tab + status bars
         let terminal_width = (full_cols as f32 * 0.75) as u16;
         let inner_rows = main_height.saturating_sub(2); // borders

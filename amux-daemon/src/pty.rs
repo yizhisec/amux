@@ -11,7 +11,6 @@ use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 
-
 /// PTY process handle
 pub struct PtyProcess {
     /// Master file descriptor
