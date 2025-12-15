@@ -79,7 +79,8 @@ impl App {
     pub async fn fetch_providers(&mut self, _repo_id: &str, _branch: &str) -> Result<()> {
         match self.client.list_providers().await {
             Ok(provider_infos) => {
-                let provider_names: Vec<String> = provider_infos.iter().map(|p| p.name.clone()).collect();
+                let provider_names: Vec<String> =
+                    provider_infos.iter().map(|p| p.name.clone()).collect();
                 let provider_count = provider_names.len();
 
                 // Update the input mode with fetched providers
@@ -156,7 +157,17 @@ impl App {
         // Create session with selected provider
         match self
             .client
-            .create_session(&repo_id, &branch, None, None, None, None, Some(&provider), Some(inner_rows as u32), Some(inner_cols as u32))
+            .create_session(
+                &repo_id,
+                &branch,
+                None,
+                None,
+                None,
+                None,
+                Some(&provider),
+                Some(inner_rows as u32),
+                Some(inner_cols as u32),
+            )
             .await
         {
             Ok(session) => {
@@ -171,18 +182,17 @@ impl App {
 
                 // Update sidebar cursor to point to the new session
                 if let Some(repo) = self.current_repo_mut() {
-                    let session_idx =
-                        repo.sessions_by_worktree.get(&b_idx).and_then(|sessions| {
-                            sessions.iter().position(|s| s.id == session.id)
-                        });
+                    let session_idx = repo
+                        .sessions_by_worktree
+                        .get(&b_idx)
+                        .and_then(|sessions| sessions.iter().position(|s| s.id == session.id));
 
                     if let Some(s_idx) = session_idx {
                         let mut cursor_pos = 0;
                         for wt_idx in 0..b_idx {
                             cursor_pos += 1;
                             if repo.expanded_worktrees.contains(&wt_idx) {
-                                if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx)
-                                {
+                                if let Some(sessions) = repo.sessions_by_worktree.get(&wt_idx) {
                                     cursor_pos += sessions.len();
                                 }
                             }
@@ -204,8 +214,11 @@ impl App {
                 }
 
                 // Create new parser for the new session
-                self.terminal.parser =
-                    Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)));
+                self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(
+                    DEFAULT_TERMINAL_ROWS,
+                    DEFAULT_TERMINAL_COLS,
+                    DEFAULT_SCROLLBACK,
+                )));
                 self.terminal
                     .session_parsers
                     .insert(session.id.clone(), self.terminal.parser.clone());
@@ -397,7 +410,17 @@ impl App {
             let (inner_rows, inner_cols) = self.get_inner_terminal_size();
             match self
                 .client
-                .create_session(&repo.id, &branch_name, None, None, None, None, None, Some(inner_rows as u32), Some(inner_cols as u32))
+                .create_session(
+                    &repo.id,
+                    &branch_name,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(inner_rows as u32),
+                    Some(inner_cols as u32),
+                )
                 .await
             {
                 Ok(session) => {
@@ -512,10 +535,10 @@ impl App {
 
                 // Update sidebar cursor to point to the new session
                 if let Some(repo) = self.current_repo_mut() {
-                    let session_idx =
-                        repo.sessions_by_worktree.get(&b_idx).and_then(|sessions| {
-                            sessions.iter().position(|s| s.id == session.id)
-                        });
+                    let session_idx = repo
+                        .sessions_by_worktree
+                        .get(&b_idx)
+                        .and_then(|sessions| sessions.iter().position(|s| s.id == session.id));
 
                     if let Some(s_idx) = session_idx {
                         let mut cursor_pos = 0;
@@ -577,7 +600,17 @@ impl App {
                     let (inner_rows, inner_cols) = self.get_inner_terminal_size();
                     match self
                         .client
-                        .create_session(&repo.id, &branch.branch, None, None, None, None, None, Some(inner_rows as u32), Some(inner_cols as u32))
+                        .create_session(
+                            &repo.id,
+                            &branch.branch,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(inner_rows as u32),
+                            Some(inner_cols as u32),
+                        )
                         .await
                     {
                         Ok(session) => {
@@ -630,8 +663,11 @@ impl App {
                             }
 
                             // Create new parser for the new session
-                            self.terminal.parser =
-                                Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)));
+                            self.terminal.parser = Arc::new(Mutex::new(vt100::Parser::new(
+                                DEFAULT_TERMINAL_ROWS,
+                                DEFAULT_TERMINAL_COLS,
+                                DEFAULT_SCROLLBACK,
+                            )));
                             self.terminal
                                 .session_parsers
                                 .insert(session.id.clone(), self.terminal.parser.clone());
@@ -950,7 +986,11 @@ impl App {
                             .session_parsers
                             .entry(new_id.clone())
                             .or_insert_with(|| {
-                                Arc::new(Mutex::new(vt100::Parser::new(DEFAULT_TERMINAL_ROWS, DEFAULT_TERMINAL_COLS, DEFAULT_SCROLLBACK)))
+                                Arc::new(Mutex::new(vt100::Parser::new(
+                                    DEFAULT_TERMINAL_ROWS,
+                                    DEFAULT_TERMINAL_COLS,
+                                    DEFAULT_SCROLLBACK,
+                                )))
                             })
                             .clone();
 

@@ -438,15 +438,15 @@ fn detect_terminal_query(
     // CSI > c - Secondary Device Attributes (DA2)
     // CSI ? u - Kitty keyboard protocol query
 
-    let csi_6n = b"\x1b[6n";           // Cursor position query
-    let csi_0c = b"\x1b[c";            // DA1
-    let csi_0_c = b"\x1b[0c";          // DA1 variant
-    let csi_gt_c = b"\x1b[>c";         // DA2 (Secondary Device Attributes)
-    let csi_gt_0c = b"\x1b[>0c";       // DA2 variant
-    let csi_qmark_u = b"\x1b[?u";      // Kitty keyboard protocol query
-    let osc_10_query = b"\x1b]10;?\x1b\\";  // OSC 10 foreground color query (ST terminator)
+    let csi_6n = b"\x1b[6n"; // Cursor position query
+    let csi_0c = b"\x1b[c"; // DA1
+    let csi_0_c = b"\x1b[0c"; // DA1 variant
+    let csi_gt_c = b"\x1b[>c"; // DA2 (Secondary Device Attributes)
+    let csi_gt_0c = b"\x1b[>0c"; // DA2 variant
+    let csi_qmark_u = b"\x1b[?u"; // Kitty keyboard protocol query
+    let osc_10_query = b"\x1b]10;?\x1b\\"; // OSC 10 foreground color query (ST terminator)
     let osc_10_query_bel = b"\x1b]10;?\x07"; // OSC 10 foreground color query (BEL terminator)
-    let osc_11_query = b"\x1b]11;?\x1b\\";  // OSC 11 background color query (ST terminator)
+    let osc_11_query = b"\x1b]11;?\x1b\\"; // OSC 11 background color query (ST terminator)
     let osc_11_query_bel = b"\x1b]11;?\x07"; // OSC 11 background color query (BEL terminator)
 
     let mut responses: Vec<u8> = Vec::new();
@@ -457,8 +457,8 @@ fn detect_terminal_query(
         let (row, col) = if let Ok(p) = parser.lock() {
             let screen = p.screen();
             (
-                screen.cursor_position().0 as u16 + 1,
-                screen.cursor_position().1 as u16 + 1,
+                screen.cursor_position().0 + 1,
+                screen.cursor_position().1 + 1,
             )
         } else {
             (1, 1) // Default to 1,1 if we can't get position

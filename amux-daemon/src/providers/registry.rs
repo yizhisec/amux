@@ -72,7 +72,11 @@ impl ProviderRegistry {
         if available.contains(&model) {
             Ok(())
         } else {
-            Err(ProviderError::invalid_model(provider_name, model, &available))
+            Err(ProviderError::invalid_model(
+                provider_name,
+                model,
+                &available,
+            ))
         }
     }
 
@@ -110,7 +114,11 @@ impl ProviderRegistry {
         // Register mock providers that simulate claude and codex
         let mock_claude = Arc::new(MockProvider::with_models(
             "claude",
-            vec!["opus".to_string(), "sonnet".to_string(), "haiku".to_string()],
+            vec![
+                "opus".to_string(),
+                "sonnet".to_string(),
+                "haiku".to_string(),
+            ],
             "sonnet".to_string(),
         ));
         providers.insert("claude".to_string(), mock_claude);

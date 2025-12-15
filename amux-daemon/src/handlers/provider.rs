@@ -5,7 +5,9 @@ use amux_proto::daemon::{ListProvidersResponse, ProviderInfo};
 use tonic::Status;
 
 /// List all available providers
-pub async fn list_providers(state: &SharedState) -> Result<tonic::Response<ListProvidersResponse>, Status> {
+pub async fn list_providers(
+    state: &SharedState,
+) -> Result<tonic::Response<ListProvidersResponse>, Status> {
     let state = state.read().await;
     let registry = &state.provider_registry;
 
@@ -14,8 +16,11 @@ pub async fn list_providers(state: &SharedState) -> Result<tonic::Response<ListP
         .iter()
         .map(|name| {
             if let Some(provider) = registry.get(name) {
-                let models: Vec<String> =
-                    provider.available_models().iter().map(|s| s.to_string()).collect();
+                let models: Vec<String> = provider
+                    .available_models()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 ProviderInfo {
                     name: provider.name().to_string(),
                     display_name: provider.display_name().to_string(),

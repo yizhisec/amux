@@ -120,7 +120,11 @@ pub async fn create_session(
         .unwrap_or_else(|| session::generate_session_name(&provider, &existing_names));
 
     // Debug: log the provider being used
-    tracing::info!("Creating session with provider: {}, model: {:?}", provider, model);
+    tracing::info!(
+        "Creating session with provider: {}, model: {:?}",
+        provider,
+        model
+    );
 
     // Shell sessions don't need provider session ID
     let provider_session_id = if is_shell {

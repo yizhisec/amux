@@ -97,7 +97,9 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(prompt, Style::default().fg(Color::Cyan)),
             Span::styled(before, Style::default().fg(Color::White)),
             Span::styled(
-                at_cursor.map(|c| c.to_string()).unwrap_or_else(|| " ".to_string()),
+                at_cursor
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| " ".to_string()),
                 Style::default().fg(Color::Black).bg(Color::White),
             ),
             Span::styled(after, Style::default().fg(Color::White)),
@@ -134,7 +136,7 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                     key(app, Action::ToggleDiffView, ctx),
                     key(app, Action::Quit, ctx),
                 )
-            },
+            }
             Focus::GitStatus => {
                 let ctx = BindingContext::GitStatus;
                 format!(
@@ -149,7 +151,7 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                     key(app, Action::ToggleDiffView, ctx),
                     key(app, Action::FocusSidebar, ctx),
                 )
-            },
+            }
             Focus::Terminal => match app.terminal.mode {
                 TerminalMode::Normal => {
                     let ctx = BindingContext::TerminalNormal;
@@ -164,29 +166,39 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                         key(app, Action::ToggleDiffView, ctx),
                         key(app, Action::ExitTerminal, ctx),
                     )
-                },
+                }
                 TerminalMode::Insert => {
                     let ctx = BindingContext::TerminalInsert;
                     format!(
                         "{} Normal mode | Keys sent to terminal",
                         key(app, Action::NormalMode, ctx),
                     )
-                },
+                }
             },
             Focus::DiffFiles => {
                 let ctx = BindingContext::Diff;
                 format!(
                     "{} Nav | {} Expand | {} Add | {} Edit | {} Del | {} Jump | {} Send | {} Back",
-                    format!("{}/{}", key(app, Action::MoveUp, ctx), key(app, Action::MoveDown, ctx)).replace("[]", ""),
+                    format!(
+                        "{}/{}",
+                        key(app, Action::MoveUp, ctx),
+                        key(app, Action::MoveDown, ctx)
+                    )
+                    .replace("[]", ""),
                     key(app, Action::ToggleExpand, ctx),
                     key(app, Action::AddComment, ctx),
                     key(app, Action::EditComment, ctx),
                     key(app, Action::DeleteComment, ctx),
-                    format!("{}/{}", key(app, Action::NextComment, ctx), key(app, Action::PrevComment, ctx)).replace("[]", ""),
+                    format!(
+                        "{}/{}",
+                        key(app, Action::NextComment, ctx),
+                        key(app, Action::PrevComment, ctx)
+                    )
+                    .replace("[]", ""),
                     key(app, Action::SubmitReviewClaude, ctx),
                     key(app, Action::BackToTerminal, ctx),
                 )
-            },
+            }
         };
         (help, Color::DarkGray)
     };

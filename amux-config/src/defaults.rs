@@ -1,6 +1,8 @@
 //! Default configuration that matches current hardcoded behavior
 
-use crate::types::{Bindings, ClaudeConfig, CodexConfig, Config, Options, PrefixConfig, ProvidersConfig, UiConfig};
+use crate::types::{
+    Bindings, ClaudeConfig, CodexConfig, Config, Options, PrefixConfig, ProvidersConfig, UiConfig,
+};
 use std::collections::HashMap;
 
 /// Get default configuration matching current amux keybindings

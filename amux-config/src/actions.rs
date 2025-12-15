@@ -151,7 +151,9 @@ impl Action {
 
             // Session management
             "create-session" | "new-session" => Some(Action::CreateSession),
-            "select-provider-and-create" | "select-provider" => Some(Action::SelectProviderAndCreate),
+            "select-provider-and-create" | "select-provider" => {
+                Some(Action::SelectProviderAndCreate)
+            }
             "rename-session" => Some(Action::RenameSession),
             "delete-current" | "delete" => Some(Action::DeleteCurrent),
             "switch-to-shell" => Some(Action::SwitchToShell),

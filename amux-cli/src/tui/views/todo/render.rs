@@ -32,7 +32,9 @@ fn calculate_depth(items: &[TodoItem], item_idx: usize) -> usize {
 fn is_todo_input_mode(app: &App) -> bool {
     matches!(
         app.input_mode,
-        InputMode::AddTodo { .. } | InputMode::EditTodo { .. } | InputMode::EditTodoDescription { .. }
+        InputMode::AddTodo { .. }
+            | InputMode::EditTodo { .. }
+            | InputMode::EditTodoDescription { .. }
     )
 }
 
@@ -91,24 +93,14 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     // Determine if we need an input area
     let in_input_mode = is_todo_input_mode(app);
 
-    // Split into list area, input area (if needed), and help area
-    let chunks = if in_input_mode {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // TODO list
-                Constraint::Length(3), // Input area
-            ])
-            .split(inner)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // TODO list
-                Constraint::Length(3), // Help text
-            ])
-            .split(inner)
-    };
+    // Split into list area and input/help area
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // TODO list
+            Constraint::Length(3), // Input area or help text
+        ])
+        .split(inner);
 
     // Draw TODO list with tree structure using pre-computed display order
     let items: Vec<ListItem> = app
@@ -162,8 +154,8 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(input_block, chunks[1]);
 
         // Input text
-        let input = Paragraph::new(app.text_input.content())
-            .style(Style::default().fg(Color::Yellow));
+        let input =
+            Paragraph::new(app.text_input.content()).style(Style::default().fg(Color::Yellow));
         f.render_widget(input, input_inner);
 
         // Cursor
@@ -175,7 +167,12 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         // Draw help text
         let help_text = format!(
             "{} Nav | {} Toggle | {} Add | {} Add child | {} Edit | {} Desc | {} Delete | {} Close",
-            format!("{}/{}", key(app, Action::MoveUp), key(app, Action::MoveDown)).replace("[]", ""),
+            format!(
+                "{}/{}",
+                key(app, Action::MoveUp),
+                key(app, Action::MoveDown)
+            )
+            .replace("[]", ""),
             key(app, Action::ToggleTodoComplete),
             key(app, Action::AddTodo),
             key(app, Action::AddChildTodo),

@@ -1,6 +1,8 @@
 //! Claude Code provider implementation
 
-use super::{AiProvider, ProviderConfig, ProviderError, ProviderResult, ProviderSessionInfo, SessionMode};
+use super::{
+    AiProvider, ProviderConfig, ProviderError, ProviderResult, ProviderSessionInfo, SessionMode,
+};
 use serde::Deserialize;
 use std::ffi::CString;
 use std::fs::File;
