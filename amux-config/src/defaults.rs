@@ -127,9 +127,8 @@ fn default_sidebar_bindings() -> HashMap<String, String> {
     map.insert("r".to_string(), "refresh-all".to_string());
     map.insert("q".to_string(), "quit".to_string());
 
-    // Diff toggle (from git_status and navigation)
+    // Diff toggle
     map.insert("t".to_string(), "toggle-diff-view".to_string());
-    map.insert("d".to_string(), "toggle-diff-view".to_string()); // Alternate
 
     map
 }
