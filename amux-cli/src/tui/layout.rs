@@ -43,6 +43,11 @@ pub fn draw(f: &mut Frame, app: &App) {
 
 /// Draw main content: Sidebar + Terminal/Diff with overlay handling
 fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    // Always draw the base content first to prevent flicker
+    // Overlays will be drawn on top
+    draw_base_content(f, area, app);
+
+    // Now draw overlays on top of base content
     // Check for input mode overlay
     if app.input_mode == InputMode::NewBranch {
         draw_input_overlay(f, area, app);
@@ -147,7 +152,10 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         draw_confirm_delete_todo_overlay(f, area, title);
         return;
     }
+}
 
+/// Draw the base content (sidebar + terminal/diff) without overlays
+fn draw_base_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     // Fullscreen terminal mode
     if app.terminal.fullscreen && app.focus == Focus::Terminal {
         terminal::draw_terminal_fullscreen(f, area, app);
