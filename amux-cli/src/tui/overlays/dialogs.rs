@@ -372,8 +372,9 @@ pub fn draw_add_line_comment_overlay(
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     // Truncate file path if too long
+    // Only truncate if max_path_len > 3 to ensure room for "..." plus at least one character
     let max_path_len = (popup_width as usize).saturating_sub(20);
-    let display_path = if file_path.len() > max_path_len {
+    let display_path = if file_path.len() > max_path_len && max_path_len > 3 {
         format!("...{}", &file_path[file_path.len() - max_path_len + 3..])
     } else {
         file_path.to_string()
@@ -510,8 +511,9 @@ pub fn draw_edit_line_comment_overlay(
     let popup_area = Rect::new(x, y, popup_width, popup_height);
 
     // Truncate file path if too long
+    // Only truncate if max_path_len > 3 to ensure room for "..." plus at least one character
     let max_path_len = (popup_width as usize).saturating_sub(20);
-    let display_path = if file_path.len() > max_path_len {
+    let display_path = if file_path.len() > max_path_len && max_path_len > 3 {
         format!("...{}", &file_path[file_path.len() - max_path_len + 3..])
     } else {
         file_path.to_string()
