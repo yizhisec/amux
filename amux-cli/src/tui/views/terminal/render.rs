@@ -32,6 +32,12 @@ impl Widget for PseudoTerminal<'_> {
 
         for row in 0..area.height {
             for col in 0..area.width {
+                let x = area.x + col;
+                let y = area.y + row;
+                if x >= area.x + area.width || y >= area.y + area.height {
+                    continue;
+                }
+
                 if let Some(cell) = self.screen.cell(row, col) {
                     let ch = cell.contents();
                     let display_char = if ch.is_empty() { " " } else { ch };
@@ -69,11 +75,10 @@ impl Widget for PseudoTerminal<'_> {
                         style = style.add_modifier(Modifier::REVERSED);
                     }
 
-                    let x = area.x + col;
-                    let y = area.y + row;
-                    if x < area.x + area.width && y < area.y + area.height {
-                        buf[(x, y)].set_symbol(display_char).set_style(style);
-                    }
+                    buf[(x, y)].set_symbol(display_char).set_style(style);
+                } else {
+                    // Clear cells outside the screen's bounds to prevent artifacts
+                    buf[(x, y)].set_symbol(" ").set_style(Style::default());
                 }
             }
         }
