@@ -192,7 +192,7 @@ impl StatusIcons {
     // ===== Cursor =====
 
     pub fn cursor(&self) -> &'static str {
-        ">"
+        " "
     }
 }
 
