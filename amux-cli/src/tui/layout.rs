@@ -150,7 +150,6 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     // Check for confirm delete TODO overlay
     if let InputMode::ConfirmDeleteTodo { ref title, .. } = app.input_mode {
         draw_confirm_delete_todo_overlay(f, area, title);
-        return;
     }
 }
 
