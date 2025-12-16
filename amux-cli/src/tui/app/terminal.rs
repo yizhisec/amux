@@ -113,11 +113,11 @@ impl App {
 
         // Get terminal size and calculate inner area
         // Layout: Tab bar (3) + Main content + Status bar (3)
-        // Main content: Sidebar (25%) + Terminal (75%)
+        // Main content: Sidebar (38 fixed) + Terminal (remaining)
         // Terminal has borders (2 lines, 2 cols)
         let (full_cols, full_rows) = size().map_err(TuiError::TerminalInit)?;
         let main_height = full_rows.saturating_sub(6); // tab + status bars
-        let terminal_width = (full_cols as f32 * 0.75) as u16;
+        let terminal_width = full_cols.saturating_sub(38); // screen - sidebar
         let inner_rows = main_height.saturating_sub(2); // borders
         let inner_cols = terminal_width.saturating_sub(2); // borders
 
@@ -200,7 +200,7 @@ impl App {
 
         // Calculate inner area (same as connect_stream)
         let main_height = rows.saturating_sub(6);
-        let terminal_width = (cols as f32 * 0.75) as u16;
+        let terminal_width = cols.saturating_sub(38); // screen - sidebar
         let inner_rows = main_height.saturating_sub(2);
         let inner_cols = terminal_width.saturating_sub(2);
 
@@ -424,7 +424,7 @@ impl App {
         let (full_cols, full_rows) =
             size().unwrap_or((DEFAULT_TERMINAL_COLS, DEFAULT_TERMINAL_ROWS));
         let main_height = full_rows.saturating_sub(6); // tab + status bars
-        let terminal_width = (full_cols as f32 * 0.75) as u16;
+        let terminal_width = full_cols.saturating_sub(38); // screen - sidebar
         let inner_rows = main_height.saturating_sub(2); // borders
         let inner_cols = terminal_width.saturating_sub(2); // borders
         (inner_rows, inner_cols)
