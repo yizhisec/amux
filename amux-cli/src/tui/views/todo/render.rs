@@ -8,7 +8,7 @@ use amux_proto::daemon::TodoItem;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -143,6 +143,7 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         let input_block = Block::default()
             .title(input_title)
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan));
 
         let input_inner = input_block.inner(chunks[1]);
@@ -178,7 +179,12 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         );
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().borders(Borders::ALL).title(" Help "));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(" Help "),
+            );
         f.render_widget(help, chunks[1]);
     }
 }
@@ -223,6 +229,7 @@ pub fn draw_confirm_delete_todo_overlay(f: &mut Frame, area: Rect, title: &str) 
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Red).bg(Color::Black))
                 .style(Style::default().bg(Color::Black))
                 .title(" Confirm Delete "),

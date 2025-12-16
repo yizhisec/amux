@@ -1,13 +1,14 @@
 //! Sidebar rendering (worktrees and sessions)
 
 use crate::tui::app::App;
+use crate::tui::icons::box_drawing;
 use crate::tui::state::Focus;
 use crate::tui::views::git_status::draw_git_status_panel;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, BorderType, Borders, List, ListItem},
     Frame,
 };
 
@@ -31,11 +32,14 @@ pub fn draw_sidebar(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw tree view sidebar (worktrees with nested sessions)
 pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let icons = &app.icons;
     let is_focused = app.focus == Focus::Sidebar;
+
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        theme.focused_border_style()
     } else {
-        Style::default().fg(Color::DarkGray)
+        theme.unfocused_border_style()
     };
 
     let mut items: Vec<ListItem> = Vec::new();
@@ -54,20 +58,26 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
 
         // Worktree row style
         let wt_style = if is_cursor && is_focused {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.selection_style()
         } else if is_cursor {
-            Style::default().fg(Color::White)
+            theme.selection_unfocused_style()
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.normal_style()
         };
 
         // Expand indicator
-        let expand_char = if is_expanded { "▼" } else { "▶" };
+        let expand_char = if is_expanded {
+            icons.collapse()
+        } else {
+            icons.expand()
+        };
 
-        // Worktree indicator: ◆ for main, ● for others
-        let wt_indicator = if wt.is_main { "◆" } else { "●" };
+        // Worktree indicator
+        let wt_indicator = if wt.is_main {
+            icons.main_worktree()
+        } else {
+            icons.worktree()
+        };
 
         // Session count indicator
         let session_count = sessions_by_worktree
@@ -81,17 +91,24 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
         };
 
         items.push(ListItem::new(Line::from(vec![
-            Span::styled(if is_cursor { ">" } else { " " }, wt_style),
+            Span::styled(
+                icons.cursor(),
+                if is_cursor {
+                    wt_style
+                } else {
+                    Style::default()
+                },
+            ),
             Span::styled(
                 format!(" {} ", expand_char),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.text_tertiary),
             ),
             Span::styled(
                 format!("{} ", wt_indicator),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.neon_cyan),
             ),
             Span::styled(&wt.branch, wt_style),
-            Span::styled(session_indicator, Style::default().fg(Color::Green)),
+            Span::styled(session_indicator, Style::default().fg(theme.neon_green)),
         ])));
         cursor_pos += 1;
 
@@ -103,34 +120,44 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
                     let is_active = app.terminal.active_session_id.as_ref() == Some(&session.id);
 
                     let s_style = if is_session_cursor && is_focused {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
+                        theme.selection_style()
                     } else if is_session_cursor {
-                        Style::default().fg(Color::White)
+                        theme.selection_unfocused_style()
                     } else {
-                        Style::default().fg(Color::DarkGray)
+                        theme.normal_style()
                     };
 
-                    let active_indicator = if is_active { "▶" } else { " " };
-                    let status_char = match session.status {
-                        1 => "●", // Running
-                        _ => "○", // Stopped
+                    let active_indicator = if is_active {
+                        icons.active_indicator()
+                    } else {
+                        " "
+                    };
+                    let status_icon = if session.status == 1 {
+                        icons.running()
+                    } else {
+                        icons.stopped()
                     };
 
                     items.push(ListItem::new(Line::from(vec![
-                        Span::styled(if is_session_cursor { ">" } else { " " }, s_style),
+                        Span::styled(
+                            icons.cursor(),
+                            if is_session_cursor {
+                                s_style
+                            } else {
+                                Style::default()
+                            },
+                        ),
                         Span::raw("     "), // Indent for nesting
                         Span::styled(
                             format!("{} ", active_indicator),
-                            Style::default().fg(Color::Green),
+                            Style::default().fg(theme.neon_green),
                         ),
                         Span::styled(
-                            format!("{} ", status_char),
+                            format!("{} ", status_icon),
                             Style::default().fg(if session.status == 1 {
-                                Color::Green
+                                theme.success
                             } else {
-                                Color::DarkGray
+                                theme.text_disabled
                             }),
                         ),
                         Span::styled(&session.name, s_style),
@@ -141,14 +168,17 @@ pub fn draw_sidebar_tree(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Title with focus indicator and decorative elements
     let title = if is_focused {
-        " Worktrees [*] "
+        format!(" {} Worktrees [*] ", box_drawing::HEAVY_VERTICAL)
     } else {
-        " Worktrees "
+        " Worktrees ".to_string()
     };
+
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style)
             .title(title),
     );

@@ -1,19 +1,22 @@
 //! Tab bar and status bar rendering
 
 use crate::tui::app::App;
+use crate::tui::icons::box_drawing;
 use crate::tui::state::{Focus, InputMode, PrefixMode, TerminalMode};
 use amux_config::actions::Action;
 use amux_config::keybind::BindingContext;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
     Frame,
 };
 
 /// Draw repo tabs at the top
 pub fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
     let titles: Vec<Line> = app
         .repos()
         .iter()
@@ -28,20 +31,30 @@ pub fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
+    // Create decorative title with box drawing
+    let title = format!(
+        " {} Amux {} Claude Code Manager {} ",
+        box_drawing::HEAVY_VERTICAL,
+        box_drawing::MIDDOT,
+        box_drawing::HEAVY_VERTICAL
+    );
+
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Amux - Claude Code Manager "),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme.neon_cyan))
+                .title(title),
         )
         .select(app.repo_idx())
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(theme.text_secondary))
         .highlight_style(
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection_fg)
                 .add_modifier(Modifier::BOLD),
         )
-        .divider(" | ");
+        .divider(format!(" {} ", box_drawing::VERTICAL));
 
     f.render_widget(tabs, area);
 }
@@ -53,6 +66,8 @@ fn key(app: &App, action: Action, context: BindingContext) -> String {
 
 /// Draw status bar at the bottom
 pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
     // Prefix mode takes priority - show available commands
     if app.prefix_mode == PrefixMode::WaitingForCommand {
         let ctx = BindingContext::Prefix;
@@ -72,13 +87,14 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         let paragraph = Paragraph::new(prefix_help)
             .style(
                 Style::default()
-                    .fg(Color::Magenta)
+                    .fg(theme.neon_magenta)
                     .add_modifier(Modifier::BOLD),
             )
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Magenta)),
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(theme.neon_magenta)),
             );
         f.render_widget(paragraph, area);
         return;
@@ -94,30 +110,31 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         // Build the prompt with cursor indicator
         let prompt = "Session name (Enter=create, Esc=cancel): ";
         let line = Line::from(vec![
-            Span::styled(prompt, Style::default().fg(Color::Cyan)),
-            Span::styled(before, Style::default().fg(Color::White)),
+            Span::styled(prompt, Style::default().fg(theme.neon_cyan)),
+            Span::styled(before, Style::default().fg(theme.text_primary)),
             Span::styled(
                 at_cursor
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| " ".to_string()),
-                Style::default().fg(Color::Black).bg(Color::White),
+                Style::default().fg(theme.bg_level0).bg(theme.text_primary),
             ),
-            Span::styled(after, Style::default().fg(Color::White)),
+            Span::styled(after, Style::default().fg(theme.text_primary)),
         ]);
 
         let paragraph = Paragraph::new(line).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme.neon_cyan)),
         );
         f.render_widget(paragraph, area);
         return;
     }
 
     let (message, color) = if let Some(err) = &app.error_message {
-        (err.clone(), Color::Red)
+        (err.clone(), theme.error)
     } else if let Some(status) = &app.status_message {
-        (status.clone(), Color::Green)
+        (status.clone(), theme.success)
     } else {
         let help = match app.focus {
             Focus::Sidebar => {
@@ -200,12 +217,16 @@ pub fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
                 )
             }
         };
-        (help, Color::DarkGray)
+        (help, theme.text_tertiary)
     };
 
     let paragraph = Paragraph::new(message)
         .style(Style::default().fg(color))
-        .block(Block::default().borders(Borders::ALL));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        );
 
     f.render_widget(paragraph, area);
 }

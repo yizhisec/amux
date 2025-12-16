@@ -5,11 +5,12 @@
 
 use crate::tui::app::App;
 use crate::tui::state::{Focus, TerminalMode};
+use crate::tui::theme::TerminalMode as ThemeTerminalMode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
     Frame,
 };
 
@@ -96,15 +97,15 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 
 /// Draw terminal preview/interaction area
 pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
     let is_terminal_focused = app.focus == Focus::Terminal;
-    let border_color = if is_terminal_focused {
-        match app.terminal.mode {
-            TerminalMode::Insert => Color::Green,
-            TerminalMode::Normal => Color::Yellow,
-        }
-    } else {
-        Color::DarkGray
+
+    let theme_mode = match app.terminal.mode {
+        TerminalMode::Insert => ThemeTerminalMode::Insert,
+        TerminalMode::Normal => ThemeTerminalMode::Normal,
     };
+
+    let border_style = theme.terminal_border_style(theme_mode, is_terminal_focused);
 
     let title = if is_terminal_focused {
         match app.terminal.mode {
@@ -119,7 +120,8 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
         .title(title);
 
     let inner = block.inner(area);
@@ -134,7 +136,7 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
     } else {
         // Show placeholder
         let placeholder = Paragraph::new("Select a session to see terminal output")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_disabled))
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(placeholder, inner);
     }
@@ -142,10 +144,14 @@ pub fn draw_terminal(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw fullscreen terminal
 pub fn draw_terminal_fullscreen(f: &mut Frame, area: Rect, app: &App) {
-    let border_color = match app.terminal.mode {
-        TerminalMode::Insert => Color::Green,
-        TerminalMode::Normal => Color::Yellow,
+    let theme = &app.theme;
+
+    let theme_mode = match app.terminal.mode {
+        TerminalMode::Insert => ThemeTerminalMode::Insert,
+        TerminalMode::Normal => ThemeTerminalMode::Normal,
     };
+
+    let border_style = theme.terminal_border_style(theme_mode, true);
 
     let title = match app.terminal.mode {
         TerminalMode::Insert => " Terminal [INSERT - FULLSCREEN] ",
@@ -154,7 +160,8 @@ pub fn draw_terminal_fullscreen(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
         .title(title);
 
     let inner = block.inner(area);

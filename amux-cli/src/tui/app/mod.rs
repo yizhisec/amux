@@ -42,12 +42,14 @@ use tokio::sync::mpsc;
 
 type Result<T> = std::result::Result<T, TuiError>;
 
+use super::icons::StatusIcons;
 use super::input::{handle_input_sync, handle_mouse_sync, TextInput};
 use super::layout::draw;
 use super::state::{
     AsyncAction, DirtyFlags, ExitCleanupAction, Focus, InputMode, PrefixMode, RepoState,
     RightPanelView, SavedFocusState, SidebarState, TerminalState, TodoState,
 };
+use super::theme::CyberpunkTheme;
 
 /// Deactivate fcitx5 input method
 fn deactivate_ime() {
@@ -119,6 +121,10 @@ pub struct App {
 
     // ============ Dirty Flags ============
     pub dirty: DirtyFlags,
+
+    // ============ Theme & Icons ============
+    pub theme: CyberpunkTheme,
+    pub icons: StatusIcons,
 }
 
 impl App {
@@ -166,6 +172,9 @@ impl App {
             keybinds,
             // Dirty flags
             dirty: DirtyFlags::default(),
+            // Theme & Icons
+            theme: CyberpunkTheme::default(),
+            icons: StatusIcons::default(),
         };
 
         // Load initial data
