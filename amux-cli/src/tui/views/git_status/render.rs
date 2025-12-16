@@ -2,23 +2,27 @@
 
 use crate::tui::app::App;
 use crate::tui::state::{Focus, GitSection};
+use crate::tui::theme::{GitFileStatus, GitSection as ThemeGitSection};
 use crate::tui::widgets::VirtualList;
 use amux_proto::daemon::FileStatus;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
     Frame,
 };
 
 /// Draw git status panel
 pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let icons = &app.icons;
     let is_focused = app.focus == Focus::GitStatus;
+
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        theme.focused_border_style()
     } else {
-        Style::default().fg(Color::DarkGray)
+        theme.unfocused_border_style()
     };
 
     let _current_item = app.current_git_panel_item();
@@ -29,11 +33,12 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
         // No git state
         let list = List::new(vec![ListItem::new(Line::from(vec![Span::styled(
             "  No git state",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_disabled),
         )]))])
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(border_style)
                 .title(" Git Status "),
         );
@@ -42,12 +47,28 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let sections = [
-        (GitSection::Staged, "◆ Staged", Color::Green),
-        (GitSection::Unstaged, "◇ Unstaged", Color::Yellow),
-        (GitSection::Untracked, "? Untracked", Color::Magenta),
+        (
+            GitSection::Staged,
+            ThemeGitSection::Staged,
+            icons.staged_indicator(),
+            "Staged",
+        ),
+        (
+            GitSection::Unstaged,
+            ThemeGitSection::Unstaged,
+            icons.unstaged_indicator(),
+            "Unstaged",
+        ),
+        (
+            GitSection::Untracked,
+            ThemeGitSection::Untracked,
+            icons.untracked_indicator(),
+            "Untracked",
+        ),
     ];
 
-    for (section, section_name, section_color) in sections {
+    for (section, theme_section, section_icon, section_name) in sections {
+        let section_color = theme.git_section_color(theme_section);
         let files: Vec<_> = git
             .files
             .iter()
@@ -68,20 +89,34 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
                 .fg(section_color)
                 .add_modifier(Modifier::BOLD)
         } else if is_cursor {
-            Style::default().fg(Color::White)
+            theme.selection_unfocused_style()
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.normal_style()
         };
 
-        let expand_char = if is_expanded { "▼" } else { "▶" };
+        let expand_char = if is_expanded {
+            icons.collapse()
+        } else {
+            icons.expand()
+        };
 
         items.push(ListItem::new(Line::from(vec![
-            Span::styled(if is_cursor { ">" } else { " " }, section_style),
+            Span::styled(
+                icons.cursor(),
+                if is_cursor {
+                    section_style
+                } else {
+                    Style::default()
+                },
+            ),
             Span::styled(
                 format!(" {} ", expand_char),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.text_tertiary),
             ),
-            Span::styled(format!("{} ({})", section_name, files.len()), section_style),
+            Span::styled(
+                format!("{} {} ({})", section_icon, section_name, files.len()),
+                section_style,
+            ),
         ])));
         cursor_pos += 1;
 
@@ -91,33 +126,42 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
                 let is_file_cursor = cursor_pos == git.cursor;
 
                 let file_style = if is_file_cursor && is_focused {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
+                    theme.selection_style()
                 } else if is_file_cursor {
-                    Style::default().fg(Color::White)
+                    theme.selection_unfocused_style()
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    theme.normal_style()
                 };
 
                 // Status indicator
-                let (status_char, status_color) =
+                let file_status =
                     match FileStatus::try_from(file.status).unwrap_or(FileStatus::Modified) {
-                        FileStatus::Modified => ("M", Color::Yellow),
-                        FileStatus::Added => ("A", Color::Green),
-                        FileStatus::Deleted => ("D", Color::Red),
-                        FileStatus::Renamed => ("R", Color::Cyan),
-                        FileStatus::Untracked => ("?", Color::Magenta),
-                        FileStatus::Unspecified => ("?", Color::DarkGray),
+                        FileStatus::Modified => GitFileStatus::Modified,
+                        FileStatus::Added => GitFileStatus::Added,
+                        FileStatus::Deleted => GitFileStatus::Deleted,
+                        FileStatus::Renamed => GitFileStatus::Renamed,
+                        FileStatus::Untracked => GitFileStatus::Untracked,
+                        FileStatus::Unspecified => GitFileStatus::Unknown,
                     };
+
+                let status_char = match file_status {
+                    GitFileStatus::Modified => icons.git_modified(),
+                    GitFileStatus::Added => icons.git_added(),
+                    GitFileStatus::Deleted => icons.git_deleted(),
+                    GitFileStatus::Renamed => icons.git_renamed(),
+                    GitFileStatus::Untracked => icons.git_untracked(),
+                    GitFileStatus::Unknown => "?",
+                };
+
+                let status_color = theme.git_status_color(file_status);
 
                 // Comment count badge
                 let comment_count = app.count_file_comments(&file.path);
                 let comment_badge = if comment_count > 0 {
                     Span::styled(
-                        format!(" 💬{}", comment_count),
+                        format!(" {}{}", icons.comment(), comment_count),
                         Style::default()
-                            .fg(Color::Yellow)
+                            .fg(theme.neon_yellow)
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
@@ -125,7 +169,14 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
                 };
 
                 items.push(ListItem::new(Line::from(vec![
-                    Span::styled(if is_file_cursor { ">" } else { " " }, file_style),
+                    Span::styled(
+                        icons.cursor(),
+                        if is_file_cursor {
+                            file_style
+                        } else {
+                            Style::default()
+                        },
+                    ),
                     Span::raw("   "), // Indent
                     Span::styled(
                         format!("{} ", status_char),
@@ -143,7 +194,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     if items.is_empty() {
         items.push(ListItem::new(Line::from(vec![Span::styled(
             "  No changes",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.text_disabled),
         )])));
     }
 
@@ -172,6 +223,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     let list = List::new(visible_items).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style)
             .title(title),
     );
@@ -182,7 +234,7 @@ pub fn draw_git_status_panel(f: &mut Frame, area: Rect, app: &App) {
     if total_items > visible_height {
         let scroll_info = format!(" {}/{} ", git.cursor + 1, total_items);
         let scroll_len = scroll_info.len() as u16;
-        let scroll_span = Span::styled(scroll_info, Style::default().fg(Color::DarkGray));
+        let scroll_span = Span::styled(scroll_info, Style::default().fg(theme.text_tertiary));
         let scroll_x = area.x + area.width.saturating_sub(scroll_len + 1);
         let scroll_y = area.y;
         f.render_widget(

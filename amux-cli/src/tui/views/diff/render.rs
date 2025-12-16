@@ -1,16 +1,18 @@
 //! Diff view rendering
 
 use crate::tui::app::App;
+use crate::tui::icons::box_drawing;
 use crate::tui::state::{DiffItem, Focus};
+use crate::tui::theme::GitFileStatus;
 use crate::tui::widgets::helpers::{
     find_paired_addition, find_paired_deletion, get_highlighter, render_word_diff_line,
 };
 use amux_proto::daemon::{FileStatus, LineType};
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -26,11 +28,14 @@ pub fn draw_diff_fullscreen(f: &mut Frame, area: Rect, app: &App) {
 
 /// Draw diff with inline file expansion (unified navigation view)
 pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let icons = &app.icons;
     let is_focused = app.focus == Focus::DiffFiles;
+
     let border_style = if is_focused {
-        Style::default().fg(Color::Cyan)
+        theme.focused_border_style()
     } else {
-        Style::default().fg(Color::DarkGray)
+        theme.unfocused_border_style()
     };
 
     let title = if is_focused {
@@ -47,6 +52,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(border_style)
         .title(title);
 
@@ -55,7 +61,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
     let Some(diff) = app.diff() else {
         let placeholder = Paragraph::new("No diff state")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_disabled))
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(placeholder, inner);
         return;
@@ -63,7 +69,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
     if diff.files.is_empty() {
         let placeholder = Paragraph::new("No changes")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme.text_disabled))
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(placeholder, inner);
         return;
@@ -81,28 +87,40 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
         // File style
         let file_style = if is_file_selected && is_focused {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.selection_style()
         } else if is_file_selected {
-            Style::default().fg(Color::White)
+            theme.selection_unfocused_style()
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.normal_style()
         };
 
         // Status indicator
-        let (status_char, status_color) =
-            match FileStatus::try_from(file.status).unwrap_or(FileStatus::Modified) {
-                FileStatus::Modified => ("M", Color::Yellow),
-                FileStatus::Added => ("A", Color::Green),
-                FileStatus::Deleted => ("D", Color::Red),
-                FileStatus::Renamed => ("R", Color::Cyan),
-                FileStatus::Untracked => ("U", Color::Magenta),
-                FileStatus::Unspecified => ("?", Color::DarkGray),
-            };
+        let file_status = match FileStatus::try_from(file.status).unwrap_or(FileStatus::Modified) {
+            FileStatus::Modified => GitFileStatus::Modified,
+            FileStatus::Added => GitFileStatus::Added,
+            FileStatus::Deleted => GitFileStatus::Deleted,
+            FileStatus::Renamed => GitFileStatus::Renamed,
+            FileStatus::Untracked => GitFileStatus::Untracked,
+            FileStatus::Unspecified => GitFileStatus::Unknown,
+        };
+
+        let status_char = match file_status {
+            GitFileStatus::Modified => icons.git_modified(),
+            GitFileStatus::Added => icons.git_added(),
+            GitFileStatus::Deleted => icons.git_deleted(),
+            GitFileStatus::Renamed => icons.git_renamed(),
+            GitFileStatus::Untracked => icons.git_untracked(),
+            GitFileStatus::Unknown => "?",
+        };
+
+        let status_color = theme.git_status_color(file_status);
 
         // Expand/collapse indicator
-        let expand_indicator = if is_expanded { "▼" } else { "▶" };
+        let expand_indicator = if is_expanded {
+            icons.collapse()
+        } else {
+            icons.expand()
+        };
 
         // Stats
         let stats = if file.additions > 0 || file.deletions > 0 {
@@ -115,9 +133,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
         let comment_count = app.count_file_comments(&file.path);
         let comment_badge = if comment_count > 0 {
             Span::styled(
-                format!(" 💬{}", comment_count),
+                format!(" {}{}", icons.comment(), comment_count),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.neon_yellow)
                     .add_modifier(Modifier::BOLD),
             )
         } else {
@@ -126,17 +144,24 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
 
         // File line
         lines.push(Line::from(vec![
-            Span::styled(if is_file_selected { ">" } else { " " }, file_style),
+            Span::styled(
+                icons.cursor(),
+                if is_file_selected {
+                    file_style
+                } else {
+                    Style::default()
+                },
+            ),
             Span::styled(
                 format!(" {} ", expand_indicator),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.text_tertiary),
             ),
             Span::styled(
                 format!("{} ", status_char),
                 Style::default().fg(status_color),
             ),
             Span::styled(&file.path, file_style),
-            Span::styled(stats, Style::default().fg(Color::DarkGray)),
+            Span::styled(stats, Style::default().fg(theme.text_tertiary)),
             comment_badge,
         ]));
 
@@ -158,14 +183,14 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                         Span::styled(
                             " [*]",
                             Style::default()
-                                .fg(Color::Yellow)
+                                .fg(theme.neon_yellow)
                                 .add_modifier(Modifier::BOLD),
                         )
                     } else {
                         Span::raw("")
                     };
 
-                    let cursor_indicator = if is_line_selected { ">" } else { " " };
+                    let cursor_indicator = icons.cursor();
 
                     // Build the line based on type
                     let mut line_spans = vec![
@@ -183,13 +208,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                     match line_type {
                         LineType::Header => {
                             let style = if is_line_selected && is_focused {
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                                theme.diff_hunk_style().add_modifier(Modifier::REVERSED)
                             } else {
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD)
+                                theme.diff_hunk_style()
                             };
                             line_spans.push(Span::styled("@@ ", style));
                             line_spans.push(Span::styled(&diff_line.content, style));
@@ -200,11 +221,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                                 .map(|del_idx| file_lines[del_idx].content.as_str());
 
                             let prefix_style = if is_line_selected && is_focused {
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::REVERSED)
+                                theme.diff_add_style().add_modifier(Modifier::REVERSED)
                             } else {
-                                Style::default().fg(Color::Green)
+                                theme.diff_add_style()
                             };
                             line_spans.push(Span::styled("+ ", prefix_style));
 
@@ -225,11 +244,9 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                                 .map(|add_idx| file_lines[add_idx].content.as_str());
 
                             let prefix_style = if is_line_selected && is_focused {
-                                Style::default()
-                                    .fg(Color::Red)
-                                    .add_modifier(Modifier::REVERSED)
+                                theme.diff_del_style().add_modifier(Modifier::REVERSED)
                             } else {
-                                Style::default().fg(Color::Red)
+                                theme.diff_del_style()
                             };
                             line_spans.push(Span::styled("- ", prefix_style));
 
@@ -276,14 +293,24 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                         // Comment box top border with file info
                         lines.push(Line::from(vec![
                             Span::raw("     "),
-                            Span::styled("┌─[", Style::default().fg(Color::DarkGray)),
-                            Span::styled(display_path, Style::default().fg(Color::Cyan)),
-                            Span::styled(":", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!(
+                                    "{}{}[",
+                                    box_drawing::ROUND_TOP_LEFT,
+                                    box_drawing::HORIZONTAL
+                                ),
+                                Style::default().fg(theme.comment_border),
+                            ),
+                            Span::styled(display_path, Style::default().fg(theme.comment_path)),
+                            Span::styled(":", Style::default().fg(theme.comment_border)),
                             Span::styled(
                                 format!("{}", line_number),
-                                Style::default().fg(Color::Yellow),
+                                Style::default().fg(theme.comment_line_no),
                             ),
-                            Span::styled("]─", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("]{}", box_drawing::HORIZONTAL),
+                                Style::default().fg(theme.comment_border),
+                            ),
                         ]));
 
                         // Comment content (wrap if needed)
@@ -297,8 +324,11 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                         {
                             lines.push(Line::from(vec![
                                 Span::raw("     "),
-                                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-                                Span::styled(chunk, Style::default().fg(Color::White)),
+                                Span::styled(
+                                    format!("{} ", box_drawing::VERTICAL),
+                                    Style::default().fg(theme.comment_border),
+                                ),
+                                Span::styled(chunk, Style::default().fg(theme.text_primary)),
                             ]));
                         }
 
@@ -306,8 +336,12 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
                         lines.push(Line::from(vec![
                             Span::raw("     "),
                             Span::styled(
-                                "└".to_string() + &"─".repeat(46),
-                                Style::default().fg(Color::DarkGray),
+                                format!(
+                                    "{}{}",
+                                    box_drawing::ROUND_BOTTOM_LEFT,
+                                    box_drawing::HORIZONTAL.repeat(46)
+                                ),
+                                Style::default().fg(theme.comment_border),
                             ),
                         ]));
                     }
@@ -345,7 +379,7 @@ pub fn draw_diff_inline(f: &mut Frame, area: Rect, app: &App) {
     if total_lines > visible_height {
         let scroll_info = format!(" {}/{} ", cursor_line + 1, total_lines);
         let scroll_len = scroll_info.len() as u16;
-        let scroll_span = Span::styled(scroll_info, Style::default().fg(Color::DarkGray));
+        let scroll_span = Span::styled(scroll_info, Style::default().fg(theme.text_tertiary));
         let scroll_x = area.x + area.width.saturating_sub(scroll_len + 1);
         let scroll_y = area.y;
         f.render_widget(

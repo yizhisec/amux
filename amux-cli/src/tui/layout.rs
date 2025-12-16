@@ -74,7 +74,7 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 
     // Check for confirm delete branch overlay
     if let InputMode::ConfirmDeleteBranch(ref branch) = app.input_mode {
-        draw_confirm_delete_branch_overlay(f, area, branch);
+        draw_confirm_delete_branch_overlay(f, area, app, branch);
         return;
     }
 
@@ -85,7 +85,7 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         ..
     } = app.input_mode
     {
-        draw_confirm_delete_worktree_sessions_overlay(f, area, branch, session_count);
+        draw_confirm_delete_worktree_sessions_overlay(f, area, app, branch, session_count);
         return;
     }
 
@@ -97,7 +97,7 @@ fn draw_main_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         ..
     } = app.input_mode
     {
-        draw_select_provider_overlay(f, area, providers, selected_index, loading);
+        draw_select_provider_overlay(f, area, app, providers, selected_index, loading);
         return;
     }
 
@@ -172,8 +172,8 @@ fn draw_base_content(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25), // Sidebar
-            Constraint::Percentage(75), // Main content (Terminal or Diff)
+            Constraint::Length(38), // Sidebar - fixed width for file paths
+            Constraint::Min(0),     // Main content (Terminal or Diff) - take remaining
         ])
         .split(area);
 
