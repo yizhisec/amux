@@ -37,8 +37,7 @@ impl App {
             true
         } else {
             // Stack empty - graceful degradation
-            #[cfg(debug_assertions)]
-            eprintln!("WARNING: Focus stack empty during restore_focus()");
+            tracing::debug!("Focus stack empty during restore_focus()");
             false
         }
     }

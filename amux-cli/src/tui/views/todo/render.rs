@@ -63,7 +63,13 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
         height: popup_height,
     };
 
-    // Draw popup with background (only covers popup area, not entire screen)
+    // Clear background
+    let background = Block::default()
+        .style(Style::default().bg(Color::Black))
+        .borders(Borders::NONE);
+    f.render_widget(background, area);
+
+    // Draw popup
     let title = if app.todo.show_completed {
         " TODO List (All) - [c] to hide completed "
     } else {
@@ -73,8 +79,7 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .style(Style::default().bg(Color::Black));
+        .border_style(Style::default().fg(Color::Yellow));
     f.render_widget(block, popup_area);
 
     // Inner area for content
