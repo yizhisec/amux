@@ -254,6 +254,15 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
     // Only need pending_action for async operations
     let mut pending_action: Option<AsyncAction> = None;
 
+    // Buffer for PTY data - collect all data and process at render time
+    // This prevents showing intermediate states (e.g., blank screen during clear+redraw)
+    let mut pty_data_buffer: Vec<Vec<u8>> = Vec::new();
+
+    // Track when PTY data was received for debouncing
+    // This prevents rendering intermediate states during rapid updates
+    let mut last_pty_time: Option<std::time::Instant> = None;
+    const DEBOUNCE_MS: u64 = 5; // Wait 5ms after last PTY data before rendering
+
     // Main loop with tokio::select!
     loop {
         tokio::select! {
@@ -282,42 +291,18 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
                 }
             }
 
-            // 2. Terminal PTY output - process data and handle terminal queries
+            // 2. Terminal PTY output - buffer data, defer processing to render tick
+            // This prevents showing intermediate states (e.g., blank screen during clear+redraw)
             Some(data) = async {
                 match app.terminal_stream.as_mut() {
                     Some(stream) => stream.output_rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                // Debug: log escape sequences in received data
-                if data.contains(&0x1b) {
-                    let escaped: String = data.iter().map(|&b| {
-                        if b == 0x1b { "ESC".to_string() }
-                        else if b < 32 { format!("^{}", (b + 64) as char) }
-                        else { (b as char).to_string() }
-                    }).collect();
-                    tracing::debug!("PTY output contains escape: {}", escaped);
-                }
-
-                // Check for terminal query sequences and respond
-                if let Some(response) = detect_terminal_query(&data, &app.terminal.parser) {
-                    tracing::debug!("Detected terminal query, sending response: {:?}", response);
-                    // Send response back to PTY
-                    let _ = app.send_to_terminal(response).await;
-                }
-
-                if let Ok(mut parser) = app.terminal.parser.lock() {
-                    // Save user's scroll position before processing PTY output
-                    let scroll_offset = parser.screen().scrollback();
-
-                    parser.process(&data);
-
-                    // If user is viewing history (offset > 0), restore scroll position
-                    // This prevents new output from pulling user back to bottom
-                    if scroll_offset > 0 {
-                        parser.screen_mut().set_scrollback(scroll_offset);
-                    }
-                }
+                // Buffer data for batch processing at render time
+                pty_data_buffer.push(data);
+                // Record time for debouncing - wait for more data before rendering
+                last_pty_time = Some(std::time::Instant::now());
             }
 
             // 3. Daemon events - update state
@@ -338,33 +323,48 @@ pub async fn run_with_client(mut app: App, should_exit: Arc<AtomicBool>) -> Resu
 
             // 4. Render tick - ALWAYS RENDER (tuitest pattern)
             _ = render_interval.tick() => {
-                // Drain all pending PTY data before rendering to avoid showing intermediate states
-                // (e.g., blank screen during clear+redraw sequences from TUI frameworks like ink)
-                // First, collect all pending data to avoid borrow conflicts
-                let pending_data: Vec<Vec<u8>> = if let Some(stream) = app.terminal_stream.as_mut() {
-                    let mut data_vec = Vec::new();
+                // Drain any remaining data from channel into buffer
+                if let Some(stream) = app.terminal_stream.as_mut() {
                     while let Ok(data) = stream.output_rx.try_recv() {
-                        data_vec.push(data);
+                        pty_data_buffer.push(data);
+                        last_pty_time = Some(std::time::Instant::now());
                     }
-                    data_vec
+                }
+
+                // Debounce: if PTY data arrived very recently, skip render to wait for more
+                // This prevents showing intermediate states (e.g., blank during clear+redraw)
+                // Only debounce if we have buffered data waiting to be processed
+                let should_skip = if !pty_data_buffer.is_empty() {
+                    if let Some(last_time) = last_pty_time {
+                        last_time.elapsed().as_millis() < DEBOUNCE_MS as u128
+                    } else {
+                        false
+                    }
                 } else {
-                    Vec::new()
+                    false
                 };
 
-                // Process all collected PTY data
-                for data in pending_data {
-                    // Check for terminal query sequences and respond
-                    if let Some(response) = detect_terminal_query(&data, &app.terminal.parser) {
-                        let _ = app.send_to_terminal(response).await;
-                    }
+                if should_skip {
+                    continue;
+                }
 
-                    if let Ok(mut parser) = app.terminal.parser.lock() {
-                        let scroll_offset = parser.screen().scrollback();
-                        parser.process(&data);
-                        if scroll_offset > 0 {
-                            parser.screen_mut().set_scrollback(scroll_offset);
+                // Process all buffered PTY data at once
+                if !pty_data_buffer.is_empty() {
+                    for data in pty_data_buffer.drain(..) {
+                        // Check for terminal query sequences and respond
+                        if let Some(response) = detect_terminal_query(&data, &app.terminal.parser) {
+                            let _ = app.send_to_terminal(response).await;
+                        }
+
+                        if let Ok(mut parser) = app.terminal.parser.lock() {
+                            let scroll_offset = parser.screen().scrollback();
+                            parser.process(&data);
+                            if scroll_offset > 0 {
+                                parser.screen_mut().set_scrollback(scroll_offset);
+                            }
                         }
                     }
+                    last_pty_time = None;
                 }
 
                 // Execute pending async action
