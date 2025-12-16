@@ -73,7 +73,6 @@ pub fn draw_todo_popup(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Yellow))
         .style(Style::default().bg(Color::Black));
     f.render_widget(block, popup_area);
